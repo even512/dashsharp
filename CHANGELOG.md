@@ -4,6 +4,11 @@ All notable changes to Dash# are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/), and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.5] - 2026-07-01
+
+### Fixed
+- Remaining micro-stutter in the CPU/RAM/network sparklines: their scroll coordinates were rounded to 0.1px, which is coarser than a single frame's movement at typical scroll speeds (a ~10px step spread over a multi-second poll interval). That made the rendered string stay identical for several consecutive frames, so the animation appeared to pause and then catch up — most noticeable with a mostly-flat line (e.g. idle network traffic). Coordinates now round to 0.01px so every frame's motion is reflected.
+
 ## [0.2.4] - 2026-07-01
 
 ### Fixed

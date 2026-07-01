@@ -1,6 +1,6 @@
 {
   "name": "homelab-dashboard",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "private": true,
   "description": "Schlankes Homelab-Dashboard als Browser-Startseite (Node.js + Express, Docker)",
   "main": "server.js",

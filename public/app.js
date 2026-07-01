@@ -335,13 +335,21 @@ function flowSpark(arr, w, h, max, pad, p) {
   const step = w / (n - 1);
   const prog = p || 0;
   const y = (v) => (pd + eff - (v / mx) * eff);
+  // Coordinates are rounded to 2 decimals (0.01px), not 1: at typical scroll
+  // rates (a ~10px step spread over a multi-second poll interval) a single
+  // frame's movement is well under 0.1px, so 1-decimal rounding made the
+  // string stay byte-identical for several consecutive frames — invisible
+  // with the old code (which rewrote the same value every frame anyway) but
+  // a visible stutter now that identical writes are skipped (see
+  // setAttrIfChanged). 0.01px resolves sub-frame motion so the string keeps
+  // changing every frame the way it visually should.
   let s = '';
-  for (let i = 0; i < n; i++) s += `${((i - prog) * step).toFixed(1)},${y(arr[i]).toFixed(1)} `;
-  return s + `${w},${y(arr[n - 1]).toFixed(1)}`; // right edge: hold current value
+  for (let i = 0; i < n; i++) s += `${((i - prog) * step).toFixed(2)},${y(arr[i]).toFixed(2)} `;
+  return s + `${w},${y(arr[n - 1]).toFixed(2)}`; // right edge: hold current value
 }
 function flowArea(arr, w, h, max, pad, p) {
   const step = w / (arr.length - 1);
-  const x0 = (-(p || 0) * step).toFixed(1);
+  const x0 = (-(p || 0) * step).toFixed(2);
   return `${x0},${h} ${flowSpark(arr, w, h, max, pad, p)} ${w},${h}`;
 }
 function fmtNet(v) {
