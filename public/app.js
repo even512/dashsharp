@@ -381,21 +381,33 @@ function maxOfTwo(a, b) {
   return m;
 }
 // Caches the last value written per graph target so graphFrame() can skip
-// the actual DOM write (which triggers SVG layout) once eased values have
-// settled and nothing would visually change — the cheap flowSpark/flowArea
-// computation still runs every frame, only the expensive write is skipped.
+// the actual DOM write (which triggers SVG layout) once nothing will visibly
+// change until the next poll. `skipIfSame` must only be true while animOn is
+// false: in that state `p` is pinned at the exact constant 1 (see below), so
+// flowSpark/flowArea's output is byte-identical frame to frame with no
+// rounding ambiguity — comparing strings is exact and safe there. While
+// animOn is true, `p` is a continuously-varying real number and comparing
+// its *rounded* output is NOT safe at any fixed precision: any interpolation
+// with rounded coordinates has stretches where genuinely-still-moving values
+// round to an identical string, and skipping those writes reproduces the
+// exact rhythmic freeze this was meant to fix, just at whatever scroll
+// speed/interval happens to fall below that frame's rounding step. So while
+// animating, always write — the actual per-frame cost of that was measured
+// (DevTools CPU throttling up to 6x) to be a non-issue; the wasted-work
+// problem this optimization targets only exists in the settled/animOn-off
+// case anyway.
 const _lastGraph = {
   cpuArea: null, cpuLine: null, ramLine: null,
   netArea: null, netLine: null, upLine: null,
   netDownTxt: null, netUpTxt: null,
 };
-function setAttrIfChanged(id, attr, v, cacheKey) {
-  if (_lastGraph[cacheKey] === v) return;
+function setAttrIfChanged(id, attr, v, cacheKey, skipIfSame) {
+  if (skipIfSame && _lastGraph[cacheKey] === v) return;
   _lastGraph[cacheKey] = v;
   setAttr(id, attr, v);
 }
-function setTextIfChanged(id, v, cacheKey) {
-  if (_lastGraph[cacheKey] === v) return;
+function setTextIfChanged(id, v, cacheKey, skipIfSame) {
+  if (skipIfSame && _lastGraph[cacheKey] === v) return;
   _lastGraph[cacheKey] = v;
   setText(id, v);
 }
@@ -414,19 +426,22 @@ function graphFrame() {
   // overshoot past the "expected" position, corrected seamlessly once the
   // next sample lands and p resets) instead of visibly halting.
   const p = anim ? Math.min(1.5, Math.max(0, (performance.now() - state.lastSampleTs) / interval)) : 1;
+  // Only skip "unchanged" writes while animOn is off, where p/k below are
+  // exact repeated constants (see the comment on _lastGraph above).
+  const skip = !anim;
 
   // System: CPU + RAM (feste Skala 0..100)
-  setAttrIfChanged('cpuArea', 'points', flowArea(state.cpuHist, 460, 64, 100, 0, p), 'cpuArea');
-  setAttrIfChanged('cpuLine', 'points', flowSpark(state.cpuHist, 460, 64, 100, 0, p), 'cpuLine');
-  setAttrIfChanged('ramLine', 'points', flowSpark(state.ramHist, 460, 64, 100, 0, p), 'ramLine');
+  setAttrIfChanged('cpuArea', 'points', flowArea(state.cpuHist, 460, 64, 100, 0, p), 'cpuArea', skip);
+  setAttrIfChanged('cpuLine', 'points', flowSpark(state.cpuHist, 460, 64, 100, 0, p), 'cpuLine', skip);
+  setAttrIfChanged('ramLine', 'points', flowSpark(state.ramHist, 460, 64, 100, 0, p), 'ramLine', skip);
 
   // Network: auto-scaled, scale eases toward target (prevents height jumps)
   const targetMax = Math.max(10, maxOfTwo(state.netHist, state.upHist) * 1.15);
   state.netMaxDisp += (targetMax - state.netMaxDisp) * (anim ? 0.08 : 1);
   const nm = state.netMaxDisp || targetMax;
-  setAttrIfChanged('netArea', 'points', flowArea(state.netHist, 380, 80, nm, 6, p), 'netArea');
-  setAttrIfChanged('netLine', 'points', flowSpark(state.netHist, 380, 80, nm, 6, p), 'netLine');
-  setAttrIfChanged('upLine',  'points', flowSpark(state.upHist,  380, 80, nm, 6, p), 'upLine');
+  setAttrIfChanged('netArea', 'points', flowArea(state.netHist, 380, 80, nm, 6, p), 'netArea', skip);
+  setAttrIfChanged('netLine', 'points', flowSpark(state.netHist, 380, 80, nm, 6, p), 'netLine', skip);
+  setAttrIfChanged('upLine',  'points', flowSpark(state.upHist,  380, 80, nm, 6, p), 'upLine', skip);
 
   // Smoothly count up the big ↓/↑ numbers
   const k = anim ? 0.12 : 1;
@@ -434,8 +449,8 @@ function graphFrame() {
   state.dispUpVal += (state.netUp   - state.dispUpVal) * k;
   if (Math.abs(state.netDown - state.dispDown)  < 0.04) state.dispDown  = state.netDown;
   if (Math.abs(state.netUp   - state.dispUpVal) < 0.04) state.dispUpVal = state.netUp;
-  setTextIfChanged('netDown', fmtNet(state.dispDown), 'netDownTxt');
-  setTextIfChanged('netUp', fmtNet(state.dispUpVal), 'netUpTxt');
+  setTextIfChanged('netDown', fmtNet(state.dispDown), 'netDownTxt', skip);
+  setTextIfChanged('netUp', fmtNet(state.dispUpVal), 'netUpTxt', skip);
 
   _graphFrameHandle = requestAnimationFrame(graphFrame);
 }
