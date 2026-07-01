@@ -1,6 +1,6 @@
 'use strict';
 
-/* ---------- Icon-Datenbank ---------- */
+/* ---------- Icon database ---------- */
 const ICON_CDN = 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons@main/png/';
 const ICON_DB = [
   // Media & Streaming
@@ -40,18 +40,18 @@ const ICON_DB = [
   { id:'zigbee2mqtt',       name:'Zigbee2MQTT',       cat:'Automation' },
   { id:'mosquitto',         name:'Mosquitto',         cat:'Automation' },
   { id:'matter',            name:'Matter',            cat:'Automation' },
-  // Netzwerk
-  { id:'pi-hole',           name:'Pi-hole',           cat:'Netzwerk' },
-  { id:'adguard-home',      name:'AdGuard Home',      cat:'Netzwerk' },
-  { id:'nginx-proxy-manager', name:'Nginx Proxy Mgr', cat:'Netzwerk' },
-  { id:'traefik',           name:'Traefik',           cat:'Netzwerk' },
-  { id:'cloudflare',        name:'Cloudflare',        cat:'Netzwerk' },
-  { id:'wireguard',         name:'WireGuard',         cat:'Netzwerk' },
-  { id:'tailscale',         name:'Tailscale',         cat:'Netzwerk' },
-  { id:'opnsense',          name:'OPNsense',          cat:'Netzwerk' },
-  { id:'pfsense',           name:'pfSense',           cat:'Netzwerk' },
-  { id:'unifi',             name:'UniFi',             cat:'Netzwerk' },
-  // Infrastruktur
+  // Network
+  { id:'pi-hole',           name:'Pi-hole',           cat:'Network' },
+  { id:'adguard-home',      name:'AdGuard Home',      cat:'Network' },
+  { id:'nginx-proxy-manager', name:'Nginx Proxy Mgr', cat:'Network' },
+  { id:'traefik',           name:'Traefik',           cat:'Network' },
+  { id:'cloudflare',        name:'Cloudflare',        cat:'Network' },
+  { id:'wireguard',         name:'WireGuard',         cat:'Network' },
+  { id:'tailscale',         name:'Tailscale',         cat:'Network' },
+  { id:'opnsense',          name:'OPNsense',          cat:'Network' },
+  { id:'pfsense',           name:'pfSense',           cat:'Network' },
+  { id:'unifi',             name:'UniFi',             cat:'Network' },
+  // Infrastructure
   { id:'unraid',            name:'Unraid',            cat:'Infra' },
   { id:'proxmox',           name:'Proxmox',           cat:'Infra' },
   { id:'truenas',           name:'TrueNAS',           cat:'Infra' },
@@ -68,17 +68,17 @@ const ICON_DB = [
   { id:'netdata',           name:'Netdata',           cat:'Monitoring' },
   { id:'zabbix',            name:'Zabbix',            cat:'Monitoring' },
   { id:'alertmanager',      name:'Alertmanager',      cat:'Monitoring' },
-  // Speicher & Dateien
-  { id:'nextcloud',         name:'Nextcloud',         cat:'Speicher' },
-  { id:'syncthing',         name:'Syncthing',         cat:'Speicher' },
-  { id:'filebrowser',       name:'File Browser',      cat:'Speicher' },
-  { id:'minio',             name:'MinIO',             cat:'Speicher' },
-  { id:'seafile',           name:'Seafile',           cat:'Speicher' },
-  { id:'duplicati',         name:'Duplicati',         cat:'Speicher' },
-  // Fotos
-  { id:'immich',            name:'Immich',            cat:'Fotos' },
-  { id:'photoprism',        name:'PhotoPrism',        cat:'Fotos' },
-  { id:'photoview',         name:'Photoview',         cat:'Fotos' },
+  // Storage & Files
+  { id:'nextcloud',         name:'Nextcloud',         cat:'Storage' },
+  { id:'syncthing',         name:'Syncthing',         cat:'Storage' },
+  { id:'filebrowser',       name:'File Browser',      cat:'Storage' },
+  { id:'minio',             name:'MinIO',             cat:'Storage' },
+  { id:'seafile',           name:'Seafile',           cat:'Storage' },
+  { id:'duplicati',         name:'Duplicati',         cat:'Storage' },
+  // Photos
+  { id:'immich',            name:'Immich',            cat:'Photos' },
+  { id:'photoprism',        name:'PhotoPrism',        cat:'Photos' },
+  { id:'photoview',         name:'Photoview',         cat:'Photos' },
   // Security & Auth
   { id:'vaultwarden',       name:'Vaultwarden',       cat:'Security' },
   { id:'bitwarden',         name:'Bitwarden',         cat:'Security' },
@@ -93,40 +93,40 @@ const ICON_DB = [
   { id:'code-server',       name:'Code Server',       cat:'Dev' },
   { id:'jenkins',           name:'Jenkins',           cat:'Dev' },
   { id:'drone',             name:'Drone CI',          cat:'Dev' },
-  // Produktivität
-  { id:'paperless-ngx',     name:'Paperless-ngx',     cat:'Produktivität' },
-  { id:'mealie',            name:'Mealie',            cat:'Produktivität' },
-  { id:'bookstack',         name:'BookStack',         cat:'Produktivität' },
-  { id:'freshrss',          name:'FreshRSS',          cat:'Produktivität' },
-  { id:'joplin',            name:'Joplin',            cat:'Produktivität' },
-  { id:'wikijs',            name:'Wiki.js',           cat:'Produktivität' },
-  { id:'grocy',             name:'Grocy',             cat:'Produktivität' },
-  { id:'wordpress',         name:'WordPress',         cat:'Produktivität' },
-  { id:'n8n',               name:'n8n',               cat:'Produktivität' },
-  { id:'changedetection',   name:'Changedetection',   cat:'Produktivität' },
-  { id:'ntfy',              name:'ntfy',              cat:'Produktivität' },
-  // Datenbanken
-  { id:'postgresql',        name:'PostgreSQL',        cat:'Datenbank' },
-  { id:'mariadb',           name:'MariaDB',           cat:'Datenbank' },
-  { id:'mysql',             name:'MySQL',             cat:'Datenbank' },
-  { id:'redis',             name:'Redis',             cat:'Datenbank' },
-  { id:'influxdb',          name:'InfluxDB',          cat:'Datenbank' },
-  { id:'mongodb',           name:'MongoDB',           cat:'Datenbank' },
+  // Productivity
+  { id:'paperless-ngx',     name:'Paperless-ngx',     cat:'Productivity' },
+  { id:'mealie',            name:'Mealie',            cat:'Productivity' },
+  { id:'bookstack',         name:'BookStack',         cat:'Productivity' },
+  { id:'freshrss',          name:'FreshRSS',          cat:'Productivity' },
+  { id:'joplin',            name:'Joplin',            cat:'Productivity' },
+  { id:'wikijs',            name:'Wiki.js',           cat:'Productivity' },
+  { id:'grocy',             name:'Grocy',             cat:'Productivity' },
+  { id:'wordpress',         name:'WordPress',         cat:'Productivity' },
+  { id:'n8n',               name:'n8n',               cat:'Productivity' },
+  { id:'changedetection',   name:'Changedetection',   cat:'Productivity' },
+  { id:'ntfy',              name:'ntfy',              cat:'Productivity' },
+  // Databases
+  { id:'postgresql',        name:'PostgreSQL',        cat:'Database' },
+  { id:'mariadb',           name:'MariaDB',           cat:'Database' },
+  { id:'mysql',             name:'MySQL',             cat:'Database' },
+  { id:'redis',             name:'Redis',             cat:'Database' },
+  { id:'influxdb',          name:'InfluxDB',          cat:'Database' },
+  { id:'mongodb',           name:'MongoDB',           cat:'Database' },
 ];
 
 let _iconPickInput = null;
 let _iconPickWrap  = null;
-let _iconActiveCat = 'Alle';
+let _iconActiveCat = 'All';
 
 function openIconPicker(inputEl, wrapEl) {
   _iconPickInput = inputEl;
   _iconPickWrap  = wrapEl;
-  _iconActiveCat = 'Alle';
+  _iconActiveCat = 'All';
   const el = $('iconPicker');
   if (!el) return;
   $('iconSearchInput').value = '';
   renderIconCats();
-  renderIconGrid('', 'Alle');
+  renderIconGrid('', 'All');
   el.style.display = 'flex';
   setTimeout(() => $('iconSearchInput')?.focus(), 60);
 }
@@ -151,7 +151,7 @@ function pickIconCat(cat) {
 function renderIconCats() {
   const bar = $('iconCatBar');
   if (!bar) return;
-  const cats = ['Alle', ...new Set(ICON_DB.map(i => i.cat))];
+  const cats = ['All', ...new Set(ICON_DB.map(i => i.cat))];
   bar.innerHTML = '';
   for (const cat of cats) {
     const btn = document.createElement('button');
@@ -167,7 +167,7 @@ function renderIconGrid(term, cat) {
   if (!grid) return;
   const q = term.toLowerCase();
   const list = ICON_DB.filter(ic => {
-    const inCat  = cat === 'Alle' || ic.cat === cat;
+    const inCat  = cat === 'All' || ic.cat === cat;
     const inTerm = !q || ic.name.toLowerCase().includes(q) || ic.id.includes(q);
     return inCat && inTerm;
   });
@@ -211,9 +211,9 @@ function _rebuildIconWrap(wrap, hiddenInput, val) {
 }
 
 /* ------------------------------------------------------------------
-   Zustand. Die System-Werte kommen jetzt LIVE von Glances
-   (Backend-Proxy /api/glances). Faellt Glances aus, bleiben die
-   letzten Werte stehen und im System-Panel erscheint "glances offline".
+   State. System values now come LIVE from Glances
+   (backend proxy /api/glances). If Glances goes down, the last
+   values are kept and the system panel shows "glances offline".
 ------------------------------------------------------------------ */
 const state = {
   cpu: 0, ram: 0, cpuTemp: null,
@@ -248,11 +248,11 @@ let _unifiState = null;
 let seeded = false;
 
 const STATUS_POLL_MS  = 30000;
-const WEATHER_POLL_MS = 600000; // 10 min — Wetter ändert sich langsam
+const WEATHER_POLL_MS = 600000; // 10 min — weather changes slowly
 
 let _weatherUnit = 'C';
 
-/* ---------- kleine Helfer ---------- */
+/* ---------- small helpers ---------- */
 const $ = (id) => document.getElementById(id);
 function setText(id, v) { const el = $(id); if (el) el.textContent = v; }
 function setAttr(id, a, v) { const el = $(id); if (el) el.setAttribute(a, v); }
@@ -269,24 +269,24 @@ function fmtSize(bytes) {
   return Math.round(gb) + ' GB';
 }
 
-/* ---------- Uhr & Begruessung ---------- */
+/* ---------- Clock & greeting ---------- */
 function tickClock() {
   const d = new Date();
   const h = d.getHours();
-  const greeting = h < 5 ? 'noch wach?' : h < 11 ? 'guten morgen' : h < 18 ? 'guten tag' : 'guten abend';
-  setText('time', d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }));
-  setText('date', d.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }));
+  const greeting = h < 5 ? 'still up?' : h < 11 ? 'good morning' : h < 18 ? 'good afternoon' : 'good evening';
+  setText('time', d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }));
+  setText('date', d.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }));
   setText('greeting', greeting);
 }
 
 /* ---------- Gauges & Sparklines ---------- */
 const CIRC = 2 * Math.PI * 46;
 function dash(p) { return `${(p / 100 * CIRC).toFixed(1)} ${(CIRC - p / 100 * CIRC + 0.5).toFixed(1)}`; }
-// Kontinuierlich nach links scrollende Sparkline: der Parameter p (0..1) ist der
-// Fortschritt seit dem letzten Sample. Jeder Punkt wird um p*step nach links
-// verschoben; der aktuelle Wert wird bis zur rechten Kante gehalten. Beim Sample-
-// Wechsel (p springt 1→0 während das Array um 1 weiterschiebt) ist der Übergang
-// nahtlos → flüssiger 60-fps-Verlauf statt harter Sprünge.
+// Sparkline that continuously scrolls left: the parameter p (0..1) is the
+// progress since the last sample. Each point is shifted left by p*step;
+// the current value is held at the right edge. On sample change
+// (p jumps 1→0 while the array shifts by one) the transition is
+// seamless → smooth 60fps motion instead of hard jumps.
 function flowSpark(arr, w, h, max, pad, p) {
   const n = arr.length;
   const mx = (max || Math.max(...arr) * 1.15) || 1;
@@ -297,7 +297,7 @@ function flowSpark(arr, w, h, max, pad, p) {
   const y = (v) => (pd + eff - (v / mx) * eff);
   let s = '';
   for (let i = 0; i < n; i++) s += `${((i - prog) * step).toFixed(1)},${y(arr[i]).toFixed(1)} `;
-  return s + `${w},${y(arr[n - 1]).toFixed(1)}`; // rechte Kante: aktuellen Wert halten
+  return s + `${w},${y(arr[n - 1]).toFixed(1)}`; // right edge: hold current value
 }
 function flowArea(arr, w, h, max, pad, p) {
   const step = w / (arr.length - 1);
@@ -312,8 +312,8 @@ function fmtNet(v) {
 function push(arr, v) { const a = arr.slice(1); a.push(v); return a; }
 
 function renderData() {
-  // Nur Ringe + Werte (die per CSS-Transition weich laufen).
-  // Die Linien-Graphen werden kontinuierlich im rAF-Loop gezeichnet.
+  // Only rings + values (which run smoothly via CSS transition).
+  // The line graphs are drawn continuously in the rAF loop.
   setText('cpuVal', Math.round(state.cpu));
   setText('ramVal', Math.round(state.ram));
   setText('cpuTemp', state.cpuTemp != null ? state.cpuTemp : '–');
@@ -321,10 +321,11 @@ function renderData() {
   setAttr('ramArc', 'stroke-dasharray', dash(state.ram));
 }
 
-/* ---------- Graphen: ein gemeinsamer rAF-Loop für flüssiges Scrollen ----------
-   CPU/RAM- und Netz-Linien werden jeden Frame neu gezeichnet und scrollen zeitbasiert
-   kontinuierlich nach links (siehe flowSpark). Die großen Netz-Zahlen zählen weich,
-   die Netz-Skala wird geglättet. Bei abgeschalteten Animationen wird hart gesetzt. */
+/* ---------- Graphs: one shared rAF loop for smooth scrolling ----------
+   CPU/RAM and network lines are redrawn every frame and scroll time-based
+   continuously to the left (see flowSpark). The big network numbers count
+   up smoothly, the network scale is smoothed. With animations disabled,
+   values are set immediately. */
 let graphRafStarted = false;
 function graphFrame() {
   const anim = state.animOn;
@@ -336,7 +337,7 @@ function graphFrame() {
   setAttr('cpuLine', 'points', flowSpark(state.cpuHist, 460, 64, 100, 0, p));
   setAttr('ramLine', 'points', flowSpark(state.ramHist, 460, 64, 100, 0, p));
 
-  // Netz: automatisch skaliert, Skala sanft nachziehen (verhindert Höhen-Sprünge)
+  // Network: auto-scaled, scale eases toward target (prevents height jumps)
   const targetMax = Math.max(10, Math.max(...state.netHist, ...state.upHist) * 1.15);
   state.netMaxDisp += (targetMax - state.netMaxDisp) * (anim ? 0.08 : 1);
   const nm = state.netMaxDisp || targetMax;
@@ -344,7 +345,7 @@ function graphFrame() {
   setAttr('netLine', 'points', flowSpark(state.netHist, 380, 80, nm, 6, p));
   setAttr('upLine',  'points', flowSpark(state.upHist,  380, 80, nm, 6, p));
 
-  // Große ↓/↑-Zahlen weich hochzählen
+  // Smoothly count up the big ↓/↑ numbers
   const k = anim ? 0.12 : 1;
   state.dispDown  += (state.netDown - state.dispDown) * k;
   state.dispUpVal += (state.netUp   - state.dispUpVal) * k;
@@ -361,9 +362,9 @@ function startGraphAnim() {
   requestAnimationFrame(graphFrame);
 }
 
-/* ---------- Speicher-Kacheln (Disks) ----------
-   Balken behalten immer den schönen blau→grün-Verlauf; "fast voll" wird nur über
-   Glühen/Pulsieren + Warnfarbe bei Wert & HDD-Icon signalisiert (Settings: Labels). */
+/* ---------- Storage tiles (disks) ----------
+   Bars always keep the nice blue→green gradient; "nearly full" is only signaled
+   via glow/pulse + warning color on the value & HDD icon (Settings: labels). */
 const DISK_WARN = 85, DISK_CRIT = 95;
 function diskIsSsd(d) {
   const s = `${d.label || ''} ${d.name || ''} ${d.mnt || ''} ${d.fsType || ''}`.toLowerCase();
@@ -404,7 +405,7 @@ function renderDisks(disks, total) {
   if (total) setText('diskTotalLabel', `${fmtSize(total.used)} / ${fmtSize(total.size)}`);
 }
 
-/* ---------- Glances-Polling ---------- */
+/* ---------- Glances polling ---------- */
 function setHost(text, color) {
   const el = $('sysHost');
   if (el) { el.textContent = text; el.style.color = color; }
@@ -436,7 +437,7 @@ function applyMetrics(d) {
     state.netHist = push(state.netHist, state.netDown);
     state.upHist = push(state.upHist, state.netUp);
   }
-  state.lastSampleTs = performance.now(); // Startzeitpunkt für das Frame-Scrolling
+  state.lastSampleTs = performance.now(); // start time for frame-based scrolling
 
   renderData();
   renderDisks(d.disks || [], d.diskTotal);
@@ -450,20 +451,20 @@ async function pollGlances() {
     const res = await fetch('/api/glances', { cache: 'no-store' });
     const d = await res.json();
     if (!d || !d.ok) {
-      const msg = d && d.error === 'not_configured' ? 'glances nicht konfiguriert' : 'glances offline';
+      const msg = d && d.error === 'not_configured' ? 'glances not configured' : 'glances offline';
       setHost(msg, '#f43f5e');
       setText('glancesSettingsStatus', '● ' + msg);
       const gs = $('glancesSettingsStatus'); if (gs) gs.style.color = '#f43f5e';
       return;
     }
     applyMetrics(d);
-    setText('glancesSettingsStatus', '● verbunden');
+    setText('glancesSettingsStatus', '● connected');
     const gs = $('glancesSettingsStatus'); if (gs) gs.style.color = '#3ddc97';
   } catch (err) {
     setHost('glances offline', '#f43f5e');
     setText('glancesSettingsStatus', '● offline');
     const gs = $('glancesSettingsStatus'); if (gs) gs.style.color = '#f43f5e';
-    console.warn('Glances-Poll fehlgeschlagen:', err.message);
+    console.warn('Glances poll failed:', err.message);
   }
 }
 function startGlances() {
@@ -489,9 +490,9 @@ function renderDocker(d) {
   setDockerBadge(d.version ? 'v' + d.version : 'docker', '#5b9dff');
   setText('dockerCount', d.total != null ? d.total : '–');
 
-  const parts = [`<span style="color:#3ddc97">${d.running} aktiv</span>`];
-  if (d.paused) parts.push(`<span style="color:#ffb454">${d.paused} pausiert</span>`);
-  if (d.stopped) parts.push(`<span style="color:#6b7689">${d.stopped} gestoppt</span>`);
+  const parts = [`<span style="color:#3ddc97">${d.running} active</span>`];
+  if (d.paused) parts.push(`<span style="color:#ffb454">${d.paused} paused</span>`);
+  if (d.stopped) parts.push(`<span style="color:#6b7689">${d.stopped} stopped</span>`);
   const sum = $('dockerSummary');
   if (sum) sum.innerHTML = 'Container · ' + parts.join(' · ');
 
@@ -500,8 +501,8 @@ function renderDocker(d) {
   list.innerHTML = '';
   for (const c of (d.containers || [])) {
     const dot = DOCKER_DOT[c.state] || '#6b7689';
-    const right = c.state === 'paused' ? 'pausiert'
-      : c.state === 'stopped' ? 'gestoppt'
+    const right = c.state === 'paused' ? 'paused'
+      : c.state === 'stopped' ? 'stopped'
       : `${c.cpu != null ? c.cpu : 0}% · ${fmtMem(c.mem)}`;
     const row = document.createElement('div');
     row.style.cssText = "display:flex;align-items:center;justify-content:space-between;font:500 12px 'JetBrains Mono',monospace";
@@ -519,23 +520,23 @@ async function pollDocker() {
     const res = await fetch('/api/docker', { cache: 'no-store' });
     const d = await res.json();
     if (!d || !d.ok) {
-      const msg = d && d.error === 'not_configured' ? 'nicht konfiguriert' : 'offline';
+      const msg = d && d.error === 'not_configured' ? 'not configured' : 'offline';
       setDockerBadge(msg, '#f43f5e');
       setText('dockerSettingsStatus', '● ' + msg);
       const ds = $('dockerSettingsStatus'); if (ds) ds.style.color = '#f43f5e';
       return;
     }
     renderDocker(d);
-    setText('dockerSettingsStatus', `● ${d.running ?? 0} aktiv`);
+    setText('dockerSettingsStatus', `● ${d.running ?? 0} active`);
     const ds = $('dockerSettingsStatus'); if (ds) ds.style.color = '#3ddc97';
   } catch (err) {
     setDockerBadge('offline', '#f43f5e');
     setText('dockerSettingsStatus', '● offline');
     const ds = $('dockerSettingsStatus'); if (ds) ds.style.color = '#f43f5e';
-    console.warn('Docker-Poll fehlgeschlagen:', err.message);
+    console.warn('Docker poll failed:', err.message);
   }
 }
-const DOCKER_POLL_MS = 10000; // Container-Status aendert sich selten – 10 s reicht.
+const DOCKER_POLL_MS = 10000; // Container status rarely changes – 10s is enough.
 function startDocker() {
   clearInterval(dockerTimer);
   pollDocker();
@@ -561,7 +562,7 @@ function fmtNum(n) {
 }
 function renderAdGuard(d) {
   const color = d.protection ? '#3ddc97' : '#ffb454';
-  setAdguardStatus(d.protection ? 'aktiv' : 'pausiert', color);
+  setAdguardStatus(d.protection ? 'active' : 'paused', color);
   setText('adguardBlockPct', d.blockedPct != null ? d.blockedPct : '–');
   const arc = $('adguardArc');
   if (arc) {
@@ -581,13 +582,13 @@ async function pollAdGuard() {
     const res = await fetch('/api/adguard', { cache: 'no-store' });
     const d = await res.json();
     if (!d || !d.ok) {
-      setAdguardStatus(d && d.error === 'not_configured' ? 'nicht konfiguriert' : 'offline', '#f43f5e');
+      setAdguardStatus(d && d.error === 'not_configured' ? 'not configured' : 'offline', '#f43f5e');
       return;
     }
     renderAdGuard(d);
   } catch (err) {
     setAdguardStatus('offline', '#f43f5e');
-    console.warn('AdGuard-Poll fehlgeschlagen:', err.message);
+    console.warn('AdGuard poll failed:', err.message);
   }
 }
 function startAdGuard() {
@@ -647,7 +648,7 @@ function fmtBitrate(kbps) {
   return Math.round(kbps) + ' kbps';
 }
 
-// Qualitätsstufen farblich gestaffelt: 4K violett, 1080p grün, 720p amber, darunter rot.
+// Quality tiers color-coded: 4K purple, 1080p green, 720p amber, below that red.
 function plexResColor(r) {
   if (!r) return '#6b7689';
   const v = String(r).toUpperCase();
@@ -657,7 +658,7 @@ function plexResColor(r) {
   return '#f43f5e';
 }
 
-// Baut eine Zeile aus farbigen Tokens, getrennt durch graue Punkte.
+// Builds a row of colored tokens, separated by gray dots.
 function plexInfoRow(tokens) {
   const row = document.createElement('div');
   row.style.cssText = "display:flex;align-items:center;gap:6px;margin-top:5px;font:500 11px 'JetBrains Mono',monospace;white-space:nowrap;overflow:hidden";
@@ -712,7 +713,7 @@ function renderPlexSession(s) {
   const txt = document.createElement('div');
   txt.style.cssText = 'flex:1;min-width:0';
 
-  // Titelzeile: Titel/Serie links, Nutzer-Chip farblich hervorgehoben rechts
+  // Title row: title/show on the left, user chip highlighted on the right
   const titleRow = document.createElement('div');
   titleRow.style.cssText = 'display:flex;align-items:baseline;justify-content:space-between;gap:8px';
 
@@ -735,7 +736,7 @@ function renderPlexSession(s) {
     txt.appendChild(sub);
   }
 
-  // Zeile 1: Auflösung · Stream-Typ · Bitrate (+ Transcode-Speed falls relevant)
+  // Row 1: resolution · stream type · bitrate (+ transcode speed if relevant)
   const speedToken = (s.transcodeSpeed && s.streamType !== 'directplay')
     ? { text: `×${s.transcodeSpeed}`, color: plexSpeedColor(s.transcodeSpeed), weight: '700' }
     : null;
@@ -746,7 +747,7 @@ function renderPlexSession(s) {
     speedToken,
   ]));
 
-  // Zeile 2: Video-Codec-Kette · Audio-Codec-Kette
+  // Row 2: video codec chain · audio codec chain
   const videoChain = (() => {
     if (!s.videoDisplayTitle) return null;
     if (s.videoDecision === 'transcode' && s.transVideoCodec) {
@@ -769,7 +770,7 @@ function renderPlexSession(s) {
     ]));
   }
 
-  // Zeile 3: Gerät / App · Netzwerk
+  // Row 3: device / app · network
   const locToken = s.location
     ? { text: s.location.toUpperCase(), color: plexLocationColor(s.location), weight: '700' }
     : null;
@@ -779,7 +780,7 @@ function renderPlexSession(s) {
     locToken,
   ]));
 
-  // Zeile 4: Untertitel (nur wenn aktiv)
+  // Row 4: subtitle (only when active)
   if (s.subtitle) {
     txt.appendChild(plexInfoRow([
       { text: 'SUB', color: '#8b6dff', weight: '700' },
@@ -787,7 +788,7 @@ function renderPlexSession(s) {
     ]));
   }
 
-  // Fortschritt – direkt aus dem von Plex gemeldeten viewOffset
+  // Progress – directly from the viewOffset reported by Plex
   const pct = s.duration > 0 ? Math.round(s.viewOffset / s.duration * 100) : 0;
   const barOuter = document.createElement('div');
   barOuter.style.cssText = 'height:3px;border-radius:3px;background:rgba(120,150,200,0.12);overflow:hidden';
@@ -795,9 +796,9 @@ function renderPlexSession(s) {
   barFill.style.cssText = `height:100%;width:${pct}%;border-radius:3px;background:${PLEX_COLOR}`;
   barOuter.appendChild(barFill);
 
-  const stateSpan = s.state === 'playing' ? `<span style="color:${PLEX_COLOR}">▶ läuft</span>`
-    : s.state === 'paused' ? `<span style="color:#ffb454">⏸ pausiert</span>`
-    : `<span style="color:#6b7689">↺ puffert</span>`;
+  const stateSpan = s.state === 'playing' ? `<span style="color:${PLEX_COLOR}">▶ playing</span>`
+    : s.state === 'paused' ? `<span style="color:#ffb454">⏸ paused</span>`
+    : `<span style="color:#6b7689">↺ buffering</span>`;
 
   const timeRow = document.createElement('div');
   timeRow.style.cssText = "display:flex;justify-content:space-between;font:500 10px 'JetBrains Mono',monospace;color:#6b7689;margin-top:5px";
@@ -815,9 +816,9 @@ function renderPlexSession(s) {
 function renderPlex(d) {
   const lib = d.library || {};
   setText('plexLibStats',
-    `${fmtNum(lib.movies)} Filme · ${fmtNum(lib.shows)} Serien · ${fmtNum(lib.episodes)} Eps`
+    `${fmtNum(lib.movies)} Movies · ${fmtNum(lib.shows)} Shows · ${fmtNum(lib.episodes)} Eps`
   );
-  setPlexStatus('verbunden', PLEX_COLOR);
+  setPlexStatus('connected', PLEX_COLOR);
 
   const container = $('plexSessions');
   if (!container) return;
@@ -826,7 +827,7 @@ function renderPlex(d) {
   if (!d.sessions || !d.sessions.length) {
     const empty = document.createElement('div');
     empty.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:28px 0';
-    empty.innerHTML = `<span style="font:500 11px 'JetBrains Mono',monospace;color:#3f4a5c">Niemand streamt gerade</span>`;
+    empty.innerHTML = `<span style="font:500 11px 'JetBrains Mono',monospace;color:#3f4a5c">Nobody is streaming right now</span>`;
     container.appendChild(empty);
     return;
   }
@@ -842,14 +843,14 @@ async function pollPlex() {
     const res = await fetch('/api/plex', { cache: 'no-store' });
     const d = await res.json();
     if (!d || !d.ok) {
-      setPlexStatus(d && d.error === 'not_configured' ? 'nicht konfiguriert' : 'offline', '#f43f5e');
+      setPlexStatus(d && d.error === 'not_configured' ? 'not configured' : 'offline', '#f43f5e');
       setText('plexLibStats', '–');
       return;
     }
     renderPlex(d);
   } catch (err) {
     setPlexStatus('offline', '#f43f5e');
-    console.warn('Plex-Poll fehlgeschlagen:', err.message);
+    console.warn('Plex poll failed:', err.message);
   }
 }
 
@@ -859,26 +860,26 @@ function startPlex() {
   plexTimer = setInterval(pollPlex, PLEX_POLL_MS);
 }
 
-/* ---------- Dienste-Status ---------- */
+/* ---------- Service status ---------- */
 function renderServiceStatus(d) {
   const allOk = d.total > 0 && d.online === d.total;
   const anyDown = d.total > 0 && d.online < d.total;
 
-  // Kachel-Header-Badge
+  // Tile header badge
   const countEl = $('serviceCount');
   if (countEl) {
     countEl.textContent = d.total > 0 ? `${d.online}/${d.total} ▲` : '– / –';
     countEl.style.color = allOk ? '#3ddc97' : anyDown ? '#f43f5e' : '#6b7689';
   }
 
-  // Kachel-Service-Liste
+  // Tile service list
   const list = $('serviceList');
   if (list) {
     list.innerHTML = '';
     if (!d.total) {
       const em = document.createElement('div');
       em.style.cssText = "font:500 11px 'JetBrains Mono',monospace;color:#566073;padding:12px 4px;text-align:center";
-      em.textContent = 'Keine Dienste konfiguriert';
+      em.textContent = 'No services configured';
       list.appendChild(em);
     } else {
       d.services.forEach((s, i) => {
@@ -899,7 +900,7 @@ function renderServiceStatus(d) {
     }
   }
 
-  // Header-Badge (oben rechts im Dashboard)
+  // Header badge (top right of dashboard)
   if (d.total > 0) {
     const badge = $('systemStatusBadge');
     const dot   = $('systemStatusDot');
@@ -910,8 +911,8 @@ function renderServiceStatus(d) {
     const brd   = allOk ? 'rgba(61,220,151,0.22)' : 'rgba(244,63,94,0.28)';
     if (badge) { badge.style.background = bgCol; badge.style.borderColor = brd; }
     if (dot)   { dot.style.background = col; dot.style.animationPlayState = allOk ? 'running' : 'paused'; }
-    if (txt)   { txt.textContent = allOk ? 'Alle Systeme online' : `${d.total - d.online} Dienst${d.total - d.online !== 1 ? 'e' : ''} offline`; }
-    if (sub)   { sub.textContent = `${d.total} Dienste`; sub.style.color = allOk ? '#6b8a78' : '#9b6b78'; }
+    if (txt)   { txt.textContent = allOk ? 'All systems online' : `${d.total - d.online} service${d.total - d.online !== 1 ? 's' : ''} offline`; }
+    if (sub)   { sub.textContent = `${d.total} services`; sub.style.color = allOk ? '#6b8a78' : '#9b6b78'; }
   }
 }
 
@@ -920,7 +921,7 @@ async function pollServiceStatus() {
   try {
     const d = await fetch('/api/status', { cache: 'no-store' }).then((r) => r.json());
     renderServiceStatus(d);
-  } catch { /* letzter Stand bleibt */ }
+  } catch { /* keep last known state */ }
 }
 
 function startServiceStatus() {
@@ -936,7 +937,7 @@ function renderStatusSettingsList(services) {
   if (!services.length) {
     const em = document.createElement('div');
     em.style.cssText = "font:500 11px 'JetBrains Mono',monospace;color:#566073;padding:8px 4px";
-    em.textContent = 'Noch keine Dienste eingetragen.';
+    em.textContent = 'No services added yet.';
     el.appendChild(em);
     return;
   }
@@ -946,7 +947,7 @@ function renderStatusSettingsList(services) {
     row.innerHTML =
       `<span style="font:500 11px 'JetBrains Mono',monospace;color:#dde5f0;flex:0 0 auto">${s.name}</span>` +
       `<span style="font:500 10px 'JetBrains Mono',monospace;color:#6b7689;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s.url}</span>` +
-      `<button data-idx="${i}" style="background:none;border:none;color:#566073;cursor:pointer;font-size:14px;flex-shrink:0;padding:0 4px" title="Entfernen">✕</button>`;
+      `<button data-idx="${i}" style="background:none;border:none;color:#566073;cursor:pointer;font-size:14px;flex-shrink:0;padding:0 4px" title="Remove">✕</button>`;
     el.appendChild(row);
   });
 }
@@ -996,10 +997,10 @@ async function saveStatusServices() {
     });
     renderStatusSettingsList(_statusServices);
     pollServiceStatus();
-  } catch (err) { console.error('Status-Config konnte nicht gespeichert werden:', err); }
+  } catch (err) { console.error('Failed to save status config:', err); }
 }
 
-/* ---------- Festplatten-Labels (Settings) ---------- */
+/* ---------- Disk labels (Settings) ---------- */
 let _diskCfg = [];
 async function loadDiskSettings() {
   const el = $('diskCfgList');
@@ -1017,7 +1018,7 @@ function renderDiskSettings() {
   if (!_diskCfg.length) {
     const em = document.createElement('div');
     em.style.cssText = "font:500 11px 'JetBrains Mono',monospace;color:#566073;padding:8px 4px";
-    em.textContent = 'Keine Laufwerke erkannt (Glances verbinden).';
+    em.textContent = 'No drives detected (connect Glances).';
     el.appendChild(em);
     return;
   }
@@ -1059,53 +1060,53 @@ async function saveDiskLabels() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ labels }),
     });
-    pollGlances();        // Dashboard-Disks sofort mit neuen Labels rendern
-    loadDiskSettings();   // Editor neu laden
-  } catch (err) { console.error('Disk-Labels speichern fehlgeschlagen:', err); }
+    pollGlances();        // render dashboard disks immediately with new labels
+    loadDiskSettings();   // reload editor
+  } catch (err) { console.error('Failed to save disk labels:', err); }
 }
 
-/* ---------- Wetter (Open-Meteo, kein API-Key noetig) ---------- */
+/* ---------- Weather (Open-Meteo, no API key needed) ---------- */
 const WMO_DESC = {
-  0: ['Klar', 'Klar (Nacht)'],
-  1: ['Leicht bewölkt', 'Leicht bewölkt'],
-  2: ['Bewölkt', 'Bewölkt'],
-  3: ['Bedeckt', 'Bedeckt'],
-  45: ['Nebel', 'Nebel'],
-  48: ['Reifnebel', 'Reifnebel'],
-  51: ['Leichter Nieselregen', 'Leichter Nieselregen'],
-  53: ['Nieselregen', 'Nieselregen'],
-  55: ['Starker Nieselregen', 'Starker Nieselregen'],
-  61: ['Leichter Regen', 'Leichter Regen'],
-  63: ['Regen', 'Regen'],
-  65: ['Starker Regen', 'Starker Regen'],
-  71: ['Leichter Schnee', 'Leichter Schnee'],
-  73: ['Schnee', 'Schnee'],
-  75: ['Starker Schnee', 'Starker Schnee'],
-  77: ['Eiskörner', 'Eiskörner'],
-  80: ['Regenschauer', 'Regenschauer'],
-  81: ['Kräftige Schauer', 'Kräftige Schauer'],
-  82: ['Starke Schauer', 'Starke Schauer'],
-  85: ['Schneeschauer', 'Schneeschauer'],
-  86: ['Starke Schneeschauer', 'Starke Schneeschauer'],
-  95: ['Gewitter', 'Gewitter'],
-  96: ['Gewitter mit Hagel', 'Gewitter mit Hagel'],
-  99: ['Heftiges Gewitter', 'Heftiges Gewitter'],
+  0: ['Clear', 'Clear (night)'],
+  1: ['Partly cloudy', 'Partly cloudy'],
+  2: ['Cloudy', 'Cloudy'],
+  3: ['Overcast', 'Overcast'],
+  45: ['Fog', 'Fog'],
+  48: ['Rime fog', 'Rime fog'],
+  51: ['Light drizzle', 'Light drizzle'],
+  53: ['Drizzle', 'Drizzle'],
+  55: ['Heavy drizzle', 'Heavy drizzle'],
+  61: ['Light rain', 'Light rain'],
+  63: ['Rain', 'Rain'],
+  65: ['Heavy rain', 'Heavy rain'],
+  71: ['Light snow', 'Light snow'],
+  73: ['Snow', 'Snow'],
+  75: ['Heavy snow', 'Heavy snow'],
+  77: ['Ice pellets', 'Ice pellets'],
+  80: ['Light rain showers', 'Light rain showers'],
+  81: ['Rain showers', 'Rain showers'],
+  82: ['Heavy rain showers', 'Heavy rain showers'],
+  85: ['Snow showers', 'Snow showers'],
+  86: ['Heavy snow showers', 'Heavy snow showers'],
+  95: ['Thunderstorm', 'Thunderstorm'],
+  96: ['Thunderstorm with hail', 'Thunderstorm with hail'],
+  99: ['Severe thunderstorm', 'Severe thunderstorm'],
 };
 
 function wmoToDesc(code, isDay) {
   const e = WMO_DESC[code];
   if (e) return isDay ? e[0] : e[1];
-  // Fallback für nicht gelistete Codes
-  if (code >= 51 && code <= 55) return 'Nieselregen';
-  if (code >= 61 && code <= 65) return 'Regen';
-  if (code >= 71 && code <= 75) return 'Schnee';
-  if (code >= 80 && code <= 82) return 'Schauer';
+  // Fallback for unlisted codes
+  if (code >= 51 && code <= 55) return 'Drizzle';
+  if (code >= 61 && code <= 65) return 'Rain';
+  if (code >= 71 && code <= 75) return 'Snow';
+  if (code >= 80 && code <= 82) return 'Showers';
   return '–';
 }
 
-/* ---------- Wetter-Icons: animiertes, gefülltes Inline-SVG + Glow ----------
-   Typen: sun, moon, psun/pmoon (teilweise bewölkt), cloud, fog, drizzle,
-   rain, snow, thunder. Animationen via CSS-Klassen (unter .no-anim still). */
+/* ---------- Weather icons: animated, filled inline SVG + glow ----------
+   Types: sun, moon, psun/pmoon (partly cloudy), cloud, fog, drizzle,
+   rain, snow, thunder. Animations via CSS classes (still under .no-anim). */
 function wmoToType(code, isDay) {
   if (code === 0) return isDay ? 'sun' : 'moon';
   if (code === 1 || code === 2) return isDay ? 'psun' : 'pmoon';
@@ -1150,7 +1151,7 @@ function wiSun(cx, cy, r) {
     `<circle class="wi-pulse" cx="${cx}" cy="${cy}" r="${r}" fill="url(#wiSun)"/>`;
 }
 
-// Halbmond-Pfad zentriert um (19,19), Außenradius 8; via transform skaliert/verschoben.
+// Crescent moon path centered at (19,19), outer radius 8; scaled/moved via transform.
 function wiMoon(cx, cy, scale) {
   const s = scale || 1;
   const tx = (cx - 19 * s).toFixed(2), ty = (cy - 19 * s).toFixed(2);
@@ -1204,14 +1205,14 @@ function renderWeather(data) {
 
   if (!data || !data.configured) {
     if (temp) temp.textContent = '–°';
-    if (desc) desc.textContent = 'Nicht konfiguriert';
-    if (st)   { st.textContent = '● nicht konfiguriert'; st.style.color = '#6b7689'; }
+    if (desc) desc.textContent = 'Not configured';
+    if (st)   { st.textContent = '● not configured'; st.style.color = '#6b7689'; }
     return;
   }
   if (data.error === 'city_not_found') {
     if (temp) temp.textContent = '–°';
-    if (desc) desc.textContent = 'Stadt nicht gefunden';
-    if (st)   { st.textContent = '● Stadt nicht gefunden'; st.style.color = '#f43f5e'; }
+    if (desc) desc.textContent = 'City not found';
+    if (st)   { st.textContent = '● city not found'; st.style.color = '#f43f5e'; }
     return;
   }
   if (data.error) {
@@ -1233,7 +1234,7 @@ async function pollWeather() {
   try {
     const d = await fetch('/api/weather', { cache: 'no-store' }).then(r => r.json());
     renderWeather(d);
-  } catch { /* Anzeige bleibt unveraendert */ }
+  } catch { /* display remains unchanged */ }
 }
 
 function startWeather() {
@@ -1295,7 +1296,7 @@ function renderUnifiAps(devices) {
   if (!wrap) return;
   const aps = devices.filter(d => d.type === 'uap');
   if (!aps.length) {
-    wrap.innerHTML = '<div style="font:500 11px \'JetBrains Mono\',monospace;color:var(--text-3)">Keine Access Points gefunden</div>';
+    wrap.innerHTML = '<div style="font:500 11px \'JetBrains Mono\',monospace;color:var(--text-3)">No access points found</div>';
     return;
   }
 
@@ -1345,19 +1346,19 @@ async function pollUnifiSnapshot() {
   const ph    = $('unifiSnapshotPlaceholder');
   const camSt = $('unifiCamStatus');
   if (!img) return;
-  // Noch kein State → warten bis pollUnifi fertig ist
+  // No state yet → wait until pollUnifi finishes
   if (!_unifiState) return;
   const cam = _unifiState?.cameras?.[0];
   if (!cam?.id) {
-    // Unterscheide: Protect-Fehler vs. keine Kamera vorhanden
+    // Distinguish: Protect error vs. no camera present
     const hint = _unifiState.camError
-      ? '● Protect nicht erreichbar'
-      : '● keine Kamera gefunden';
+      ? '● Protect unreachable'
+      : '● no camera found';
     if (camSt) { camSt.textContent = hint; camSt.style.color = 'var(--orange)'; }
-    // Placeholder-Text anpassen
+    // Adjust placeholder text
     if (ph) ph.textContent = _unifiState.camError
-      ? `Protect-API Fehler: ${_unifiState.camError}`
-      : 'Keine Kamera über Protect gefunden — Camera ID manuell eintragen';
+      ? `Protect API error: ${_unifiState.camError}`
+      : 'No camera found via Protect — enter Camera ID manually';
     return;
   }
   if (!cam.online) {
@@ -1370,12 +1371,12 @@ async function pollUnifiSnapshot() {
     img.src = url;
     img.style.display = 'block';
     if (ph) ph.style.display = 'none';
-    setText('unifiSnapshotTs', 'Snapshot: ' + new Date().toLocaleTimeString('de-DE'));
+    setText('unifiSnapshotTs', 'Snapshot: ' + new Date().toLocaleTimeString('en-US', { hour12: false }));
     if (camSt) { camSt.textContent = '● online'; camSt.style.color = 'var(--green)'; }
     setText('unifiCamName', cam.name);
   };
   tmp.onerror = () => {
-    if (camSt) { camSt.textContent = '● Snapshot Fehler'; camSt.style.color = 'var(--orange)'; }
+    if (camSt) { camSt.textContent = '● snapshot error'; camSt.style.color = 'var(--orange)'; }
   };
   tmp.src = url;
 }
@@ -1386,7 +1387,7 @@ async function pollUnifi() {
     const d = await fetch('/api/unifi', { cache: 'no-store' }).then(r => r.json());
     if (!d?.ok) {
       setUnifiStatus(
-        d?.error === 'not_configured' ? 'nicht konfiguriert' : 'offline',
+        d?.error === 'not_configured' ? 'not configured' : 'offline',
         d?.error === 'not_configured' ? 'var(--text-3)' : 'var(--red)'
       );
       return;
@@ -1408,7 +1409,7 @@ function startUnifi() {
   clearInterval(unifiTimer);
   clearInterval(unifiSnapTimer);
   pollUnifi().then(() => {
-    // Erst nach dem ersten erfolgreichen Poll Snapshot starten (Camera-ID aus State)
+    // Only start snapshot polling after the first successful poll (Camera ID comes from state)
     pollUnifiSnapshot();
     unifiSnapTimer = setInterval(pollUnifiSnapshot, UNIFI_SNAP_MS);
   });
@@ -1432,7 +1433,7 @@ function renderNcUsers(users) {
   if (!users || !users.length) {
     const em = document.createElement('div');
     em.style.cssText = "font:500 11px 'JetBrains Mono',monospace;color:#566073;padding:6px 4px";
-    em.textContent = 'Keine Nutzer';
+    em.textContent = 'No users';
     list.appendChild(em);
     return;
   }
@@ -1449,10 +1450,10 @@ function renderNcUsers(users) {
 
 function renderNextcloud(d) {
   setText('ncUsed', fmtSize(d.used));
-  setText('ncUserCount', `${d.userCount} Nutzer`);
+  setText('ncUserCount', `${d.userCount} Users`);
   renderNcUsers(d.users);
   setText('ncVersion', d.version || '–');
-  setNextcloudStatus('verbunden', '#3ddc97');
+  setNextcloudStatus('connected', '#3ddc97');
 }
 
 async function pollNextcloud() {
@@ -1461,13 +1462,13 @@ async function pollNextcloud() {
     const res = await fetch('/api/nextcloud', { cache: 'no-store' });
     const d = await res.json();
     if (!d || !d.ok) {
-      setNextcloudStatus(d && d.error === 'not_configured' ? 'nicht konfiguriert' : 'offline', '#f43f5e');
+      setNextcloudStatus(d && d.error === 'not_configured' ? 'not configured' : 'offline', '#f43f5e');
       return;
     }
     renderNextcloud(d);
   } catch (err) {
     setNextcloudStatus('offline', '#f43f5e');
-    console.warn('Nextcloud-Poll fehlgeschlagen:', err.message);
+    console.warn('Nextcloud poll failed:', err.message);
   }
 }
 
@@ -1477,7 +1478,7 @@ function startNextcloud() {
   nextcloudTimer = setInterval(pollNextcloud, NEXTCLOUD_POLL_MS);
 }
 
-/* ToLeech-Upload: Dateien per Drag&Drop / Klick in den Ordner schieben */
+/* ToLeech upload: push files into the folder via drag&drop / click */
 function ncUploadFiles(files) {
   const box = $('ncDropStatus');
   if (!box || !files || !files.length) return;
@@ -1485,16 +1486,16 @@ function ncUploadFiles(files) {
   Array.from(files).forEach((file) => {
     const row = document.createElement('div');
     row.style.cssText = "display:flex;align-items:center;gap:8px;font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)";
-    row.innerHTML = `<span style="color:#5b9dff">⏳</span><span style="${ell}">${file.name}</span><span style="flex-shrink:0">wird hochgeladen…</span>`;
+    row.innerHTML = `<span style="color:#5b9dff">⏳</span><span style="${ell}">${file.name}</span><span style="flex-shrink:0">uploading…</span>`;
     box.appendChild(row);
     fetch(`/api/nextcloud/upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file })
       .then((r) => r.json())
       .then((res) => {
         if (res && res.ok) {
-          row.innerHTML = `<span style="color:#3ddc97">✓</span><span style="${ell};color:var(--text-15)">${file.name}</span><span style="color:#3ddc97;flex-shrink:0">hochgeladen</span>`;
+          row.innerHTML = `<span style="color:#3ddc97">✓</span><span style="${ell};color:var(--text-15)">${file.name}</span><span style="color:#3ddc97;flex-shrink:0">uploaded</span>`;
           pollNextcloud();
         } else {
-          const e = res && res.error ? res.error : 'Fehler';
+          const e = res && res.error ? res.error : 'Error';
           row.innerHTML = `<span style="color:#f43f5e">✗</span><span style="${ell}">${file.name}</span><span style="color:#f43f5e;flex-shrink:0">${e}</span>`;
         }
       })
@@ -1522,7 +1523,7 @@ function setupNextcloudUpload() {
   });
 }
 
-// Startet/erneuert alle Live-Abfragen (gemeinsames Intervall).
+// Starts/refreshes all live polls (shared interval).
 function startLive() {
   startGlances();
   startDocker();
@@ -1534,7 +1535,7 @@ function startLive() {
   startNextcloud();
 }
 
-/* ---------- Schnellzugriff aus /api/config ---------- */
+/* ---------- Quick access from /api/config ---------- */
 async function loadConfig() {
   try {
     const res = await fetch('/api/config', { cache: 'no-store' });
@@ -1547,7 +1548,7 @@ async function loadConfig() {
     if (cfg.search && cfg.search.engine) state.searchEngine = cfg.search.engine;
     renderQuickLinks(cfg.quicklinks || []);
   } catch (err) {
-    console.error('Konfiguration konnte nicht geladen werden:', err);
+    console.error('Failed to load configuration:', err);
   }
 }
 
@@ -1613,7 +1614,7 @@ function setupSearch() {
   });
 }
 
-/* ---------- Schnellzugriff-Editor ---------- */
+/* ---------- Quick access editor ---------- */
 let _qlItems = [];
 
 function _qlMkInput(value, placeholder, field) {
@@ -1659,7 +1660,7 @@ function renderQlEditor() {
     colorEl.type = 'color';
     colorEl.value = item.color || '#5b9dff';
     colorEl.dataset.field = 'color';
-    colorEl.title = 'Farbe';
+    colorEl.title = 'Color';
     colorEl.style.cssText = 'width:20px;height:20px;border:none;border-radius:3px;cursor:pointer;padding:1px;background:transparent;flex-shrink:0';
 
     const mkIn = (val, ph, field) => {
@@ -1683,11 +1684,11 @@ function renderQlEditor() {
     btns.style.cssText = 'display:flex;gap:3px';
     btns.appendChild(upBtn); btns.appendChild(delBtn);
 
-    // Icon-Picker-Widget
+    // Icon picker widget
     const iconInput = document.createElement('input');
     iconInput.type = 'hidden'; iconInput.value = item.icon || ''; iconInput.dataset.field = 'icon';
     const iconWrap = document.createElement('div');
-    iconWrap.title = 'Icon wählen';
+    iconWrap.title = 'Select icon';
     iconWrap.style.cssText = 'display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:7px;border:1px solid rgba(120,150,200,0.18);background:rgba(8,12,20,0.6);height:36px;transition:border-color .1s,background .1s;overflow:hidden';
     iconWrap.appendChild(iconInput);
     _rebuildIconWrap(iconWrap, iconInput, item.icon || '');
@@ -1728,21 +1729,21 @@ async function saveQlItems() {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     renderQuickLinks(payload);
   } catch (err) {
-    console.error('Quicklinks speichern fehlgeschlagen:', err.message);
+    console.error('Failed to save quicklinks:', err.message);
   }
 }
 
-/* ---------- Dashboard-Layout (Kachel-Reihenfolge & Sichtbarkeit) ---------- */
+/* ---------- Dashboard layout (tile order & visibility) ---------- */
 const DASHBOARD_WIDGETS = [
-  { id: 'system-load',        section: 'system',          label: 'System-Auslastung' },
-  { id: 'network-throughput', section: 'system',          label: 'Netzwerk-Durchsatz' },
-  { id: 'disk-storage',       section: 'system',          label: 'Speicher · Unraid Array' },
-  { id: 'service-status',     section: 'dienste',         label: 'Dienst-Status' },
+  { id: 'system-load',        section: 'system',          label: 'System Load' },
+  { id: 'network-throughput', section: 'system',          label: 'Network Throughput' },
+  { id: 'disk-storage',       section: 'system',          label: 'Storage · Unraid Array' },
+  { id: 'service-status',     section: 'dienste',         label: 'Service Status' },
   { id: 'docker',             section: 'dienste',         label: 'Docker' },
   { id: 'adguard',            section: 'dienste',         label: 'AdGuard Home' },
   { id: 'plex',               section: 'media',           label: 'Plex' },
   { id: 'nextcloud',          section: 'media',           label: 'Nextcloud' },
-  { id: 'unifi-network',      section: 'netzwerk',        label: 'UniFi · Netzwerk' },
+  { id: 'unifi-network',      section: 'netzwerk',        label: 'UniFi · Network' },
   { id: 'unifi-aps',          section: 'netzwerk-detail', label: 'WiFi · Access Points' },
   { id: 'unifi-cameras',      section: 'netzwerk-detail', label: 'UniFi Protect' },
 ];
@@ -1840,7 +1841,7 @@ async function saveDashboardLayout() {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     renderLayoutEditor();
   } catch (err) {
-    console.error('Dashboard-Layout speichern fehlgeschlagen:', err.message);
+    console.error('Failed to save dashboard layout:', err.message);
   }
 }
 
@@ -1894,7 +1895,7 @@ function resetDashboardLayout() {
   renderLayoutEditor();
 }
 
-/* ---------- Secrets (Zugangsdaten) ---------- */
+/* ---------- Secrets (credentials) ---------- */
 async function loadSecrets() {
   try {
     const d = await fetch('/api/secrets', { cache: 'no-store' }).then(r => r.json());
@@ -1918,7 +1919,7 @@ async function loadSecrets() {
     set('secretNextcloudUser', d.NEXTCLOUD_USER);
     set('secretNextcloudPass', d.NEXTCLOUD_PASS);
     set('secretNextcloudPath', d.NEXTCLOUD_SHARE_PATH);
-  } catch { /* ignore, Felder bleiben leer */ }
+  } catch { /* ignore, fields stay empty */ }
 }
 
 async function saveSecrets(card) {
@@ -1944,11 +1945,11 @@ async function saveSecrets(card) {
     if (card === 'glances' || card === 'adguard' || card === 'plex' || card === 'unifi' || card === 'nextcloud') startLive();
     if (card === 'weather') startWeather();
   } catch (err) {
-    console.error('Secrets speichern fehlgeschlagen:', err.message);
+    console.error('Failed to save secrets:', err.message);
   }
 }
 
-/* ---------- Einstellungen ---------- */
+/* ---------- Settings ---------- */
 function openSettings() {
   const m = $('settingsModal');
   if (!m) return;
@@ -1995,14 +1996,14 @@ function applySearchVisible() {
   if (el) el.style.display = state.searchOn ? '' : 'none';
 }
 
-/* ---------- UI-Prefs (localStorage) — Darstellungs-Einstellungen persistent ---------- */
+/* ---------- UI prefs (localStorage) — persist appearance settings ---------- */
 const UI_PREF_KEYS = ['accent', 'gridOn', 'glassOn', 'animOn', 'liveOn', 'updateMs', 'searchOn'];
 function saveUiPrefs() {
   try {
     const out = {};
     for (const k of UI_PREF_KEYS) out[k] = state[k];
     localStorage.setItem('homelab.ui', JSON.stringify(out));
-  } catch { /* localStorage evtl. nicht verfügbar */ }
+  } catch { /* localStorage possibly unavailable */ }
 }
 function loadUiPrefs() {
   let prefs = null;
@@ -2095,7 +2096,7 @@ async function loadVersionInfo() {
     setText('aboutUptime', fmtUptime(d.uptimeSec));
     setText('aboutLicense', d.license);
     setText('navVersion', d.version);
-  } catch { /* bleibt '–' */ }
+  } catch { /* stays '–' */ }
 }
 
 /* ---------- Theme (Light / Dark) ---------- */

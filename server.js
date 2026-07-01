@@ -1283,6 +1283,6 @@ app.post('/api/nextcloud/upload', express.raw({ type: () => true, limit: '64mb' 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => {
-  console.log(`Homelab Dashboard laeuft auf http://localhost:${PORT}`);
+  console.log(`Homelab Dashboard running on http://localhost:${PORT}`);
   console.log(`Config: ${CONFIG_PATH}`);
 });
