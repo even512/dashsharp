@@ -47,9 +47,6 @@ and no build step.
 
 ## Screenshot
 
-<!-- Add a screenshot at docs/screenshot.png and uncomment the line below: -->
-<!-- <p align="center"><img src="docs/screenshot.png" width="820" alt="Dash# dashboard"></p> -->
-
 _Coming soon._
 
 ## Quick start
@@ -103,13 +100,17 @@ All mutable state lives in the mounted `/app/config` volume:
 
 ```
 config/
-├── services.yaml           # title, search, quicklinks (auto-created on first run)
-├── secrets.json            # API keys / tokens (via UI)
-├── dashboard-layout.json   # tile order & visibility
-├── quicklinks.json         # quick-access tiles
-├── disks.json              # custom disk names
-└── status.json             # health-check URLs
+├── services.yaml
+├── secrets.json
+├── dashboard-layout.json
+├── quicklinks.json
+├── disks.json
+└── status.json
 ```
+
+`services.yaml` holds title, search and quicklinks and is auto-created on first run. `secrets.json`
+holds your API keys/tokens, set via the UI. The rest track dashboard state: tile order and visibility,
+quick-access tiles, custom disk names, and health-check URLs.
 
 Back up that folder and you've backed up everything. Image updates never touch it.
 
@@ -137,10 +138,12 @@ to the internet.
 ```bash
 git clone https://github.com/even512/dashsharp.git
 cd dashsharp
-cp .env.example .env        # optional
+cp .env.example .env
 npm install
-npm run dev                 # http://localhost:3000
+npm run dev
 ```
+
+`npm run dev` starts the app at `http://localhost:3000`. The `.env` copy is optional.
 
 Build the image yourself: `docker build -t dashsharp .`
 
