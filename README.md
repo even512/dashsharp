@@ -18,11 +18,18 @@
 
 ---
 
+> 🤖 **Built with Claude.** This project was designed and implemented with heavy help from
+> [Claude](https://claude.com) (Anthropic's AI). I'm not a professional developer — I wanted a
+> dashboard for my own homelab and used Claude as a pair-programmer to actually get it built.
+
 ## What is Dash#?
 
-Dash# is a self-hosted **start page / dashboard** for your homelab. It gives you one good-looking place
-to jump to your services and to see live status at a glance — system load, Docker containers, DNS
-filtering, media, network and storage.
+I run a small homelab and wanted one good-looking start page for it — a place to jump to my services
+and see live status at a glance: system load, Docker containers, DNS filtering, media, network, storage.
+I tried the usual homelab dashboards out there and kept running into the same wall: either they wanted
+a database, a build pipeline, a YAML config I had to hand-edit for every little change, or they simply
+didn't support the services I actually run. So I built Dash# to be the dashboard I actually wanted —
+configurable entirely from the browser, one small container, nothing else to babysit.
 
 Under the hood it's a plain **Node.js + Express** app that serves a static frontend and proxies every
 integration **server-side**: the backend talks to your services with your stored credentials and returns
@@ -44,7 +51,7 @@ and no build step.
 <!-- Add a screenshot at docs/screenshot.png and uncomment the line below: -->
 <!-- <p align="center"><img src="docs/screenshot.png" width="820" alt="Dash# dashboard"></p> -->
 
-_Coming soon`._
+_Coming soon._
 
 ## Quick start
 
@@ -146,7 +153,8 @@ npm i -D sharp && node scripts/render-icon.mjs
 
 ## Contributing
 
-Issues and PRs are welcome. This is a young project — small, focused improvements are the easiest to land.
+This started as a personal project, so it's still a bit rough around the edges — but issues and PRs are
+very welcome. Small, focused improvements are the easiest for me to review and land.
 
 ## License
 
