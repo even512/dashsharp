@@ -257,6 +257,45 @@ let _weatherUnit = 'C';
 const $ = (id) => document.getElementById(id);
 function setText(id, v) { const el = $(id); if (el) el.textContent = v; }
 function setAttr(id, a, v) { const el = $(id); if (el) el.setAttribute(a, v); }
+// Keeps one DOM node per item, keyed by keyFn(item), instead of tearing the
+// whole list down and rebuilding it on every poll. Reuses existing nodes for
+// keys that persist (patches in place via updateFn(node, item, prevItem) —
+// updateFn is expected to compare against prevItem and only touch the DOM
+// for fields that actually changed), creates nodes for new keys (createFn),
+// removes nodes whose key disappeared, and reorders only when a node isn't
+// already in the right position. This also makes an unchanged payload a
+// cheap no-op walk (no DOM writes at all), so redundant polls stay cheap.
+// Diff state lives on the container element itself (container._diffMap).
+function diffList(container, items, keyFn, createFn, updateFn) {
+  if (!container) return;
+  let map = container._diffMap;
+  if (!map) {
+    // First time this container is diffed: purge any static placeholder
+    // markup shipped in index.html (e.g. the demo disk rows) so it isn't
+    // left behind alongside the real, diffed rows.
+    container.innerHTML = '';
+    map = container._diffMap = new Map();
+  }
+  const seen = new Set();
+  let prevNode = null;
+  for (const item of items) {
+    const key = keyFn(item);
+    seen.add(key);
+    let entry = map.get(key);
+    if (!entry) {
+      entry = { node: createFn(item), data: undefined };
+      map.set(key, entry);
+    }
+    updateFn(entry.node, item, entry.data);
+    entry.data = item;
+    const wantNext = prevNode ? prevNode.nextSibling : container.firstChild;
+    if (wantNext !== entry.node) container.insertBefore(entry.node, wantNext);
+    prevNode = entry.node;
+  }
+  for (const [key, entry] of map) {
+    if (!seen.has(key)) { entry.node.remove(); map.delete(key); }
+  }
+}
 function hexA(hex, a) {
   const m = String(hex).replace('#', '');
   const n = m.length === 3 ? m.split('').map((c) => c + c).join('') : m;
@@ -327,24 +366,51 @@ function renderData() {
    continuously to the left (see flowSpark). The big network numbers count
    up smoothly, the network scale is smoothed. With animations disabled,
    values are set immediately. */
+function maxOfTwo(a, b) {
+  let m = 0;
+  for (let i = 0; i < a.length; i++) if (a[i] > m) m = a[i];
+  for (let i = 0; i < b.length; i++) if (b[i] > m) m = b[i];
+  return m;
+}
+// Caches the last value written per graph target so graphFrame() can skip
+// the actual DOM write (which triggers SVG layout) once eased values have
+// settled and nothing would visually change — the cheap flowSpark/flowArea
+// computation still runs every frame, only the expensive write is skipped.
+const _lastGraph = {
+  cpuArea: null, cpuLine: null, ramLine: null,
+  netArea: null, netLine: null, upLine: null,
+  netDownTxt: null, netUpTxt: null,
+};
+function setAttrIfChanged(id, attr, v, cacheKey) {
+  if (_lastGraph[cacheKey] === v) return;
+  _lastGraph[cacheKey] = v;
+  setAttr(id, attr, v);
+}
+function setTextIfChanged(id, v, cacheKey) {
+  if (_lastGraph[cacheKey] === v) return;
+  _lastGraph[cacheKey] = v;
+  setText(id, v);
+}
+
 let graphRafStarted = false;
+let _graphFrameHandle = null;
 function graphFrame() {
   const anim = state.animOn;
   const interval = state.updateMs || 1600;
   const p = anim ? Math.min(1, Math.max(0, (performance.now() - state.lastSampleTs) / interval)) : 1;
 
   // System: CPU + RAM (feste Skala 0..100)
-  setAttr('cpuArea', 'points', flowArea(state.cpuHist, 460, 64, 100, 0, p));
-  setAttr('cpuLine', 'points', flowSpark(state.cpuHist, 460, 64, 100, 0, p));
-  setAttr('ramLine', 'points', flowSpark(state.ramHist, 460, 64, 100, 0, p));
+  setAttrIfChanged('cpuArea', 'points', flowArea(state.cpuHist, 460, 64, 100, 0, p), 'cpuArea');
+  setAttrIfChanged('cpuLine', 'points', flowSpark(state.cpuHist, 460, 64, 100, 0, p), 'cpuLine');
+  setAttrIfChanged('ramLine', 'points', flowSpark(state.ramHist, 460, 64, 100, 0, p), 'ramLine');
 
   // Network: auto-scaled, scale eases toward target (prevents height jumps)
-  const targetMax = Math.max(10, Math.max(...state.netHist, ...state.upHist) * 1.15);
+  const targetMax = Math.max(10, maxOfTwo(state.netHist, state.upHist) * 1.15);
   state.netMaxDisp += (targetMax - state.netMaxDisp) * (anim ? 0.08 : 1);
   const nm = state.netMaxDisp || targetMax;
-  setAttr('netArea', 'points', flowArea(state.netHist, 380, 80, nm, 6, p));
-  setAttr('netLine', 'points', flowSpark(state.netHist, 380, 80, nm, 6, p));
-  setAttr('upLine',  'points', flowSpark(state.upHist,  380, 80, nm, 6, p));
+  setAttrIfChanged('netArea', 'points', flowArea(state.netHist, 380, 80, nm, 6, p), 'netArea');
+  setAttrIfChanged('netLine', 'points', flowSpark(state.netHist, 380, 80, nm, 6, p), 'netLine');
+  setAttrIfChanged('upLine',  'points', flowSpark(state.upHist,  380, 80, nm, 6, p), 'upLine');
 
   // Smoothly count up the big ↓/↑ numbers
   const k = anim ? 0.12 : 1;
@@ -352,15 +418,22 @@ function graphFrame() {
   state.dispUpVal += (state.netUp   - state.dispUpVal) * k;
   if (Math.abs(state.netDown - state.dispDown)  < 0.04) state.dispDown  = state.netDown;
   if (Math.abs(state.netUp   - state.dispUpVal) < 0.04) state.dispUpVal = state.netUp;
-  setText('netDown', fmtNet(state.dispDown));
-  setText('netUp', fmtNet(state.dispUpVal));
+  setTextIfChanged('netDown', fmtNet(state.dispDown), 'netDownTxt');
+  setTextIfChanged('netUp', fmtNet(state.dispUpVal), 'netUpTxt');
 
-  requestAnimationFrame(graphFrame);
+  _graphFrameHandle = requestAnimationFrame(graphFrame);
 }
 function startGraphAnim() {
   if (graphRafStarted) return;
   graphRafStarted = true;
-  requestAnimationFrame(graphFrame);
+  _graphFrameHandle = requestAnimationFrame(graphFrame);
+}
+// Counterpart to startGraphAnim(): stops the rAF loop entirely (used when
+// the tab is hidden) instead of letting it run at full cost unseen.
+function pauseGraphAnim() {
+  if (!graphRafStarted) return;
+  graphRafStarted = false;
+  if (_graphFrameHandle != null) { cancelAnimationFrame(_graphFrameHandle); _graphFrameHandle = null; }
 }
 
 /* ---------- Storage tiles (disks) ----------
@@ -382,27 +455,42 @@ function diskIconSvg(d, color) {
     `<rect x="1.5" y="3.5" width="13" height="9" rx="2"/><circle cx="8" cy="8" r="2.3"/>` +
     `<circle cx="8" cy="8" r="0.5" fill="${c}" stroke="none"/><line x1="11.4" y1="10.6" x2="12.2" y2="10.6" stroke-linecap="round"/></svg>`;
 }
+function createDiskRow(d) {
+  const wrap = document.createElement('div');
+  wrap.innerHTML =
+    `<div style="display:flex;align-items:center;gap:7px;font:500 11px 'JetBrains Mono',monospace;margin-bottom:5px">` +
+      `<span class="dr-icon" style="flex-shrink:0;display:flex"></span>` +
+      `<span class="dr-name" style="color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0"></span>` +
+      `<span class="dr-size" style="margin-left:auto;flex-shrink:0"></span>` +
+    `</div>` +
+    `<div class="disk-track"><div class="disk-fill"></div></div>`;
+  wrap._icon = wrap.querySelector('.dr-icon');
+  wrap._name = wrap.querySelector('.dr-name');
+  wrap._size = wrap.querySelector('.dr-size');
+  wrap._fill = wrap.querySelector('.disk-fill');
+  return wrap;
+}
+function updateDiskRow(wrap, d, prev) {
+  const pct = Math.min(100, Math.max(0, d.percent || 0));
+  const warnCls = pct >= DISK_CRIT ? 'disk-crit' : pct >= DISK_WARN ? 'disk-warn' : '';
+  const accent  = pct >= DISK_CRIT ? '#f43f5e' : pct >= DISK_WARN ? '#ffb454' : null;
+  const name = d.label || d.name;
+
+  if (!prev || prev._warnCls !== warnCls) wrap.className = warnCls;
+  if (!prev || prev.name !== name || prev.label !== d.label || prev._accent !== accent)
+    wrap._icon.innerHTML = diskIconSvg(d, accent);
+  if (!prev || prev.name !== name || prev.label !== d.label || prev.fsType !== d.fsType)
+    wrap._name.innerHTML = `${name}<span style="color:var(--text-3)"> · ${d.fsType}</span>`;
+  if (!prev || prev.usedBytes !== d.usedBytes || prev.sizeBytes !== d.sizeBytes || prev._accent !== accent) {
+    wrap._size.style.color = accent || 'var(--text-3)';
+    wrap._size.textContent = `${fmtSize(d.usedBytes)} / ${fmtSize(d.sizeBytes)}`;
+  }
+  if (!prev || prev.percent !== pct) wrap._fill.style.transform = `scaleX(${pct / 100})`;
+  d._warnCls = warnCls; d._accent = accent; // stashed on the item for the next comparison
+}
 function renderDisks(disks, total) {
   const grid = $('diskGrid');
-  if (grid) {
-    grid.innerHTML = '';
-    for (const d of disks) {
-      const pct = Math.min(100, Math.max(0, d.percent || 0));
-      const warnCls = pct >= DISK_CRIT ? 'disk-crit' : pct >= DISK_WARN ? 'disk-warn' : '';
-      const accent  = pct >= DISK_CRIT ? '#f43f5e' : pct >= DISK_WARN ? '#ffb454' : null;
-      const name = d.label || d.name;
-      const wrap = document.createElement('div');
-      if (warnCls) wrap.className = warnCls;
-      wrap.innerHTML =
-        `<div style="display:flex;align-items:center;gap:7px;font:500 11px 'JetBrains Mono',monospace;margin-bottom:5px">` +
-          `<span style="flex-shrink:0;display:flex">${diskIconSvg(d, accent)}</span>` +
-          `<span style="color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">${name}<span style="color:var(--text-3)"> · ${d.fsType}</span></span>` +
-          `<span style="margin-left:auto;flex-shrink:0;color:${accent || 'var(--text-3)'}">${fmtSize(d.usedBytes)} / ${fmtSize(d.sizeBytes)}</span>` +
-        `</div>` +
-        `<div class="disk-track"><div class="disk-fill" style="width:${pct}%"></div></div>`;
-      grid.appendChild(wrap);
-    }
-  }
+  diffList(grid, disks, (d) => d.mnt, createDiskRow, updateDiskRow);
   if (total) setText('diskTotalLabel', `${fmtSize(total.used)} / ${fmtSize(total.size)}`);
 }
 
@@ -487,6 +575,27 @@ function setDockerBadge(text, color) {
   el.style.color = color;
   el.innerHTML = `<span style="width:6px;height:6px;border-radius:2px;background:${color}"></span>${text}`;
 }
+function createDockerRow(c) {
+  const row = document.createElement('div');
+  row.style.cssText = "display:flex;align-items:center;justify-content:space-between;font:500 12px 'JetBrains Mono',monospace";
+  row.innerHTML =
+    `<div style="display:flex;align-items:center;gap:9px;min-width:0">` +
+    `<span class="dk-dot" style="width:6px;height:6px;border-radius:50%;flex-shrink:0"></span>` +
+    `<span class="dk-name" style="color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span></div>` +
+    `<span class="dk-right" style="color:var(--text-3);flex-shrink:0;padding-left:10px"></span>`;
+  row._dot = row.querySelector('.dk-dot');
+  row._name = row.querySelector('.dk-name');
+  row._right = row.querySelector('.dk-right');
+  return row;
+}
+function updateDockerRow(row, c, prev) {
+  const right = c.state === 'paused' ? 'paused'
+    : c.state === 'stopped' ? 'stopped'
+    : `${c.cpu != null ? c.cpu : 0}% · ${fmtMem(c.mem)}`;
+  if (!prev || prev.state !== c.state) row._dot.style.background = DOCKER_DOT[c.state] || '#6b7689';
+  if (!prev || prev.name !== c.name) row._name.textContent = c.name;
+  if (!prev || prev.state !== c.state || prev.cpu !== c.cpu || prev.mem !== c.mem) row._right.textContent = right;
+}
 function renderDocker(d) {
   setDockerBadge(d.version ? 'v' + d.version : 'docker', '#5b9dff');
   setText('dockerCount', d.total != null ? d.total : '–');
@@ -499,21 +608,7 @@ function renderDocker(d) {
 
   const list = $('dockerList');
   if (!list) return;
-  list.innerHTML = '';
-  for (const c of (d.containers || [])) {
-    const dot = DOCKER_DOT[c.state] || '#6b7689';
-    const right = c.state === 'paused' ? 'paused'
-      : c.state === 'stopped' ? 'stopped'
-      : `${c.cpu != null ? c.cpu : 0}% · ${fmtMem(c.mem)}`;
-    const row = document.createElement('div');
-    row.style.cssText = "display:flex;align-items:center;justify-content:space-between;font:500 12px 'JetBrains Mono',monospace";
-    row.innerHTML =
-      `<div style="display:flex;align-items:center;gap:9px;min-width:0">` +
-      `<span style="width:6px;height:6px;border-radius:50%;background:${dot};flex-shrink:0"></span>` +
-      `<span style="color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.name}</span></div>` +
-      `<span style="color:var(--text-3);flex-shrink:0;padding-left:10px">${right}</span>`;
-    list.appendChild(row);
-  }
+  diffList(list, d.containers || [], (c) => c.name, createDockerRow, updateDockerRow);
 }
 async function pollDocker() {
   if (!state.liveOn) return;
@@ -561,6 +656,20 @@ function adguardDash(pct) {
 function fmtNum(n) {
   return n != null ? Math.round(n).toLocaleString('de-DE') : '–';
 }
+function createAdguardDomainRow(item) {
+  const row = document.createElement('div');
+  row.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;font:500 11px 'JetBrains Mono',monospace";
+  row.innerHTML =
+    `<span class="ad-domain" style="color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>` +
+    `<span class="ad-count" style="color:var(--text-3);flex-shrink:0"></span>`;
+  row._domain = row.querySelector('.ad-domain');
+  row._count = row.querySelector('.ad-count');
+  return row;
+}
+function updateAdguardDomainRow(row, item, prev) {
+  if (!prev || prev.domain !== item.domain) row._domain.textContent = item.domain;
+  if (!prev || prev.count !== item.count) row._count.textContent = fmtNum(item.count);
+}
 function renderAdGuard(d) {
   const color = d.protection ? '#3ddc97' : '#ffb454';
   setAdguardStatus(d.protection ? 'active' : 'paused', color);
@@ -578,18 +687,11 @@ function renderAdGuard(d) {
 
   const list = $('adguardTopList');
   if (list) {
-    list.innerHTML = '';
     const top = d.topBlocked || [];
     if (!top.length) {
       list.innerHTML = `<div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">–</div>`;
-    }
-    for (const item of top) {
-      const row = document.createElement('div');
-      row.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;font:500 11px 'JetBrains Mono',monospace";
-      row.innerHTML =
-        `<span style="color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.domain}</span>` +
-        `<span style="color:var(--text-3);flex-shrink:0">${fmtNum(item.count)}</span>`;
-      list.appendChild(row);
+    } else {
+      diffList(list, top, (item) => item.domain, createAdguardDomainRow, updateAdguardDomainRow);
     }
   }
 }
@@ -878,6 +980,33 @@ function startPlex() {
 }
 
 /* ---------- Service status ---------- */
+function createServiceRow(s) {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:7px 4px';
+  row.innerHTML =
+    `<div style="display:flex;align-items:center;gap:10px">` +
+    `<span class="sv-dot" style="width:7px;height:7px;border-radius:50%;flex-shrink:0"></span>` +
+    `<span class="sv-name" style="font:500 12px 'JetBrains Mono',monospace;color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px"></span>` +
+    `</div><span class="sv-ms" style="font:500 11px 'JetBrains Mono',monospace;flex-shrink:0"></span>`;
+  row._dot = row.querySelector('.sv-dot');
+  row._name = row.querySelector('.sv-name');
+  row._ms = row.querySelector('.sv-ms');
+  return row;
+}
+function updateServiceRow(row, s, prev) {
+  const dotColor = s.online ? '#3ddc97' : '#f43f5e';
+  const msText = s.online && s.responseMs != null ? `${s.responseMs} ms` : 'offline';
+  const msColor = s.online ? '#6b7689' : '#f43f5e';
+  if (!prev || prev.online !== s.online) {
+    row._dot.style.background = dotColor;
+    row._dot.style.boxShadow = s.online ? `0 0 6px ${dotColor}` : '';
+  }
+  if (!prev || prev.name !== s.name) row._name.textContent = s.name;
+  if (!prev || prev.online !== s.online || prev.responseMs !== s.responseMs) {
+    row._ms.textContent = msText;
+    row._ms.style.color = msColor;
+  }
+}
 function renderServiceStatus(d) {
   const allOk = d.total > 0 && d.online === d.total;
   const anyDown = d.total > 0 && d.online < d.total;
@@ -892,28 +1021,14 @@ function renderServiceStatus(d) {
   // Tile service list
   const list = $('serviceList');
   if (list) {
-    list.innerHTML = '';
     if (!d.total) {
+      list.innerHTML = '';
       const em = document.createElement('div');
       em.style.cssText = "font:500 11px 'JetBrains Mono',monospace;color:#566073;padding:12px 4px;text-align:center";
       em.textContent = 'No services configured';
       list.appendChild(em);
     } else {
-      d.services.forEach((s, i) => {
-        const dotColor = s.online ? '#3ddc97' : '#f43f5e';
-        const msText = s.online && s.responseMs != null ? `${s.responseMs} ms` : 'offline';
-        const msColor = s.online ? '#6b7689' : '#f43f5e';
-        const row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:7px 4px;' +
-          (i < d.services.length - 1 ? 'border-bottom:1px solid rgba(120,150,200,0.06)' : '');
-        row.innerHTML =
-          `<div style="display:flex;align-items:center;gap:10px">` +
-          `<span style="width:7px;height:7px;border-radius:50%;background:${dotColor};flex-shrink:0;` +
-          (s.online ? `box-shadow:0 0 6px ${dotColor}` : '') + `"></span>` +
-          `<span style="font:500 12px 'JetBrains Mono',monospace;color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px">${s.name}</span>` +
-          `</div><span style="font:500 11px 'JetBrains Mono',monospace;color:${msColor};flex-shrink:0">${msText}</span>`;
-        list.appendChild(row);
-      });
+      diffList(list, d.services, (s) => s.name, createServiceRow, updateServiceRow);
     }
   }
 
@@ -1248,6 +1363,7 @@ function renderWeather(data) {
 }
 
 async function pollWeather() {
+  if (!state.liveOn) return;
   try {
     const d = await fetch('/api/weather', { cache: 'no-store' }).then(r => r.json());
     renderWeather(d);
@@ -1280,6 +1396,26 @@ function dbmToBar(dbm) {
   return { pct, color };
 }
 
+const UNIFI_TYPE_LABEL = { ugw: 'UDM', udm: 'UDM', usg: 'USG', usw: 'SW', uap: 'AP', uvc: 'CAM' };
+function createUnifiDeviceChip(dev) {
+  const chip = document.createElement('div');
+  chip.className = 'unifi-chip';
+  chip.innerHTML = `<span class="ud-dot">●</span> <span class="ud-label"></span>`;
+  chip._dot = chip.querySelector('.ud-dot');
+  chip._label = chip.querySelector('.ud-label');
+  return chip;
+}
+function updateUnifiDeviceChip(chip, dev, prev) {
+  const dot = dev.online ? 'var(--green)' : 'var(--red)';
+  const label = UNIFI_TYPE_LABEL[dev.type] || dev.type.toUpperCase();
+  const extra = dev.type === 'uap'
+    ? ` · ${dev.clients}cl`
+    : dev.cpu != null ? ` · ${dev.cpu.toFixed(0)}%` : '';
+  if (!prev || prev.online !== dev.online) chip._dot.style.color = dot;
+  if (!prev || prev.type !== dev.type || prev.name !== dev.name || prev.clients !== dev.clients || prev.cpu !== dev.cpu) {
+    chip._label.innerHTML = `${label}:&nbsp;${dev.name}${extra}`;
+  }
+}
 function renderUnifi(d) {
   const fmt = (v, dec) => v != null ? Number(v).toFixed(dec ?? 0) : '–';
   setText('unifiRxRate',   d.wan.rxRate  != null ? fmt(d.wan.rxRate, 1)  : '–');
@@ -1296,15 +1432,7 @@ function renderUnifi(d) {
 
   const wrap = $('unifiDevices');
   if (wrap) {
-    const typeLabel = { ugw: 'UDM', udm: 'UDM', usg: 'USG', usw: 'SW', uap: 'AP', uvc: 'CAM' };
-    wrap.innerHTML = d.devices.map(dev => {
-      const dot   = dev.online ? 'var(--green)' : 'var(--red)';
-      const label = typeLabel[dev.type] || dev.type.toUpperCase();
-      const extra = dev.type === 'uap'
-        ? ` · ${dev.clients}cl`
-        : dev.cpu != null ? ` · ${dev.cpu.toFixed(0)}%` : '';
-      return `<div class="unifi-chip"><span style="color:${dot}">●</span> ${label}:&nbsp;${dev.name}${extra}</div>`;
-    }).join('');
+    diffList(wrap, d.devices, (dev) => dev.mac, createUnifiDeviceChip, updateUnifiDeviceChip);
   }
 }
 
@@ -1359,6 +1487,7 @@ function renderUnifiAps(devices) {
 }
 
 async function pollUnifiSnapshot() {
+  if (!state.liveOn) return;
   const img   = $('unifiSnapshot');
   const ph    = $('unifiSnapshotPlaceholder');
   const camSt = $('unifiCamStatus');
@@ -1443,26 +1572,33 @@ function setNextcloudStatus(text, color) {
   });
 }
 
+function createNcUserRow(u) {
+  const row = document.createElement('div');
+  row.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;font:500 12px 'JetBrains Mono',monospace";
+  row.innerHTML =
+    `<span class="nc-name" style="color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0"></span>` +
+    `<span class="nc-right" style="color:var(--text-3);flex-shrink:0"></span>`;
+  row._name = row.querySelector('.nc-name');
+  row._right = row.querySelector('.nc-right');
+  return row;
+}
+function updateNcUserRow(row, u, prev) {
+  const right = u.quota ? `${fmtSize(u.used)} / ${fmtSize(u.quota)}` : fmtSize(u.used);
+  if (!prev || prev.name !== u.name) row._name.textContent = u.name;
+  if (!prev || prev.used !== u.used || prev.quota !== u.quota) row._right.textContent = right;
+}
 function renderNcUsers(users) {
   const list = $('ncUserList');
   if (!list) return;
-  list.innerHTML = '';
   if (!users || !users.length) {
+    list.innerHTML = '';
     const em = document.createElement('div');
     em.style.cssText = "font:500 11px 'JetBrains Mono',monospace;color:#566073;padding:6px 4px";
     em.textContent = 'No users';
     list.appendChild(em);
     return;
   }
-  for (const u of users) {
-    const right = u.quota ? `${fmtSize(u.used)} / ${fmtSize(u.quota)}` : fmtSize(u.used);
-    const row = document.createElement('div');
-    row.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;font:500 12px 'JetBrains Mono',monospace";
-    row.innerHTML =
-      `<span style="color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">${u.name}</span>` +
-      `<span style="color:var(--text-3);flex-shrink:0">${right}</span>`;
-    list.appendChild(row);
-  }
+  diffList(list, users, (u) => u.name, createNcUserRow, updateNcUserRow);
 }
 
 function renderNextcloud(d) {
@@ -1550,6 +1686,32 @@ function startLive() {
   startWeather();
   startUnifi();
   startNextcloud();
+}
+// Counterpart to startLive(): actually clears every live timer (not just a
+// flag-check) so a hidden tab or "Live updates" off truly stops polling.
+function pauseLive() {
+  clearInterval(dataTimer);      dataTimer = null;
+  clearInterval(dockerTimer);    dockerTimer = null;
+  clearInterval(adguardTimer);   adguardTimer = null;
+  clearInterval(plexTimer);      plexTimer = null;
+  clearInterval(statusTimer);    statusTimer = null;
+  clearInterval(weatherTimer);   weatherTimer = null;
+  clearInterval(unifiTimer);     unifiTimer = null;
+  clearInterval(unifiSnapTimer); unifiSnapTimer = null;
+  clearInterval(nextcloudTimer); nextcloudTimer = null;
+}
+// Pauses polling and the graph rAF loop while the tab is hidden; resumes
+// (with an immediate refresh via startLive()) when it becomes visible again.
+function setupVisibilityHandling() {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      pauseGraphAnim();
+      pauseLive();
+    } else {
+      startGraphAnim();
+      startLive();
+    }
+  });
 }
 
 /* ---------- Quick access from /api/config ---------- */
@@ -2153,7 +2315,7 @@ function toggle(key) {
   if (key === 'animOn') document.body.classList.toggle('no-anim', !state.animOn);
   if (key === 'glassOn') document.body.classList.toggle('no-glass', !state.glassOn);
   if (key === 'searchOn') applySearchVisible();
-  if (key === 'liveOn' && state.liveOn) startLive();
+  if (key === 'liveOn') { if (state.liveOn) startLive(); else pauseLive(); }
   saveUiPrefs();
 }
 function applySearchVisible() {
@@ -2290,6 +2452,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderData();
   startGraphAnim();
   startLive();
+  setupVisibilityHandling();
   setupSearch();
   setupSettings();
   setupNextcloudUpload();

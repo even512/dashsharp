@@ -380,15 +380,19 @@ body.layout-edit-mode #layoutEditBar { display: flex; }
 /* ── Theme toggle button ─────────────────────────────────── */
 #themeToggle { transition: all .2s; }
 
+/* ── Service-Status-Liste: Trennlinie zwischen Zeilen ────── */
+#serviceList > div:not(:last-child) { border-bottom: 1px solid rgba(120,150,200,0.06); }
+
 /* ── Disk-Kacheln (Speicher) ────────────────────────────── */
 .disk-track {
   height: 7px; border-radius: 6px; background: var(--track); overflow: hidden;
   transition: box-shadow .3s;
 }
 .disk-fill {
-  height: 100%; border-radius: 6px;
+  height: 100%; width: 100%; border-radius: 6px;
   background: linear-gradient(90deg, #5b9dff, #3ddc97);
-  transition: width .8s cubic-bezier(.4,0,.2,1);
+  transform-origin: left center;
+  transition: transform .8s cubic-bezier(.4,0,.2,1);
 }
 /* "Nearly full": bar color stays, track glows/pulses as a warning. */
 .disk-warn .disk-track { animation: diskPulseWarn 2s ease-in-out infinite; }

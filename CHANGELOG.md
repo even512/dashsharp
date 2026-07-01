@@ -4,6 +4,18 @@ All notable changes to Dash# are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/), and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.3] - 2026-07-01
+
+### Changed
+- Performance pass across all live widgets: disk, Docker, AdGuard, service-status, Nextcloud-user and UniFi-device lists now diff and patch existing DOM nodes instead of tearing the list down and rebuilding it on every poll — this also un-breaks the disk-bar fill transition, which previously never had an "old" width to animate from
+- The shared graph animation loop now skips redundant DOM writes once eased values have settled (e.g. with animations off or between polls), instead of re-writing identical SVG data 60×/sec forever
+- Disk fill bar now animates via `transform: scaleX()` instead of `width`, so the browser can composite it instead of triggering layout
+- Polling and the graph animation loop now pause while the browser tab is hidden and resume with an immediate refresh when it becomes visible again; the existing "Live updates" toggle now actually stops its timers instead of leaving them ticking
+- API responses and static assets are now gzip-compressed (`compression` middleware)
+
+### Fixed
+- Weather and UniFi camera-snapshot polling now correctly stop when "Live updates" is turned off (previously kept polling regardless)
+
 ## [0.2.2] - 2026-07-01
 
 ### Fixed

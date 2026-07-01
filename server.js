@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const compression = require('compression');
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
@@ -156,6 +157,7 @@ function checkService(name, url) {
   });
 }
 
+app.use(compression());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
