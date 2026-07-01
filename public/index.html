@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de" data-theme="dark">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -22,7 +22,7 @@
       <div style="min-width:240px">
         <div style="font:600 12px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase;display:flex;align-items:center;gap:6px">
           <span style="color:#5b9dff">~/<span id="brandName">homelab</span></span><span style="color:#3f4a5c">$</span>
-          <span id="greeting" style="color:var(--text-4)">guten tag</span>
+          <span id="greeting" style="color:var(--text-4)">good afternoon</span>
           <span style="color:#5b9dff;animation:blink 1.1s step-end infinite">▋</span>
         </div>
         <div id="time" style="font:600 64px/0.95 'Space Grotesk',sans-serif;color:var(--text-1);letter-spacing:-0.02em;margin-top:10px;font-variant-numeric:tabular-nums">--:--</div>
@@ -31,7 +31,7 @@
 
       <div id="searchBar" class="glassy" style="flex:1;min-width:240px;max-width:420px;display:flex;align-items:center;gap:10px;background:var(--bg-glass);border:1px solid var(--border-1);border-radius:12px;padding:13px 16px;backdrop-filter:blur(6px)">
         <span style="color:#5b9dff;font-weight:700">›</span>
-        <input id="search" placeholder="Suchen oder Befehl ausfuehren…" style="flex:1;background:transparent;border:none;outline:none;color:var(--text-2);font:500 14px 'JetBrains Mono',monospace" />
+        <input id="search" placeholder="Search or run a command…" style="flex:1;background:transparent;border:none;outline:none;color:var(--text-2);font:500 14px 'JetBrains Mono',monospace" />
         <kbd style="font:600 11px 'JetBrains Mono',monospace;color:var(--text-3);border:1px solid rgba(120,150,200,0.2);border-radius:6px;padding:3px 7px">⌘K</kbd>
       </div>
 
@@ -47,15 +47,15 @@
         <div id="systemStatusBadge" style="display:flex;align-items:center;gap:10px;background:rgba(61,220,151,0.07);border:1px solid rgba(61,220,151,0.22);border-radius:12px;padding:9px 15px">
           <span id="systemStatusDot" style="width:9px;height:9px;border-radius:50%;background:#3ddc97;animation:pulse 2s infinite;flex-shrink:0"></span>
           <div>
-            <div id="systemStatusText" style="font:600 13px 'Space Grotesk',sans-serif;color:var(--text-1)">Alle Systeme online</div>
-            <div id="systemStatusSub" style="font:500 11px 'JetBrains Mono',monospace;color:#6b8a78">– Dienste</div>
+            <div id="systemStatusText" style="font:600 13px 'Space Grotesk',sans-serif;color:var(--text-1)">All systems online</div>
+            <div id="systemStatusSub" style="font:500 11px 'JetBrains Mono',monospace;color:#6b8a78">– services</div>
           </div>
         </div>
 
         <button id="themeToggle" class="icon-btn" title="Light Mode" onclick="toggleTheme()" style="width:46px;height:46px;border-radius:12px;background:var(--bg-glass);border:1px solid var(--border-1);color:var(--text-4);cursor:pointer;display:flex;align-items:center;justify-content:center">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
         </button>
-        <button id="layoutEditBtn" class="icon-btn" title="Layout bearbeiten" onclick="toggleLayoutEditMode()" style="width:46px;height:46px;border-radius:12px;background:var(--bg-glass);border:1px solid var(--border-1);color:var(--text-4);cursor:pointer;display:flex;align-items:center;justify-content:center">
+        <button id="layoutEditBtn" class="icon-btn" title="Edit layout" onclick="toggleLayoutEditMode()" style="width:46px;height:46px;border-radius:12px;background:var(--bg-glass);border:1px solid var(--border-1);color:var(--text-4);cursor:pointer;display:flex;align-items:center;justify-content:center">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
         </button>
         <button id="settingsBtn" class="icon-btn" style="width:46px;height:46px;border-radius:12px;background:var(--bg-glass);border:1px solid var(--border-1);color:var(--text-4);cursor:pointer;display:flex;align-items:center;justify-content:center">
@@ -64,16 +64,16 @@
       </div>
     </div>
 
-    <div style="font:600 12px/1 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5b9dff;text-transform:uppercase;display:flex;align-items:center;gap:11px;margin:8px 2px 14px"><span style="opacity:.45">//</span> Schnellzugriff <span style="flex:1;height:1px;background:linear-gradient(90deg,rgba(91,157,255,0.25),transparent)"></span></div>
+    <div style="font:600 12px/1 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5b9dff;text-transform:uppercase;display:flex;align-items:center;gap:11px;margin:8px 2px 14px"><span style="opacity:.45">//</span> Quick Access <span style="flex:1;height:1px;background:linear-gradient(90deg,rgba(91,157,255,0.25),transparent)"></span></div>
     <div id="quicklinks" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:8px"></div>
 
-    <div style="font:600 12px/1 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5b9dff;text-transform:uppercase;display:flex;align-items:center;gap:11px;margin:30px 2px 14px"><span style="opacity:.45">//</span> System &amp; Ressourcen <span style="flex:1;height:1px;background:linear-gradient(90deg,rgba(91,157,255,0.25),transparent)"></span></div>
+    <div style="font:600 12px/1 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5b9dff;text-transform:uppercase;display:flex;align-items:center;gap:11px;margin:30px 2px 14px"><span style="opacity:.45">//</span> System &amp; Resources <span style="flex:1;height:1px;background:linear-gradient(90deg,rgba(91,157,255,0.25),transparent)"></span></div>
     <div data-section-id="system" style="display:grid;grid-template-columns:repeat(12,1fr);gap:16px">
 
       <div class="card" data-widget-id="system-load" style="grid-column:span 5;grid-row:span 2;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:18px 20px;position:relative;overflow:hidden;display:flex;flex-direction:column">
-        <div class="tile-controls"><span class="tile-drag-handle" title="Verschieben"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Kachel ausblenden" onclick="hideTileNow('system-load')">✕</button></div>
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('system-load')">✕</button></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">System-Auslastung</div>
+          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">System Load</div>
           <div id="sysHost" style="font:500 11px 'JetBrains Mono',monospace;color:#5b9dff">unraid-01</div>
         </div>
         <div style="display:flex;gap:22px;align-items:center;justify-content:center;margin-bottom:2px">
@@ -126,10 +126,10 @@
       </div>
 
       <div data-widget-id="network-throughput" style="grid-column:span 7;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:18px 20px;position:relative;overflow:hidden">
-        <div class="tile-controls"><span class="tile-drag-handle" title="Verschieben"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Kachel ausblenden" onclick="hideTileNow('network-throughput')">✕</button></div>
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('network-throughput')">✕</button></div>
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
           <div>
-            <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">Netzwerk-Durchsatz</div>
+            <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">Network Throughput</div>
             <div style="font:500 10px 'JetBrains Mono',monospace;color:#3d5268;margin-top:4px;letter-spacing:0.05em"><span id="netHost">–</span><span id="netIfaceSep" style="display:none"> · </span><span id="netIface"></span></div>
           </div>
           <span style="width:7px;height:7px;border-radius:50%;background:#5b9dff;animation:pulse 2s infinite;flex-shrink:0;margin-top:2px"></span>
@@ -152,9 +152,9 @@
       </div>
 
       <div data-widget-id="disk-storage" style="grid-column:span 7;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden">
-        <div class="tile-controls"><span class="tile-drag-handle" title="Verschieben"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Kachel ausblenden" onclick="hideTileNow('disk-storage')">✕</button></div>
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('disk-storage')">✕</button></div>
         <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:16px">
-          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">Speicher · Unraid Array</div>
+          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">Storage · Unraid Array</div>
           <div id="diskTotalLabel" style="font:600 13px 'Space Grotesk',sans-serif;color:var(--text-1)">28.4 / 48 TB</div>
         </div>
         <div id="diskGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:13px 26px">
@@ -178,20 +178,20 @@
       </div>
     </div>
 
-    <div style="font:600 12px/1 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5b9dff;text-transform:uppercase;display:flex;align-items:center;gap:11px;margin:30px 2px 14px"><span style="opacity:.45">//</span> Dienste &amp; Container <span style="flex:1;height:1px;background:linear-gradient(90deg,rgba(91,157,255,0.25),transparent)"></span></div>
+    <div style="font:600 12px/1 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5b9dff;text-transform:uppercase;display:flex;align-items:center;gap:11px;margin:30px 2px 14px"><span style="opacity:.45">//</span> Services &amp; Containers <span style="flex:1;height:1px;background:linear-gradient(90deg,rgba(91,157,255,0.25),transparent)"></span></div>
     <div data-section-id="dienste" style="display:grid;grid-template-columns:repeat(12,1fr);gap:16px">
 
       <div data-widget-id="service-status" style="grid-column:span 4;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden">
-        <div class="tile-controls"><span class="tile-drag-handle" title="Verschieben"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Kachel ausblenden" onclick="hideTileNow('service-status')">✕</button></div>
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('service-status')">✕</button></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">Dienst-Status</div>
+          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">Service Status</div>
           <div id="serviceCount" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">– / –</div>
         </div>
         <div id="serviceList" style="display:flex;flex-direction:column;gap:1px;max-height:280px;overflow-y:auto;padding-right:2px"></div>
       </div>
 
       <div data-widget-id="docker" style="grid-column:span 4;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden">
-        <div class="tile-controls"><span class="tile-drag-handle" title="Verschieben"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Kachel ausblenden" onclick="hideTileNow('docker')">✕</button></div>
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('docker')">✕</button></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">Docker</div>
           <div id="dockerVersion" style="display:flex;align-items:center;gap:6px;font:500 11px 'JetBrains Mono',monospace;color:#5b9dff"><span style="width:6px;height:6px;border-radius:2px;background:#5b9dff"></span>–</div>
@@ -204,7 +204,7 @@
       </div>
 
       <div data-widget-id="adguard" style="grid-column:span 4;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden">
-        <div class="tile-controls"><span class="tile-drag-handle" title="Verschieben"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Kachel ausblenden" onclick="hideTileNow('adguard')">✕</button></div>
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('adguard')">✕</button></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
           <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">AdGuard Home</div>
           <div id="adguardStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">● –</div>
@@ -217,22 +217,22 @@
             </svg>
             <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">
               <div style="font:600 22px/1 'Space Grotesk',sans-serif;color:var(--text-1)"><span id="adguardBlockPct">–</span><span style="font-size:13px;color:var(--text-3)">%</span></div>
-              <div style="font:600 9px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:2px">blockiert</div>
+              <div style="font:600 9px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:2px">blocked</div>
             </div>
           </div>
           <div style="display:flex;flex-direction:column;gap:12px">
             <div>
               <div id="adguardTotal" style="font:600 20px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</div>
-              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">Anfragen heute</div>
+              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">Requests today</div>
             </div>
             <div>
               <div id="adguardBlocked" style="font:600 20px/1 'Space Grotesk',sans-serif;color:#3ddc97">–</div>
-              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">geblockt · <span id="adguardAvgMs">–</span> ms Ø</div>
+              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">blocked · <span id="adguardAvgMs">–</span> ms avg</div>
             </div>
           </div>
         </div>
         <div style="display:flex;justify-content:space-between;font:500 11px 'JetBrains Mono',monospace;color:var(--text-4);padding-top:14px;border-top:1px solid rgba(120,150,200,0.08)">
-          <span style="color:var(--text-3)">Top geblockt</span>
+          <span style="color:var(--text-3)">Top blocked</span>
           <span id="adguardTopDomain" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;text-align:right">–</span>
         </div>
       </div>
@@ -242,7 +242,7 @@
     <div data-section-id="media" style="display:grid;grid-template-columns:repeat(12,1fr);gap:16px">
 
       <div data-widget-id="plex" style="grid-column:span 7;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden">
-        <div class="tile-controls"><span class="tile-drag-handle" title="Verschieben"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Kachel ausblenden" onclick="hideTileNow('plex')">✕</button></div>
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('plex')">✕</button></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
           <div style="display:flex;align-items:center;gap:10px">
             <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">Plex</div>
@@ -259,21 +259,21 @@
 
       <!-- Nextcloud -->
       <div id="nextcloudCard" data-widget-id="nextcloud" style="grid-column:span 5;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden">
-        <div class="tile-controls"><span class="tile-drag-handle" title="Verschieben"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Kachel ausblenden" onclick="hideTileNow('nextcloud')">✕</button></div>
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('nextcloud')">✕</button></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">Nextcloud</div>
           <div id="ncStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">● –</div>
         </div>
 
-        <!-- Speicher: nur belegt (Nextcloud sieht das gesamte Array, kein sinnvolles "Gesamt") -->
+        <!-- Storage: used only (Nextcloud sees the whole array, no meaningful "total") -->
         <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:18px">
           <span id="ncUsed" style="font:600 30px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</span>
-          <span style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">belegt</span>
+          <span style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">used</span>
         </div>
 
-        <!-- Nutzer -->
+        <!-- Users -->
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:9px">
-          <div style="font:600 10px/1 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase">Nutzer</div>
+          <div style="font:600 10px/1 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase">Users</div>
           <div id="ncUserCount" style="font:500 11px 'JetBrains Mono',monospace;color:#5b9dff">–</div>
         </div>
         <div id="ncUserList" style="display:flex;flex-direction:column;gap:9px;max-height:150px;overflow-y:auto;padding-right:6px;margin-right:-6px;margin-bottom:18px"></div>
@@ -281,7 +281,7 @@
         <!-- ToLeech-Upload -->
         <div style="font:600 10px/1 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase;margin-bottom:9px">ToLeech · JDownloader</div>
         <div id="ncDrop" tabindex="0" role="button" style="border:1.5px dashed var(--border-1);border-radius:10px;padding:16px 14px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;background:var(--bg-panel)">
-          <div style="font:500 12px 'JetBrains Mono',monospace;color:var(--text-3)"><span style="color:#5b9dff">↑</span>&nbsp; .dlc hier ablegen oder klicken</div>
+          <div style="font:500 12px 'JetBrains Mono',monospace;color:var(--text-3)"><span style="color:#5b9dff">↑</span>&nbsp; drop .dlc here or click</div>
         </div>
         <input id="ncDropInput" type="file" accept=".dlc" multiple style="display:none">
         <div id="ncDropStatus" style="display:flex;flex-direction:column;gap:4px;margin-top:8px"></div>
@@ -293,14 +293,14 @@
       </div>
     </div>
 
-    <div style="font:600 12px/1 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5b9dff;text-transform:uppercase;display:flex;align-items:center;gap:11px;margin:30px 2px 14px"><span style="opacity:.45">//</span> Netzwerk <span style="flex:1;height:1px;background:linear-gradient(90deg,rgba(91,157,255,0.25),transparent)"></span></div>
+    <div style="font:600 12px/1 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5b9dff;text-transform:uppercase;display:flex;align-items:center;gap:11px;margin:30px 2px 14px"><span style="opacity:.45">//</span> Network <span style="flex:1;height:1px;background:linear-gradient(90deg,rgba(91,157,255,0.25),transparent)"></span></div>
     <div data-section-id="netzwerk" style="display:grid;grid-template-columns:repeat(12,1fr);gap:16px">
 
       <!-- UniFi Overview -->
       <div id="unifiCard" data-widget-id="unifi-network" style="grid-column:span 12;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden">
-        <div class="tile-controls"><span class="tile-drag-handle" title="Verschieben"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Kachel ausblenden" onclick="hideTileNow('unifi-network')">✕</button></div>
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('unifi-network')">✕</button></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">UniFi · Netzwerk</div>
+          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">UniFi · Network</div>
           <div id="unifiStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">● –</div>
         </div>
         <!-- WAN Throughput -->
@@ -313,11 +313,11 @@
             <span id="unifiLatency" style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-4)">–</span><span style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3)"> ms</span>
           </div>
         </div>
-        <!-- Client-Zahlen -->
+        <!-- Client counts -->
         <div style="display:flex;gap:18px;margin-bottom:14px;align-items:flex-start">
           <div><div id="unifiTotal" style="font:600 26px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</div><div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">Clients</div></div>
           <div><div id="unifiWireless" style="font:600 26px/1 'Space Grotesk',sans-serif;color:var(--accent)">–</div><div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">Wireless</div></div>
-          <div><div id="unifiWired" style="font:600 26px/1 'Space Grotesk',sans-serif;color:var(--green)">–</div><div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">Kabel</div></div>
+          <div><div id="unifiWired" style="font:600 26px/1 'Space Grotesk',sans-serif;color:var(--green)">–</div><div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">Wired</div></div>
           <div style="display:flex;flex-direction:column;justify-content:center;gap:5px;padding-top:2px">
             <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-4)">2.4G&nbsp;<span id="unifi24" style="color:var(--text-2)">–</span></div>
             <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-4)">5G&nbsp;&nbsp;<span id="unifi5" style="color:var(--text-2)">–</span></div>
@@ -334,16 +334,16 @@
 
       <!-- WiFi Access Points (7 cols) -->
       <div data-widget-id="unifi-aps" style="grid-column:span 7;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px">
-        <div class="tile-controls"><span class="tile-drag-handle" title="Verschieben"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Kachel ausblenden" onclick="hideTileNow('unifi-aps')">✕</button></div>
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('unifi-aps')">✕</button></div>
         <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase;margin-bottom:16px">WiFi · Access Points</div>
         <div id="unifiAps" style="display:flex;flex-direction:column;gap:18px">
-          <div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">nicht konfiguriert</div>
+          <div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">not configured</div>
         </div>
       </div>
 
       <!-- Kamera (5 cols) -->
       <div data-widget-id="unifi-cameras" style="grid-column:span 5;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;display:flex;flex-direction:column">
-        <div class="tile-controls"><span class="tile-drag-handle" title="Verschieben"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Kachel ausblenden" onclick="hideTileNow('unifi-cameras')">✕</button></div>
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('unifi-cameras')">✕</button></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
           <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">UniFi Protect</div>
           <div id="unifiCamStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">● –</div>
@@ -351,7 +351,7 @@
         <div id="unifiCamName" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-4);margin-bottom:10px">–</div>
         <div style="flex:1;border-radius:10px;overflow:hidden;background:var(--bg-panel);min-height:120px;display:flex;align-items:center;justify-content:center;position:relative">
           <img id="unifiSnapshot" src="" alt="" style="width:100%;display:none;border-radius:8px">
-          <div id="unifiSnapshotPlaceholder" style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3)">Kein Snapshot verfügbar</div>
+          <div id="unifiSnapshotPlaceholder" style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3)">No snapshot available</div>
         </div>
         <div id="unifiSnapshotTs" style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:8px;text-align:right">–</div>
       </div>
@@ -369,82 +369,82 @@
           <div style="font:600 11px 'JetBrains Mono',monospace;color:var(--text-5);letter-spacing:0.1em">// dash#.cfg</div>
           <div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:4px">v<span id="navVersion">–</span></div>
         </div>
-        <div class="nav-item active" data-tab="darstellung">Darstellung</div>
-        <div class="nav-item" data-tab="schnellzugriff">Schnellzugriff</div>
+        <div class="nav-item active" data-tab="darstellung">Appearance</div>
+        <div class="nav-item" data-tab="schnellzugriff">Quick Access</div>
         <div class="nav-item" data-tab="layout">Layout</div>
-        <div class="nav-item" data-tab="integrationen">Integrationen</div>
-        <div class="nav-item" data-tab="ueber">Über</div>
+        <div class="nav-item" data-tab="integrationen">Integrations</div>
+        <div class="nav-item" data-tab="ueber">About</div>
       </div>
 
       <!-- Inhalt -->
       <div style="flex:1;display:flex;flex-direction:column;min-width:0">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 22px;border-bottom:1px solid var(--border-3)">
-          <div style="font:600 11px 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5a7080;text-transform:uppercase">Einstellungen</div>
+          <div style="font:600 11px 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5a7080;text-transform:uppercase">Settings</div>
           <button id="settingsClose" style="width:30px;height:30px;border-radius:7px;background:transparent;border:1px solid rgba(120,150,200,0.15);color:#7a8fa8;cursor:pointer;font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;transition:all .15s">✕</button>
         </div>
 
         <div style="flex:1;overflow-y:auto;padding:20px 26px">
 
-          <!-- TAB: DARSTELLUNG -->
+          <!-- TAB: APPEARANCE -->
           <div class="tab active" data-tab="darstellung">
-            <div class="cfg-section">Erscheinungsbild</div>
+            <div class="cfg-section">Appearance</div>
             <div class="cfg-row">
-              <span class="cfg-key">Akzentfarbe</span>
+              <span class="cfg-key">Accent Color</span>
               <div id="accentRow" style="display:flex;gap:7px"></div>
             </div>
             <div class="cfg-row">
-              <span class="cfg-key">Hintergrund-Raster</span>
+              <span class="cfg-key">Background Grid</span>
               <div class="switch on" data-toggle="gridOn"><span></span></div>
             </div>
             <div class="cfg-row">
-              <span class="cfg-key">Glaseffekt</span>
+              <span class="cfg-key">Glass Effect</span>
               <div class="switch on" data-toggle="glassOn"><span></span></div>
             </div>
             <div class="cfg-row">
-              <span class="cfg-key">Animationen</span>
+              <span class="cfg-key">Animations</span>
               <div class="switch on" data-toggle="animOn"><span></span></div>
             </div>
             <div class="cfg-row">
-              <span class="cfg-key">Suchleiste anzeigen</span>
+              <span class="cfg-key">Show search bar</span>
               <div class="switch on" data-toggle="searchOn"><span></span></div>
             </div>
 
-            <div class="cfg-section">Live-Daten</div>
+            <div class="cfg-section">Live Data</div>
             <div class="cfg-row">
-              <span class="cfg-key">Live-Updates aktiv</span>
+              <span class="cfg-key">Live updates active</span>
               <div class="switch on" data-toggle="liveOn"><span></span></div>
             </div>
             <div class="cfg-row" style="flex-direction:column;align-items:stretch;gap:10px">
               <div style="display:flex;justify-content:space-between;align-items:baseline">
-                <span class="cfg-key">Update-Intervall</span>
+                <span class="cfg-key">Update Interval</span>
                 <span style="font:600 15px 'Space Grotesk',sans-serif;color:#5b9dff"><span id="updateSec">1.6</span> s</span>
               </div>
               <input id="updateRange" type="range" min="400" max="4000" step="200" value="1600" style="width:100%;accent-color:#5b9dff;cursor:pointer;margin:0" />
             </div>
           </div>
 
-          <!-- TAB: SCHNELLZUGRIFF -->
+          <!-- TAB: QUICK ACCESS -->
           <div class="tab" data-tab="schnellzugriff">
-            <div class="cfg-section">Kacheln</div>
+            <div class="cfg-section">Tiles</div>
             <div class="ql-thead"><span></span><span>Name</span><span>URL</span><span>Icon</span><span>Label</span><span></span></div>
             <div id="qlEditList"></div>
             <div style="display:flex;justify-content:space-between;margin-top:12px">
-              <button class="cfg-btn" onclick="addQlItem()">+ Eintrag</button>
-              <button class="cfg-btn" onclick="saveQlItems()">↵ Speichern</button>
+              <button class="cfg-btn" onclick="addQlItem()">+ Entry</button>
+              <button class="cfg-btn" onclick="saveQlItems()">↵ Save</button>
             </div>
           </div>
 
           <!-- TAB: LAYOUT -->
           <div class="tab" data-tab="layout">
-            <div class="cfg-section">Kachel-Sichtbarkeit</div>
+            <div class="cfg-section">Tile Visibility</div>
             <div id="layoutEditList"></div>
             <div style="display:flex;justify-content:space-between;margin-top:12px">
-              <button class="cfg-btn cfg-btn-del" onclick="resetDashboardLayout()">↺ Zurücksetzen</button>
-              <button class="cfg-btn" onclick="saveDashboardLayout()">↵ Speichern</button>
+              <button class="cfg-btn cfg-btn-del" onclick="resetDashboardLayout()">↺ Reset</button>
+              <button class="cfg-btn" onclick="saveDashboardLayout()">↵ Save</button>
             </div>
           </div>
 
-          <!-- TAB: INTEGRATIONEN -->
+          <!-- TAB: INTEGRATIONS -->
           <div class="tab" data-tab="integrationen">
 
             <!-- System -->
@@ -454,7 +454,7 @@
                 <span style="font:700 11px 'JetBrains Mono',monospace;color:#5b9dff;min-width:22px;background:rgba(91,157,255,0.1);border-radius:4px;padding:2px 5px;text-align:center">GL</span>
                 <div>
                   <div class="cfg-key">Glances</div>
-                  <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">System-Metriken, Netzwerk, Speicher</div>
+                  <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">System metrics, network, storage</div>
                 </div>
               </div>
               <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
@@ -471,18 +471,18 @@
                 <span style="font:700 11px 'JetBrains Mono',monospace;color:#8b6dff;min-width:22px;background:rgba(139,109,255,0.1);border-radius:4px;padding:2px 5px;text-align:center">DO</span>
                 <div>
                   <div class="cfg-key">Docker</div>
-                  <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">Container-Status via Glances</div>
+                  <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">Container status via Glances</div>
                 </div>
               </div>
               <span id="dockerSettingsStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-status)">● –</span>
             </div>
 
-            <!-- Festplatten -->
-            <div class="cfg-section">Festplatten</div>
-            <div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-dim);margin-bottom:10px">Eigene Namen für erkannte Laufwerke (aus Glances). Platzhalter = automatischer Name.</div>
+            <!-- Disks -->
+            <div class="cfg-section">Disks</div>
+            <div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-dim);margin-bottom:10px">Custom names for detected drives (from Glances). Placeholder = automatic name.</div>
             <div id="diskCfgList" style="display:flex;flex-direction:column;gap:7px"></div>
             <div style="display:flex;justify-content:flex-end;margin-top:10px">
-              <button onclick="saveDiskLabels()" class="cfg-btn">↵ Speichern</button>
+              <button onclick="saveDiskLabels()" class="cfg-btn">↵ Save</button>
             </div>
 
             <!-- Security -->
@@ -493,18 +493,18 @@
                   <span style="font:700 11px 'JetBrains Mono',monospace;color:#3ddc97;min-width:22px;background:rgba(61,220,151,0.1);border-radius:4px;padding:2px 5px;text-align:center">AG</span>
                   <div>
                     <div class="cfg-key">AdGuard Home</div>
-                    <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">DNS-Filter, Anfragen-Statistik</div>
+                    <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">DNS filtering, request stats</div>
                   </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px">
                   <span id="adguardSettingsStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-status)">● –</span>
-                  <button onclick="saveSecrets('adguard')" class="cfg-btn">↵ Speichern</button>
+                  <button onclick="saveSecrets('adguard')" class="cfg-btn">↵ Save</button>
                 </div>
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;padding-left:32px">
                 <input id="secretAdguardUrl" placeholder="URL" class="cfg-input" />
-                <input id="secretAdguardUser" placeholder="Benutzer" class="cfg-input" />
-                <input id="secretAdguardPass" type="password" placeholder="Passwort" class="cfg-input" />
+                <input id="secretAdguardUser" placeholder="Username" class="cfg-input" />
+                <input id="secretAdguardPass" type="password" placeholder="Password" class="cfg-input" />
               </div>
             </div>
 
@@ -516,12 +516,12 @@
                   <span style="font:700 11px 'JetBrains Mono',monospace;color:#ff8a4c;min-width:22px;background:rgba(255,138,76,0.1);border-radius:4px;padding:2px 5px;text-align:center">PX</span>
                   <div>
                     <div class="cfg-key">Plex</div>
-                    <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">Bibliothek, aktive Sessions</div>
+                    <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">Library, active sessions</div>
                   </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px">
                   <span id="plexSettingsStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-status)">● –</span>
-                  <button onclick="saveSecrets('plex')" class="cfg-btn">↵ Speichern</button>
+                  <button onclick="saveSecrets('plex')" class="cfg-btn">↵ Save</button>
                 </div>
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;padding-left:32px">
@@ -530,38 +530,38 @@
               </div>
             </div>
 
-            <!-- Speicher -->
-            <div class="cfg-section">Speicher</div>
+            <!-- Storage -->
+            <div class="cfg-section">Storage</div>
             <div style="padding:4px 0 12px">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                 <div style="display:flex;align-items:center;gap:10px">
                   <span style="font:700 11px 'JetBrains Mono',monospace;color:#0082c9;min-width:22px;background:rgba(0,130,201,0.12);border-radius:4px;padding:2px 5px;text-align:center">NC</span>
                   <div>
                     <div class="cfg-key">Nextcloud</div>
-                    <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">Speicher, Nutzer, ToLeech-Upload · Admin + App-Passwort</div>
+                    <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">Storage, users, ToLeech upload · Admin + app password</div>
                   </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px">
                   <span id="nextcloudSettingsStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-status)">● –</span>
-                  <button onclick="saveSecrets('nextcloud')" class="cfg-btn">↵ Speichern</button>
+                  <button onclick="saveSecrets('nextcloud')" class="cfg-btn">↵ Save</button>
                 </div>
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;padding-left:32px">
-                <input id="secretNextcloudUrl" placeholder="https://cloud.example.de" class="cfg-input" />
-                <input id="secretNextcloudUser" placeholder="Admin-Benutzer" class="cfg-input" />
-                <input id="secretNextcloudPass" type="password" placeholder="App-Passwort" class="cfg-input" />
+                <input id="secretNextcloudUrl" placeholder="https://cloud.example.com" class="cfg-input" />
+                <input id="secretNextcloudUser" placeholder="Admin username" class="cfg-input" />
+                <input id="secretNextcloudPass" type="password" placeholder="App password" class="cfg-input" />
                 <input id="secretNextcloudPath" placeholder="ToLeech" class="cfg-input" />
               </div>
             </div>
 
-            <!-- Wetter -->
-            <div class="cfg-section">Wetter</div>
+            <!-- Weather -->
+            <div class="cfg-section">Weather</div>
             <div class="cfg-row">
               <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
                 <span style="font:700 11px 'JetBrains Mono',monospace;color:#ffb454;min-width:22px;background:rgba(255,180,84,0.1);border-radius:4px;padding:2px 5px;text-align:center">WT</span>
                 <div>
                   <div class="cfg-key">Open-Meteo</div>
-                  <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">Kein API-Key erforderlich</div>
+                  <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">No API key required</div>
                 </div>
               </div>
               <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
@@ -590,26 +590,26 @@
                   <input id="secretUnifiApiKey" type="password" placeholder="Cloud API Key" class="cfg-input" style="width:280px" />
                 </div>
                 <div style="display:flex;gap:6px;align-items:center">
-                  <input id="secretUnifiHostId" placeholder="Host-ID (auto)" class="cfg-input" style="width:200px" />
+                  <input id="secretUnifiHostId" placeholder="Host ID (auto)" class="cfg-input" style="width:200px" />
                   <input id="secretUnifiCamId" placeholder="Camera ID (auto)" class="cfg-input" style="width:150px" />
                 </div>
-                <button onclick="saveSecrets('unifi')" class="cfg-btn">↵ Speichern</button>
+                <button onclick="saveSecrets('unifi')" class="cfg-btn">↵ Save</button>
               </div>
             </div>
 
-            <!-- Überwachung -->
-            <div class="cfg-section">Dienste-Überwachung</div>
-            <div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-dim);margin-bottom:10px">URLs die regelmäßig auf Erreichbarkeit geprüft werden</div>
+            <!-- Monitoring -->
+            <div class="cfg-section">Service Monitoring</div>
+            <div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-dim);margin-bottom:10px">URLs that are periodically checked for availability</div>
             <div style="display:grid;grid-template-columns:1fr 1.4fr auto;gap:6px;margin-bottom:8px;align-items:center">
               <input id="statusServiceName" placeholder="Name" class="cfg-input" />
               <input id="statusServiceUrl" placeholder="http://10.0.0.1:8080" class="cfg-input" />
-              <button id="statusAddBtn" class="cfg-btn">+ Hinzufügen</button>
+              <button id="statusAddBtn" class="cfg-btn">+ Add</button>
             </div>
             <div id="statusServiceList" style="display:flex;flex-direction:column;gap:4px"></div>
 
           </div>
 
-          <!-- TAB: ÜBER -->
+          <!-- TAB: ABOUT -->
           <div class="tab" data-tab="ueber">
             <div class="cfg-section">System</div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -622,11 +622,11 @@
                 <div id="aboutNode" style="font:600 16px 'Space Grotesk',sans-serif;color:var(--text-2);margin-top:8px">–</div>
               </div>
               <div style="background:var(--bg-info-card);border:1px solid var(--border-2);border-radius:10px;padding:16px 18px">
-                <div class="cfg-key">Server-Uptime</div>
+                <div class="cfg-key">Server Uptime</div>
                 <div id="aboutUptime" style="font:600 16px 'Space Grotesk',sans-serif;color:#3ddc97;margin-top:8px">–</div>
               </div>
               <div style="background:var(--bg-info-card);border:1px solid var(--border-2);border-radius:10px;padding:16px 18px">
-                <div class="cfg-key">Lizenz</div>
+                <div class="cfg-key">License</div>
                 <div id="aboutLicense" style="font:600 16px 'Space Grotesk',sans-serif;color:var(--text-2);margin-top:8px">–</div>
               </div>
             </div>
@@ -635,17 +635,17 @@
         </div>
       </div>
 
-      <!-- Icon-Picker Overlay (über dem gesamten Content-Bereich) -->
+      <!-- Icon picker overlay (over the entire content area) -->
       <div id="iconPicker" style="display:none;position:absolute;top:0;bottom:0;left:190px;right:0;background:var(--bg-modal);z-index:5;flex-direction:column">
         <div style="padding:14px 20px 12px;border-bottom:1px solid var(--border-3);display:flex;flex-direction:column;gap:10px;flex-shrink:0">
           <div style="display:flex;align-items:center;justify-content:space-between">
             <div style="display:flex;align-items:center;gap:10px">
-              <button class="cfg-btn" onclick="closeIconPicker()" style="padding:4px 12px">← Zurück</button>
-              <span style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5b9dff">Icon auswählen</span>
+              <button class="cfg-btn" onclick="closeIconPicker()" style="padding:4px 12px">← Back</button>
+              <span style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;text-transform:uppercase;color:#5b9dff">Select icon</span>
             </div>
-            <button class="cfg-btn cfg-btn-del" onclick="clearPickedIcon()" style="padding:4px 10px;font-size:10px">✕ Icon löschen</button>
+            <button class="cfg-btn cfg-btn-del" onclick="clearPickedIcon()" style="padding:4px 10px;font-size:10px">✕ Remove icon</button>
           </div>
-          <input id="iconSearchInput" type="text" class="cfg-input" placeholder="Suchen … Plex, Grafana, Sonarr …" oninput="filterIcons(this.value)">
+          <input id="iconSearchInput" type="text" class="cfg-input" placeholder="Search … Plex, Grafana, Sonarr …" oninput="filterIcons(this.value)">
         </div>
         <div id="iconCatBar" style="padding:8px 16px;display:flex;gap:5px;flex-wrap:nowrap;overflow-x:auto;border-bottom:1px solid var(--border-4);flex-shrink:0;scrollbar-width:thin"></div>
         <div id="iconGrid" style="flex:1;overflow-y:auto;padding:12px 16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:4px;align-content:start"></div>
@@ -657,9 +657,9 @@
 </div>
 
 <div id="layoutEditBar" style="position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:150;background:var(--bg-modal);border:1px solid var(--border-modal);border-radius:12px;padding:10px 14px;box-shadow:0 12px 40px rgba(0,0,0,.5);align-items:center;gap:12px;font-family:'JetBrains Mono',monospace">
-  <span style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">Layout bearbeiten · Kacheln per Griff verschieben oder ausblenden</span>
-  <button class="cfg-btn" onclick="saveDashboardLayout()">↵ Speichern</button>
-  <button class="cfg-btn" onclick="toggleLayoutEditMode()">Fertig</button>
+  <span style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">Edit layout · drag tiles by the handle to move or hide them</span>
+  <button class="cfg-btn" onclick="saveDashboardLayout()">↵ Save</button>
+  <button class="cfg-btn" onclick="toggleLayoutEditMode()">Done</button>
 </div>
 
 <script src="vendor/sortable.min.js"></script>

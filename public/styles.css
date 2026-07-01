@@ -1,6 +1,6 @@
-/* Globale Styles & Helfer fuer das Homelab-Dashboard
-   Statisches Layout liegt inline im HTML (1:1 aus dem Design);
-   hier nur Resets, Keyframes und JS-gesteuerte Zustaende. */
+/* Global styles & helpers for the Homelab Dashboard
+   Static layout lives inline in the HTML (1:1 from the design);
+   only resets, keyframes and JS-driven states live here. */
 
 :root {
   /* ── Dark mode (default) ───────────────────────────────── */
@@ -133,7 +133,7 @@ select { -webkit-appearance: none; appearance: none; }
   background: rgba(91, 157, 255, 0.08) !important;
 }
 
-/* Panel mit Hover-Hervorhebung (System-Auslastung) */
+/* Panel with hover highlight (system load) */
 .card { transition: border-color .2s, box-shadow .2s; }
 .card:hover {
   border-color: rgba(91, 157, 255, 0.4) !important;
@@ -141,7 +141,7 @@ select { -webkit-appearance: none; appearance: none; }
 }
 [data-theme="light"] .card:hover { box-shadow: 0 8px 30px rgba(37,99,235,0.12); }
 
-/* Layout-Edit-Modus: Drag-Handle & Hide-Button pro Kachel */
+/* Layout edit mode: drag handle & hide button per tile */
 .tile-controls {
   display: none; position: absolute; top: 12px; right: 12px; z-index: 2;
   gap: 6px; align-items: center;
@@ -160,12 +160,12 @@ body.layout-edit-mode .tile-controls { display: flex; }
 .tile-hide-btn:hover { color: var(--red); border-color: rgba(244,63,94,0.4); }
 [data-theme="light"] .tile-drag-handle, [data-theme="light"] .tile-hide-btn { background: rgba(255,255,255,0.85); }
 
-/* SortableJS Drag-Zustände */
+/* SortableJS drag states */
 .sortable-ghost { opacity: 0.35; border: 1.5px dashed var(--accent) !important; }
 .sortable-chosen { box-shadow: 0 8px 30px rgba(91,157,255,0.25); }
 .sortable-drag { opacity: 0.9; }
 
-/* Schwebende Speichern-Leiste im Layout-Edit-Modus */
+/* Floating save bar in layout edit mode */
 #layoutEditBar { display: none; }
 body.layout-edit-mode #layoutEditBar { display: flex; }
 #layoutEditBtn.active { color: var(--accent) !important; border-color: rgba(91,157,255,0.4) !important; background: rgba(91,157,255,0.08) !important; }
@@ -218,7 +218,7 @@ body.layout-edit-mode #layoutEditBar { display: flex; }
 .tab.active { display: block; animation: tabIn 55ms ease; }
 @keyframes tabIn { from { opacity: 0.5; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 
-/* Einstellungs-Zeile */
+/* Settings row */
 .cfg-row {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px; padding: 10px 0; min-height: 36px;
@@ -348,7 +348,7 @@ body.layout-edit-mode #layoutEditBar { display: flex; }
   background: linear-gradient(90deg, #5b9dff, #3ddc97);
   transition: width .8s cubic-bezier(.4,0,.2,1);
 }
-/* "Fast voll": Balkenfarbe bleibt, Track glüht/pulsiert als Warnung. */
+/* "Nearly full": bar color stays, track glows/pulses as a warning. */
 .disk-warn .disk-track { animation: diskPulseWarn 2s ease-in-out infinite; }
 .disk-crit .disk-track { animation: diskPulseCrit 1.4s ease-in-out infinite; }
 @keyframes diskPulseWarn {
