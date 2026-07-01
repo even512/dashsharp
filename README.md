@@ -1,123 +1,160 @@
 <p align="center">
-  <img src="icon.png" width="112" alt="Dash# Logo">
+  <img src="icon.png" width="120" alt="Dash# logo">
 </p>
+
 <h1 align="center">Dash#</h1>
+
 <p align="center">
-  Selfhosted Homelab-Dashboard mit frei verschieb- und ausblendbaren Kacheln und Live-Widgets.<br>
-  Ein Node/Express-Container – keine Datenbank, kein Docker-Socket nötig.
+  <b>A fast, self-hosted homelab dashboard</b> with drag-and-drop tiles and live widgets —<br>
+  one small container, no database, nothing phoning home.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/github/v/tag/even512/dashsharp?label=version&sort=semver&color=7C6CFF" alt="Version">
+  <img src="https://img.shields.io/docker/image-size/even512/dashsharp/latest?color=7C6CFF" alt="Image size">
+  <img src="https://img.shields.io/docker/pulls/even512/dashsharp?color=7C6CFF" alt="Docker pulls">
+  <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-7C6CFF" alt="Architectures">
 </p>
 
 ---
 
-## Features
+## What is Dash#?
 
-- 🧩 **Frei anordbare Kacheln** – verschieben & ausblenden, Layout wird serverseitig gespeichert
-- 📊 **Live-Widgets** – System (Glances), Docker, AdGuard Home, Plex, UniFi Network & Protect, Nextcloud, Wetter
-- ⚙️ **Konfiguration in der Weboberfläche** – alles unter `/settings`, keine Config-Dateien nötig
-- 🔒 **Sicher by design** – Integrationen laufen als serverseitiger Proxy (kein CORS, keine Tokens im Browser)
-- 🐳 **Ein Container** – schlankes `node:20-alpine`, Healthcheck, persistenter Config-Ordner
+Dash# is a self-hosted **start page / dashboard** for your homelab. It gives you one good-looking place
+to jump to your services and to see live status at a glance — system load, Docker containers, DNS
+filtering, media, network and storage.
 
-## Schnellstart (Docker)
+Under the hood it's a plain **Node.js + Express** app that serves a static frontend and proxies every
+integration **server-side**: the backend talks to your services with your stored credentials and returns
+small, normalized JSON. So there's no CORS, your tokens never reach the browser, and there's no database
+and no build step.
+
+- 🧩 **Drag-and-drop tiles** — rearrange and hide widgets; the layout is saved server-side
+- ⚡ **Live widgets** — System (via [Glances](https://nicolargo.github.io/glances/)), Docker, AdGuard Home, Plex, UniFi Network & Protect, Nextcloud, weather
+- ⚙️ **Configure in the browser** — everything under `/settings`, no config files to hand-edit
+- 🔒 **Private by design** — no telemetry, no tracking; secrets stay in your mounted config volume
+- 🐳 **One container** — `node:20-alpine`, multi-arch (amd64/arm64), healthcheck, ~48 MB
+
+> [!NOTE]
+> **Dash# is at v0.1 — the first public iteration.** It works and is used daily, but expect rough edges
+> and breaking changes before 1.0. Feedback and issues are very welcome.
+
+## Screenshot
+
+<!-- Add a screenshot at docs/screenshot.png and uncomment the line below: -->
+<!-- <p align="center"><img src="docs/screenshot.png" width="820" alt="Dash# dashboard"></p> -->
+
+_Coming soon — drop a screenshot at `docs/screenshot.png`._
+
+## Quick start
 
 ```bash
 docker run -d --name dashsharp \
   -p 8085:3000 \
-  -v /pfad/zu/appdata/dashsharp:/app/config \
+  -v /path/to/appdata/dashsharp:/app/config \
   even512/dashsharp:latest
 ```
 
-→ Dashboard unter `http://<host>:8085`. Beim ersten Start wird automatisch eine
-Standard-`services.yaml` in den Config-Ordner geschrieben.
+Open `http://<host>:8085`, then go to **⚙️ → Integrations** to connect your services. On first start a
+default config is written into the mounted volume automatically.
 
-Oder per Compose (siehe [`docker-compose.yml`](docker-compose.yml)):
+Prefer Compose? See [`docker-compose.yml`](docker-compose.yml):
 
 ```bash
 docker compose up -d
 ```
 
-## Installation auf Unraid
+## Install on Unraid
 
-### Jetzt – privat per Template
-1. [`unraid/dashsharp.xml`](unraid/dashsharp.xml) auf den Server kopieren nach
-   `/boot/config/plugins/dockerMan/templates-user/my-dashsharp.xml`.
-2. Unraid → **Docker → Add Container** → oben im Dropdown **Template** „Dash-Sharp" wählen.
-3. Host-Port (`8085`) und Appdata-Pfad (`/mnt/user/appdata/dashsharp`) prüfen → **Apply**.
+1. Fetch the template on your Unraid box:
+   ```bash
+   wget -O /boot/config/plugins/dockerMan/templates-user/my-dashsharp.xml \
+     https://raw.githubusercontent.com/even512/dashsharp/main/unraid/dashsharp.xml
+   ```
+2. **Docker → Add Container** → pick **Dash-Sharp** from the *Template* dropdown.
+3. Check the WebUI port (`8085`) and appdata path (`/mnt/user/appdata/dashsharp`) → **Apply**.
 
-### Später – Community Applications
-Wenn das Image stabil und garantiert secrets-frei ist, kann das Template-Repo bei den
-[Community Applications](https://forums.unraid.net/topic/38582-plug-in-community-applications/)
-zur Aufnahme eingereicht werden. Danach ist Dash# unter **Apps** suchbar und mit einem Klick installierbar.
+## Configuration
 
-## Konfiguration
+Everything is configured from the web UI under **Settings → Integrations** and stored in
+`config/secrets.json` **inside your mounted volume** — never baked into the image, never committed.
 
-Alles über **⚙️ → Integrationen** in der Weboberfläche. Die Werte (URLs, Tokens) werden in
-`config/secrets.json` **im gemappten Volume** gespeichert – nichts davon steckt im Image.
-Optional lassen sich alle Werte auch als Umgebungsvariablen setzen (siehe [`.env.example`](.env.example));
-gesetzte Env-Vars haben Vorrang.
-
-| Integration | Benötigt |
+| Integration | Needs |
 |---|---|
-| System / Docker | Glances-URL (`http://host:61208`) |
-| AdGuard Home | URL, Benutzer, Passwort |
+| System / Docker | Glances URL (`http://host:61208`) |
+| AdGuard Home | URL, user, password |
 | Plex | URL, X-Plex-Token |
-| UniFi | API-Key (api.ui.com) |
-| Nextcloud | URL, Benutzer, App-Passwort |
-| Wetter | Stadt (Open-Meteo, kein Key nötig) |
+| UniFi | Cloud API key (api.ui.com) |
+| Nextcloud | URL, user, app password |
+| Weather | City (Open-Meteo, no key) |
 
-## Daten & Persistenz
+Any value can also be set as an environment variable (see [`.env.example`](.env.example)); env vars take
+precedence over the UI values.
 
-Der gemappte Ordner `/app/config` enthält alle veränderlichen Daten:
+## Data & persistence
+
+All mutable state lives in the mounted `/app/config` volume:
 
 ```
 config/
-├── services.yaml           # Titel, Suche, Quicklinks (auto-erzeugt beim 1. Start)
-├── secrets.json            # API-Keys/Tokens (per UI)
-├── dashboard-layout.json   # Kachel-Reihenfolge & Sichtbarkeit
-├── quicklinks.json         # Schnellzugriff-Kacheln
-├── disks.json              # eigene Disk-Namen
-└── status.json             # Healthcheck-URLs
+├── services.yaml           # title, search, quicklinks (auto-created on first run)
+├── secrets.json            # API keys / tokens (via UI)
+├── dashboard-layout.json   # tile order & visibility
+├── quicklinks.json         # quick-access tiles
+├── disks.json              # custom disk names
+└── status.json             # health-check URLs
 ```
 
-**Backup** = diesen Ordner sichern. Ein Image-Update lässt ihn unangetastet.
+Back up that folder and you've backed up everything. Image updates never touch it.
 
-## Update
+## Updating
 
-Unraid: im Docker-Tab **Check for Updates** → Update. Deine Konfiguration bleibt erhalten
-(liegt im Appdata-Volume). Bei Docker/Compose: `docker compose pull && docker compose up -d`.
+- **Unraid:** Docker tab → *Check for Updates* → apply. Your config is preserved.
+- **Compose:** `docker compose pull && docker compose up -d`.
 
-## Lokale Entwicklung
+## How it works
+
+Dash# is a single Node/Express process. It serves the static frontend from `public/` and exposes a set
+of same-origin `/api/*` endpoints the browser calls. Each integration is a **server-side proxy**: the
+backend contacts Glances/AdGuard/Plex/etc. with your stored credentials and returns a trimmed JSON — no
+CORS, no tokens in the browser. State is a handful of JSON/YAML files in the config volume; there is no
+database and no build step.
+
+## Security
+
+The dashboard has **no built-in authentication** — anyone who can reach the port can use it. Keep it on
+your LAN, or put it behind a VPN or an authenticated reverse proxy. **Do not** expose port 8085 directly
+to the internet.
+
+## Build from source
 
 ```bash
 git clone https://github.com/even512/dashsharp.git
 cd dashsharp
-cp .env.example .env        # optional, für Env-Overrides
+cp .env.example .env        # optional
 npm install
 npm run dev                 # http://localhost:3000
 ```
 
-Image selbst bauen: `docker build -t dashsharp . && docker run -d -p 8085:3000 -v $PWD/config:/app/config dashsharp`.
+Build the image yourself: `docker build -t dashsharp .`
 
-### Logo neu erzeugen
-Design in [`logo.svg`](logo.svg) anpassen, dann:
+Regenerate the logo/icons after editing [`logo.svg`](logo.svg):
+
 ```bash
-npm i -D sharp
-node scripts/render-icon.mjs     # erzeugt icon.png + public/favicon.png
+npm i -D sharp && node scripts/render-icon.mjs
 ```
 
-## Veröffentlichen
+## Roadmap
 
-Alle Repo-/Image-URLs sind bereits auf den Account `even512` gesetzt.
+- [ ] Home Assistant integration (currently a static demo)
+- [ ] Optional authentication
+- [ ] Listing in the Unraid Community Applications
+- [ ] Self-hosted fonts & icons (zero external requests)
 
-1. **GitHub:** öffentliches Repo `dashsharp` (Account `even512`) anlegen und pushen.
-2. **Docker Hub:** Repo `dashsharp` + Access-Token erstellen. In GitHub → *Settings → Secrets and
-   variables → Actions* anlegen: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`.
-3. Push auf `main` baut & pusht `:latest`. Für eine Version: `git tag v1.0.0 && git push --tags`.
+## Contributing
 
-## Sicherheit
+Issues and PRs are welcome. This is a young project — small, focused improvements are the easiest to land.
 
-- `.env` und `config/secrets.json` werden **nie** committet (in `.gitignore`) und **nie** ins Image gebacken.
-- Falls doch einmal Zugangsdaten in Git/Registry gelandet sind: **rotieren** (neu erzeugen).
+## License
 
-## Lizenz
-
-Noch offen – bei Bedarf eine `LICENSE` (z. B. MIT) ergänzen.
+No license chosen yet (default copyright applies). An OSI license such as MIT may be added later.
