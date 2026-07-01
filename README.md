@@ -18,11 +18,17 @@
 
 ---
 
+> 🤖 **Built with Claude.** This project was designed and implemented with heavy help from
+> [Claude](https://claude.com) (Anthropic's AI). I'm not a professional developer — I wanted a
+> dashboard for my own homelab and used Claude as a pair-programmer to actually get it built.
+
 ## What is Dash#?
 
-Dash# is a self-hosted **start page / dashboard** for your homelab. It gives you one good-looking place
-to jump to your services and to see live status at a glance — system load, Docker containers, DNS
-filtering, media, network and storage.
+I run a small homelab and wanted one good-looking start page for it — a place to jump to my services
+and see live status at a glance: system load, Docker containers, DNS filtering, media, network, storage.
+I tried a few of the dashboards out there, and while they're solid projects, none of them quite gave me
+the exact mix of integrations and workflow I was after. So I built Dash# to be the dashboard that fit
+my setup — configurable entirely from the browser, one small container, nothing else to babysit.
 
 Under the hood it's a plain **Node.js + Express** app that serves a static frontend and proxies every
 integration **server-side**: the backend talks to your services with your stored credentials and returns
@@ -41,10 +47,7 @@ and no build step.
 
 ## Screenshot
 
-<!-- Add a screenshot at docs/screenshot.png and uncomment the line below: -->
-<!-- <p align="center"><img src="docs/screenshot.png" width="820" alt="Dash# dashboard"></p> -->
-
-_Coming soon`._
+_Coming soon._
 
 ## Quick start
 
@@ -97,13 +100,17 @@ All mutable state lives in the mounted `/app/config` volume:
 
 ```
 config/
-├── services.yaml           # title, search, quicklinks (auto-created on first run)
-├── secrets.json            # API keys / tokens (via UI)
-├── dashboard-layout.json   # tile order & visibility
-├── quicklinks.json         # quick-access tiles
-├── disks.json              # custom disk names
-└── status.json             # health-check URLs
+├── services.yaml
+├── secrets.json
+├── dashboard-layout.json
+├── quicklinks.json
+├── disks.json
+└── status.json
 ```
+
+`services.yaml` holds title, search and quicklinks and is auto-created on first run. `secrets.json`
+holds your API keys/tokens, set via the UI. The rest track dashboard state: tile order and visibility,
+quick-access tiles, custom disk names, and health-check URLs.
 
 Back up that folder and you've backed up everything. Image updates never touch it.
 
@@ -131,10 +138,12 @@ to the internet.
 ```bash
 git clone https://github.com/even512/dashsharp.git
 cd dashsharp
-cp .env.example .env        # optional
+cp .env.example .env
 npm install
-npm run dev                 # http://localhost:3000
+npm run dev
 ```
+
+`npm run dev` starts the app at `http://localhost:3000`. The `.env` copy is optional.
 
 Build the image yourself: `docker build -t dashsharp .`
 
@@ -146,7 +155,8 @@ npm i -D sharp && node scripts/render-icon.mjs
 
 ## Contributing
 
-Issues and PRs are welcome. This is a young project — small, focused improvements are the easiest to land.
+This started as a personal project, so it's still a bit rough around the edges — but issues and PRs are
+very welcome. Small, focused improvements are the easiest for me to review and land.
 
 ## License
 
