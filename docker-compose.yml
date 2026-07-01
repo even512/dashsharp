@@ -3,7 +3,7 @@ services:
     build: .
     image: dashsharp:latest
     # Alternativ das publizierte Image nutzen (ohne lokalen Build):
-    #   image: YOUR_DOCKERHUB_USER/dashsharp:latest
+    #   image: even512/dashsharp:latest
     container_name: dashsharp
     ports:
       # Host:Container  -> Dashboard erreichbar unter http://<host>:8085

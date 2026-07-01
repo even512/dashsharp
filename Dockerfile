@@ -27,7 +27,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 LABEL org.opencontainers.image.title="Dash#" \
       org.opencontainers.image.description="Selfhosted Homelab-Dashboard mit frei verschiebbaren Kacheln und Live-Widgets" \
-      org.opencontainers.image.source="https://github.com/YOUR_GITHUB_USER/dashsharp"
+      org.opencontainers.image.source="https://github.com/even512/dashsharp"
 
 ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["node", "server.js"]

@@ -23,7 +23,7 @@
 docker run -d --name dashsharp \
   -p 8085:3000 \
   -v /pfad/zu/appdata/dashsharp:/app/config \
-  YOUR_DOCKERHUB_USER/dashsharp:latest
+  even512/dashsharp:latest
 ```
 
 → Dashboard unter `http://<host>:8085`. Beim ersten Start wird automatisch eine
@@ -38,11 +38,10 @@ docker compose up -d
 ## Installation auf Unraid
 
 ### Jetzt – privat per Template
-1. Platzhalter ersetzen und Repo/Image veröffentlichen (siehe [Veröffentlichen](#veröffentlichen-platzhalter-ersetzen)).
-2. [`unraid/dashsharp.xml`](unraid/dashsharp.xml) auf den Server kopieren nach
+1. [`unraid/dashsharp.xml`](unraid/dashsharp.xml) auf den Server kopieren nach
    `/boot/config/plugins/dockerMan/templates-user/my-dashsharp.xml`.
-3. Unraid → **Docker → Add Container** → oben im Dropdown **Template** „Dash-Sharp" wählen.
-4. Host-Port (`8085`) und Appdata-Pfad (`/mnt/user/appdata/dashsharp`) prüfen → **Apply**.
+2. Unraid → **Docker → Add Container** → oben im Dropdown **Template** „Dash-Sharp" wählen.
+3. Host-Port (`8085`) und Appdata-Pfad (`/mnt/user/appdata/dashsharp`) prüfen → **Apply**.
 
 ### Später – Community Applications
 Wenn das Image stabil und garantiert secrets-frei ist, kann das Template-Repo bei den
@@ -89,7 +88,7 @@ Unraid: im Docker-Tab **Check for Updates** → Update. Deine Konfiguration blei
 ## Lokale Entwicklung
 
 ```bash
-git clone https://github.com/YOUR_GITHUB_USER/dashsharp.git
+git clone https://github.com/even512/dashsharp.git
 cd dashsharp
 cp .env.example .env        # optional, für Env-Overrides
 npm install
@@ -105,13 +104,11 @@ npm i -D sharp
 node scripts/render-icon.mjs     # erzeugt icon.png + public/favicon.png
 ```
 
-## Veröffentlichen (Platzhalter ersetzen)
+## Veröffentlichen
 
-Ersetze in folgenden Dateien `YOUR_GITHUB_USER` bzw. `YOUR_DOCKERHUB_USER`:
-`unraid/dashsharp.xml`, `Dockerfile` (LABEL), `docker-compose.yml` (Kommentar), dieses README.
-*(Der CI-Workflow braucht keine Anpassung – der Image-Name wird aus dem Secret abgeleitet.)*
+Alle Repo-/Image-URLs sind bereits auf den Account `even512` gesetzt.
 
-1. **GitHub:** öffentliches Repo `dashsharp` anlegen und pushen.
+1. **GitHub:** öffentliches Repo `dashsharp` (Account `even512`) anlegen und pushen.
 2. **Docker Hub:** Repo `dashsharp` + Access-Token erstellen. In GitHub → *Settings → Secrets and
    variables → Actions* anlegen: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`.
 3. Push auf `main` baut & pusht `:latest`. Für eine Version: `git tag v1.0.0 && git push --tags`.
