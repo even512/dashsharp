@@ -364,34 +364,40 @@
     <div id="settingsPanel" style="width:min(1040px,100%);height:min(700px,90vh);display:flex;background:var(--bg-modal);border:1px solid var(--border-modal);border-radius:14px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.8);position:relative">
 
       <!-- Sidebar -->
-      <div style="width:190px;flex-shrink:0;background:var(--bg-modal-side);border-right:1px solid var(--border-3);padding:18px 0;display:flex;flex-direction:column">
-        <div style="padding:0 20px 16px;border-bottom:1px solid var(--border-4);margin-bottom:12px">
+      <div style="width:208px;flex-shrink:0;background:var(--bg-modal-side);border-right:1px solid var(--border-3);padding:18px 0;display:flex;flex-direction:column">
+        <div style="padding:0 20px 16px;border-bottom:1px solid var(--border-4);margin-bottom:8px;flex-shrink:0">
           <div style="font:600 11px 'JetBrains Mono',monospace;color:var(--text-5);letter-spacing:0.1em">// dash#.cfg</div>
           <div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:4px">v<span id="navVersion">–</span></div>
         </div>
-        <div class="nav-item active" data-tab="darstellung">Appearance</div>
-        <div class="nav-item" data-tab="schnellzugriff">Quick Access</div>
-        <div class="nav-item" data-tab="layout">Layout</div>
-        <div class="nav-item" data-tab="integrationen">Integrations</div>
-        <div class="nav-item" data-tab="ueber">About</div>
+        <div id="settingsTree" style="flex:1;overflow-y:auto;padding-bottom:8px"></div>
       </div>
 
       <!-- Inhalt -->
       <div style="flex:1;display:flex;flex-direction:column;min-width:0">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 22px;border-bottom:1px solid var(--border-3)">
-          <div style="font:600 11px 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5a7080;text-transform:uppercase">Settings</div>
-          <button id="settingsClose" style="width:30px;height:30px;border-radius:7px;background:transparent;border:1px solid rgba(120,150,200,0.15);color:#7a8fa8;cursor:pointer;font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;transition:all .15s">✕</button>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 22px;border-bottom:1px solid var(--border-3)">
+          <div style="display:flex;align-items:center;gap:10px;min-width:0">
+            <button id="settingsBackBtn" class="cfg-btn" style="display:none;padding:4px 10px;flex-shrink:0" onclick="selectCategory(state.settingsCategory)">← Back</button>
+            <div id="settingsBreadcrumb" style="font:600 11px 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5a7080;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Settings</div>
+          </div>
+          <button id="settingsClose" style="width:30px;height:30px;border-radius:7px;background:transparent;border:1px solid rgba(120,150,200,0.15);color:#7a8fa8;cursor:pointer;font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0">✕</button>
         </div>
 
         <div style="flex:1;overflow-y:auto;padding:20px 26px">
 
-          <!-- TAB: APPEARANCE -->
-          <div class="tab active" data-tab="darstellung">
-            <div class="cfg-section">Appearance</div>
+          <div id="categoryGrid" class="category-grid" style="display:none"></div>
+
+          <!-- TAB: THEME & COLORS -->
+          <div class="tab" data-tab="theme">
+            <div class="cfg-section">Theme & Colors</div>
             <div class="cfg-row">
               <span class="cfg-key">Accent Color</span>
               <div id="accentRow" style="display:flex;gap:7px"></div>
             </div>
+          </div>
+
+          <!-- TAB: EFFECTS -->
+          <div class="tab" data-tab="effects">
+            <div class="cfg-section">Effects</div>
             <div class="cfg-row">
               <span class="cfg-key">Background Grid</span>
               <div class="switch on" data-toggle="gridOn"><span></span></div>
@@ -408,7 +414,10 @@
               <span class="cfg-key">Show search bar</span>
               <div class="switch on" data-toggle="searchOn"><span></span></div>
             </div>
+          </div>
 
+          <!-- TAB: LIVE DATA -->
+          <div class="tab" data-tab="livedata">
             <div class="cfg-section">Live Data</div>
             <div class="cfg-row">
               <span class="cfg-key">Live updates active</span>
@@ -444,11 +453,9 @@
             </div>
           </div>
 
-          <!-- TAB: INTEGRATIONS -->
-          <div class="tab" data-tab="integrationen">
-
-            <!-- System -->
-            <div class="cfg-section">System</div>
+          <!-- TAB: GLANCES (+ Docker status) -->
+          <div class="tab" data-tab="glances">
+            <div class="cfg-section">Glances</div>
             <div class="cfg-row">
               <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
                 <span style="font:700 11px 'JetBrains Mono',monospace;color:#5b9dff;min-width:22px;background:rgba(91,157,255,0.1);border-radius:4px;padding:2px 5px;text-align:center">GL</span>
@@ -476,17 +483,21 @@
               </div>
               <span id="dockerSettingsStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-status)">● –</span>
             </div>
+          </div>
 
-            <!-- Disks -->
+          <!-- TAB: DISKS -->
+          <div class="tab" data-tab="disks">
             <div class="cfg-section">Disks</div>
             <div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-dim);margin-bottom:10px">Custom names for detected drives (from Glances). Placeholder = automatic name.</div>
             <div id="diskCfgList" style="display:flex;flex-direction:column;gap:7px"></div>
             <div style="display:flex;justify-content:flex-end;margin-top:10px">
               <button onclick="saveDiskLabels()" class="cfg-btn">↵ Save</button>
             </div>
+          </div>
 
-            <!-- Security -->
-            <div class="cfg-section">Security</div>
+          <!-- TAB: ADGUARD HOME -->
+          <div class="tab" data-tab="adguard">
+            <div class="cfg-section">AdGuard Home</div>
             <div style="padding:4px 0 12px">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                 <div style="display:flex;align-items:center;gap:10px">
@@ -507,9 +518,11 @@
                 <input id="secretAdguardPass" type="password" placeholder="Password" class="cfg-input" />
               </div>
             </div>
+          </div>
 
-            <!-- Media -->
-            <div class="cfg-section">Media</div>
+          <!-- TAB: PLEX -->
+          <div class="tab" data-tab="plex">
+            <div class="cfg-section">Plex</div>
             <div style="padding:4px 0 12px">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                 <div style="display:flex;align-items:center;gap:10px">
@@ -529,9 +542,11 @@
                 <input id="secretPlexToken" type="password" placeholder="X-Plex-Token" class="cfg-input" />
               </div>
             </div>
+          </div>
 
-            <!-- Storage -->
-            <div class="cfg-section">Storage</div>
+          <!-- TAB: NEXTCLOUD -->
+          <div class="tab" data-tab="nextcloud">
+            <div class="cfg-section">Nextcloud</div>
             <div style="padding:4px 0 12px">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                 <div style="display:flex;align-items:center;gap:10px">
@@ -553,8 +568,10 @@
                 <input id="secretNextcloudPath" placeholder="ToLeech" class="cfg-input" />
               </div>
             </div>
+          </div>
 
-            <!-- Weather -->
+          <!-- TAB: WEATHER -->
+          <div class="tab" data-tab="weather">
             <div class="cfg-section">Weather</div>
             <div class="cfg-row">
               <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
@@ -573,8 +590,10 @@
                 </div>
               </div>
             </div>
+          </div>
 
-            <!-- UniFi / Protect -->
+          <!-- TAB: UNIFI / PROTECT -->
+          <div class="tab" data-tab="unifi">
             <div class="cfg-section">UniFi / Protect</div>
             <div class="cfg-row">
               <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
@@ -596,8 +615,10 @@
                 <button onclick="saveSecrets('unifi')" class="cfg-btn">↵ Save</button>
               </div>
             </div>
+          </div>
 
-            <!-- Monitoring -->
+          <!-- TAB: SERVICE MONITORING -->
+          <div class="tab" data-tab="monitoring">
             <div class="cfg-section">Service Monitoring</div>
             <div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-dim);margin-bottom:10px">URLs that are periodically checked for availability</div>
             <div style="display:grid;grid-template-columns:1fr 1.4fr auto;gap:6px;margin-bottom:8px;align-items:center">
@@ -606,7 +627,6 @@
               <button id="statusAddBtn" class="cfg-btn">+ Add</button>
             </div>
             <div id="statusServiceList" style="display:flex;flex-direction:column;gap:4px"></div>
-
           </div>
 
           <!-- TAB: ABOUT -->
@@ -636,7 +656,7 @@
       </div>
 
       <!-- Icon picker overlay (over the entire content area) -->
-      <div id="iconPicker" style="display:none;position:absolute;top:0;bottom:0;left:190px;right:0;background:var(--bg-modal);z-index:5;flex-direction:column">
+      <div id="iconPicker" style="display:none;position:absolute;top:0;bottom:0;left:208px;right:0;background:var(--bg-modal);z-index:5;flex-direction:column">
         <div style="padding:14px 20px 12px;border-bottom:1px solid var(--border-3);display:flex;flex-direction:column;gap:10px;flex-shrink:0">
           <div style="display:flex;align-items:center;justify-content:space-between">
             <div style="display:flex;align-items:center;gap:10px">

@@ -226,7 +226,8 @@ const state = {
   netMaxDisp: 10, lastSampleTs: 0,
   liveOn: true, gridOn: true, animOn: true, glassOn: true, searchOn: true,
   updateMs: 1600, accent: '#5b9dff',
-  settingsTab: 'darstellung',
+  settingsCategory: 'general',
+  settingsTab: null,
   layoutEditOn: false,
   searchEngine: 'https://duckduckgo.com/?q=',
 };
@@ -1949,33 +1950,180 @@ async function saveSecrets(card) {
   }
 }
 
-/* ---------- Settings ---------- */
+/* ---------- Settings: category tree ---------- */
+const SETTINGS_TREE = [
+  {
+    id: 'general', label: 'General',
+    children: [
+      { id: 'theme',          label: 'Theme & Colors', icon: '◐' },
+      { id: 'effects',        label: 'Effects',        icon: '✦' },
+      { id: 'livedata',       label: 'Live Data',      icon: '↻' },
+      { id: 'schnellzugriff', label: 'Quick Access',   icon: '▤' },
+      { id: 'layout',         label: 'Layout',         icon: '▦' },
+      { id: 'ueber',          label: 'About',          icon: 'ℹ' },
+    ],
+  },
+  {
+    id: 'modules', label: 'Modules',
+    children: [
+      { id: 'glances',    label: 'Glances',           badge: 'GL', color: '#5b9dff', statusEl: 'glancesSettingsStatus' },
+      { id: 'disks',      label: 'Disks',              icon: '▥' },
+      { id: 'adguard',    label: 'AdGuard Home',       badge: 'AG', color: '#3ddc97', statusEl: 'adguardSettingsStatus' },
+      { id: 'plex',       label: 'Plex',               badge: 'PX', color: '#ff8a4c', statusEl: 'plexSettingsStatus' },
+      { id: 'nextcloud',  label: 'Nextcloud',          badge: 'NC', color: '#0082c9', statusEl: 'nextcloudSettingsStatus' },
+      { id: 'weather',    label: 'Weather',            badge: 'WT', color: '#ffb454', statusEl: 'weatherSettingsStatus' },
+      { id: 'unifi',      label: 'UniFi / Protect',    badge: 'UF', color: '#5b9dff', statusEl: 'unifiSettingsStatus' },
+      { id: 'monitoring', label: 'Service Monitoring', icon: '⏱' },
+    ],
+  },
+];
+const SETTINGS_LEAF_MAP = {};
+SETTINGS_TREE.forEach((cat) => cat.children.forEach((child) => { SETTINGS_LEAF_MAP[child.id] = { ...child, catId: cat.id }; }));
+
+const SETTINGS_TAB_LOADERS = {
+  schnellzugriff: () => loadQlEditor(),
+  layout:         () => renderLayoutEditor(),
+  disks:          () => loadDiskSettings(),
+};
+function runTabLoader(tab) {
+  const fn = SETTINGS_TAB_LOADERS[tab];
+  if (fn) fn();
+}
+
+function leafIconHtml(leaf, size) {
+  if (leaf.badge) {
+    return `<span style="font:700 ${size <= 16 ? 10 : 12}px 'JetBrains Mono',monospace;color:${leaf.color};min-width:${size}px;height:${size}px;line-height:${size}px;background:${hexA(leaf.color, 0.12)};border-radius:5px;text-align:center;display:inline-block;flex-shrink:0">${leaf.badge}</span>`;
+  }
+  return `<span style="font-size:${size}px;line-height:1;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;opacity:.85">${leaf.icon || ''}</span>`;
+}
+
+function renderSettingsTree() {
+  const root = $('settingsTree');
+  if (!root) return;
+  root.innerHTML = '';
+  SETTINGS_TREE.forEach((cat) => {
+    const catEl = document.createElement('div');
+    catEl.className = 'tree-cat';
+    catEl.dataset.cat = cat.id;
+    catEl.textContent = cat.label;
+    catEl.addEventListener('click', () => selectCategory(cat.id));
+    root.appendChild(catEl);
+
+    const childrenEl = document.createElement('div');
+    childrenEl.className = 'tree-children';
+    childrenEl.dataset.catChildren = cat.id;
+    cat.children.forEach((child) => {
+      const itemEl = document.createElement('div');
+      itemEl.className = 'tree-item';
+      itemEl.dataset.tab = child.id;
+      itemEl.innerHTML = `${leafIconHtml(child, 14)}<span>${child.label}</span>` +
+        (child.statusEl ? '<span class="tree-status-dot" style="display:none"></span>' : '');
+      itemEl.addEventListener('click', () => selectTab(child.id));
+      childrenEl.appendChild(itemEl);
+    });
+    root.appendChild(childrenEl);
+  });
+  updateTreeActiveState();
+  syncModuleStatusDots();
+}
+
+function renderCategoryGrid(catId) {
+  const grid = $('categoryGrid');
+  if (!grid) return;
+  const cat = SETTINGS_TREE.find((c) => c.id === catId);
+  grid.innerHTML = '';
+  if (!cat) return;
+  cat.children.forEach((child) => {
+    const card = document.createElement('div');
+    card.className = 'grid-card';
+    card.dataset.tab = child.id;
+    card.innerHTML =
+      `<div class="grid-card-icon">${leafIconHtml(child, 26)}</div>` +
+      `<div class="grid-card-label">${child.label}</div>` +
+      (child.statusEl ? '<span class="grid-card-status" style="display:none"></span>' : '');
+    card.addEventListener('click', () => selectTab(child.id));
+    grid.appendChild(card);
+  });
+  syncModuleStatusDots();
+}
+
+function updateTreeActiveState() {
+  document.querySelectorAll('.tree-cat').forEach((el) =>
+    el.classList.toggle('active', el.dataset.cat === state.settingsCategory));
+  document.querySelectorAll('.tree-item').forEach((el) =>
+    el.classList.toggle('active', el.dataset.tab === state.settingsTab));
+}
+
+function selectCategory(catId) {
+  state.settingsCategory = catId;
+  state.settingsTab = null;
+  updateTreeActiveState();
+  renderCategoryGrid(catId);
+  const grid = $('categoryGrid');
+  if (grid) grid.style.display = 'grid';
+  document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+  const panel = $('settingsPanel');
+  if (panel) panel.classList.remove('settings-leaf-active');
+  const cat = SETTINGS_TREE.find((c) => c.id === catId);
+  setText('settingsBreadcrumb', cat ? cat.label : 'Settings');
+}
+
+function selectTab(tabId) {
+  const leaf = SETTINGS_LEAF_MAP[tabId];
+  if (!leaf) return;
+  state.settingsCategory = leaf.catId;
+  state.settingsTab = tabId;
+  updateTreeActiveState();
+  const grid = $('categoryGrid');
+  if (grid) grid.style.display = 'none';
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === tabId));
+  const panel = $('settingsPanel');
+  if (panel) panel.classList.add('settings-leaf-active');
+  setText('settingsBreadcrumb', leaf.label);
+  runTabLoader(tabId);
+}
+
+/* ---------- Settings: module status dots (derived from existing status spans) ---------- */
+function statusColorToDotClass(color) {
+  if (!color) return null;
+  const c = color.toLowerCase();
+  if (c === '#3ddc97') return 'dot-green';
+  if (c === '#ffb454') return 'dot-orange';
+  if (c === '#f43f5e') return 'dot-red';
+  return null;
+}
+function syncModuleStatusDots() {
+  Object.values(SETTINGS_LEAF_MAP).forEach((leaf) => {
+    if (!leaf.statusEl) return;
+    const src = $(leaf.statusEl);
+    const cls = src ? statusColorToDotClass(src.style.color) : null;
+    document.querySelectorAll(`.tree-item[data-tab="${leaf.id}"] .tree-status-dot, .grid-card[data-tab="${leaf.id}"] .grid-card-status`)
+      .forEach((dot) => {
+        dot.classList.remove('dot-green', 'dot-orange', 'dot-red');
+        if (cls) { dot.classList.add(cls); dot.style.display = ''; }
+        else { dot.style.display = 'none'; }
+      });
+  });
+}
+
+let _statusDotTimer = null;
 function openSettings() {
   const m = $('settingsModal');
   if (!m) return;
   m.style.display = 'flex';
   requestAnimationFrame(() => m.classList.add('open'));
-  const t = state.settingsTab;
-  if (t === 'integrationen') { loadSecrets(); loadDiskSettings(); }
-  if (t === 'schnellzugriff') loadQlEditor();
-  if (t === 'layout') renderLayoutEditor();
+  selectCategory('general');
+  loadSecrets();
+  loadDiskSettings();
+  clearInterval(_statusDotTimer);
+  _statusDotTimer = setInterval(syncModuleStatusDots, 2000);
 }
 function closeSettings() {
   const m = $('settingsModal');
   if (!m) return;
   m.classList.remove('open');
   m.addEventListener('transitionend', () => { m.style.display = 'none'; }, { once: true });
-}
-
-function setTab(tab) {
-  state.settingsTab = tab;
-  const navItems = document.querySelectorAll('.nav-item');
-  const tabs = document.querySelectorAll('.tab');
-  navItems.forEach(n => n.classList.toggle('active', n.dataset.tab === tab));
-  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-  if (tab === 'integrationen') { loadSecrets(); loadDiskSettings(); }
-  if (tab === 'schnellzugriff') loadQlEditor();
-  if (tab === 'layout') renderLayoutEditor();
+  clearInterval(_statusDotTimer);
 }
 
 function applyToggleVisual(key) {
@@ -2064,9 +2212,6 @@ function setupSettings() {
   const close = $('settingsClose');
   if (close) close.addEventListener('click', closeSettings);
 
-  document.querySelectorAll('.nav-item').forEach((n) =>
-    n.addEventListener('click', () => setTab(n.dataset.tab)));
-
   document.querySelectorAll('.switch[data-toggle]').forEach((sw) =>
     sw.addEventListener('click', () => toggle(sw.dataset.toggle)));
 
@@ -2075,6 +2220,7 @@ function setupSettings() {
 
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSettings(); });
 
+  renderSettingsTree();
   renderAccents();
   setupStatusSettings();
 }

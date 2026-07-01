@@ -4,6 +4,12 @@ All notable changes to Dash# are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/), and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.0] - 2026-07-01
+
+### Changed
+- Settings menu rebuilt as an Explorer-style tree: top-level categories (General, Appearance, Modules) with nested sub-items in the sidebar; selecting a category shows its children as clickable icon-button cards, and every module (Glances, AdGuard Home, Plex, Nextcloud, Weather, UniFi/Protect, Disks, Service Monitoring) now has its own dedicated settings subpage
+- Mobile settings layout reworked to match: category pills up top, icon-grid overview, and a "← Back" control to return from a module page
+
 ## [0.1.0] - 2026-07-01
 
 First public iteration.
