@@ -4,6 +4,11 @@ All notable changes to Dash# are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/), and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.4] - 2026-07-01
+
+### Fixed
+- Rhythmic stutter in the CPU/RAM/network sparklines: the scroll animation interpolated against the configured update interval, but the real gap between samples is uneven (server cache TTL beating against the poll cadence, network jitter) — a late sample left the line frozen until it landed, then snapped. The animation now tracks the actually observed sample interval and can drift slightly past a full step instead of freezing, so it keeps moving smoothly through the variance.
+
 ## [0.2.3] - 2026-07-01
 
 ### Changed

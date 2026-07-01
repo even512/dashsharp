@@ -396,8 +396,16 @@ let graphRafStarted = false;
 let _graphFrameHandle = null;
 function graphFrame() {
   const anim = state.animOn;
-  const interval = state.updateMs || 1600;
-  const p = anim ? Math.min(1, Math.max(0, (performance.now() - state.lastSampleTs) / interval)) : 1;
+  const interval = state.sampleIntervalEst || state.updateMs || 1600;
+  // Soft-capped, not hard-capped at 1: real poll gaps vary (server cache
+  // TTL vs. poll cadence beat against each other, network jitter, etc.), so
+  // a sample regularly arrives a bit later than `interval`. Clamping p to
+  // exactly 1 froze the line dead for that overshoot and then snapped it —
+  // a small but rhythmic stutter once per poll. Letting p drift up to 1.5
+  // keeps the scroll moving through that overshoot (a harmless few-pixel
+  // overshoot past the "expected" position, corrected seamlessly once the
+  // next sample lands and p resets) instead of visibly halting.
+  const p = anim ? Math.min(1.5, Math.max(0, (performance.now() - state.lastSampleTs) / interval)) : 1;
 
   // System: CPU + RAM (feste Skala 0..100)
   setAttrIfChanged('cpuArea', 'points', flowArea(state.cpuHist, 460, 64, 100, 0, p), 'cpuArea');
@@ -526,7 +534,21 @@ function applyMetrics(d) {
     state.netHist = push(state.netHist, state.netDown);
     state.upHist = push(state.upHist, state.netUp);
   }
-  state.lastSampleTs = performance.now(); // start time for frame-based scrolling
+  const now = performance.now();
+  if (state.lastSampleTs) {
+    // The real gap between samples rarely matches updateMs exactly — e.g.
+    // the server's Glances cache TTL (2s) beats against the client poll
+    // cadence, so roughly every other poll is a cheap cache hit and the
+    // other a real upstream round-trip, plus ordinary network jitter. If
+    // graphFrame() always interpolated against the configured updateMs, a
+    // late-arriving sample would leave p pinned at 1 (fully scrolled) until
+    // it lands, freezing the line and then snapping — a small but rhythmic
+    // stutter roughly once per poll. Smoothing the *observed* gap instead
+    // lets the scroll speed track the real, uneven cadence.
+    const gap = Math.min(Math.max(now - state.lastSampleTs, 200), (state.updateMs || 1600) * 3);
+    state.sampleIntervalEst = state.sampleIntervalEst ? state.sampleIntervalEst * 0.7 + gap * 0.3 : gap;
+  }
+  state.lastSampleTs = now; // start time for frame-based scrolling
 
   renderData();
   renderDisks(d.disks || [], d.diskTotal);
