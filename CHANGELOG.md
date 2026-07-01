@@ -4,6 +4,11 @@ All notable changes to Dash# are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/), and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.6] - 2026-07-01
+
+### Fixed
+- Rhythmic freeze in the sparklines (CPU/RAM/network) that persisted despite #10's precision increase: comparing the *rounded* scroll coordinates to decide whether to skip a redundant redraw is inherently unsafe while animating — at any fixed rounding precision there's a scroll speed/interval combination where genuinely-still-moving values round to an identical string, which was confirmed with a user-provided recording (clustered ~100-467ms freezes recurring every ~3.3s, independent of network load). The redraw is now only ever skipped while "Animations" is turned off, where the interpolation progress is an exact repeated constant rather than a rounded approximation, so the comparison is safe. While animating, every frame is always drawn.
+
 ## [0.2.5] - 2026-07-01
 
 ### Fixed
