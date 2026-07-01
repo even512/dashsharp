@@ -438,7 +438,13 @@ body.layout-edit-mode #layoutEditBar { display: flex; }
      avoids that tall nested tree entirely. */
   #settingsModal { padding: 0 !important; }
   #settingsPanel {
-    width: 100vw !important; height: 100vh !important; border-radius: 0 !important;
+    /* 100% of #settingsModal (position:fixed;inset:0) rather than 100vw/100vh:
+       vh/vw are computed against the viewport with the browser's address bar
+       collapsed, so when the bar is showing it visually overlaps the top of
+       a 100vh-tall fixed panel. #settingsModal's inset:0 box already tracks
+       the real visible viewport, so inheriting from it via % stays in sync
+       with the address bar showing or hiding. */
+    width: 100% !important; height: 100% !important; border-radius: 0 !important;
     flex-direction: column !important;
   }
   #settingsPanel > div:first-child {

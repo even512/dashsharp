@@ -4,6 +4,11 @@ All notable changes to Dash# are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/), and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.2] - 2026-07-01
+
+### Fixed
+- Settings modal on mobile no longer gets its top covered by the browser's address bar: the fullscreen panel now sizes itself from its already-viewport-synced fixed parent (`width/height: 100%`) instead of `100vw/100vh`, which mobile browsers compute against the address-bar-collapsed viewport and can leave taller than the actually visible area
+
 ## [0.2.1] - 2026-07-01
 
 ### Fixed
