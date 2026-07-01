@@ -426,9 +426,49 @@ body.layout-edit-mode #layoutEditBar { display: flex; }
 @media (max-width: 900px) {
   body > div:first-of-type { padding: 20px 16px 40px !important; }
 
-  #settingsPanel { width: 94vw !important; height: 90vh !important; }
-  #settingsPanel > div:first-child { width: 170px !important; }
-  #iconPicker { left: 170px !important; }
+  /* Settings modal: true fullscreen, sidebar becomes a horizontal nav strip.
+     This applies from 900px down (not just phone-width 640px) because
+     landscape phones and portrait tablets/phablets fall in the 641-900px
+     band too — at that width the old rules just narrowed the sidebar to a
+     170px column while leaving the fully-expanded desktop tree inside it.
+     With a short viewport height (typical for a landscape phone) that
+     column's content overflowed and got visually clipped by #settingsPanel's
+     overflow:hidden (used for its rounded corners) instead of scrolling, so
+     the nav was unreachable. Using the tested pill+grid layout here too
+     avoids that tall nested tree entirely. */
+  #settingsModal { padding: 0 !important; }
+  #settingsPanel {
+    width: 100vw !important; height: 100vh !important; border-radius: 0 !important;
+    flex-direction: column !important;
+  }
+  #settingsPanel > div:first-child {
+    width: 100% !important; flex-shrink: 0 !important; flex-direction: row !important;
+    overflow-x: auto !important; padding: 10px 8px !important;
+    border-right: none !important; border-bottom: 1px solid var(--border-3);
+    -webkit-overflow-scrolling: touch; min-height: 0 !important;
+  }
+  #settingsPanel > div:first-child > div:first-child { display: none !important; }
+  #settingsTree {
+    display: flex !important; flex-direction: row !important;
+    overflow-y: visible !important; overflow-x: auto !important; min-height: 0 !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Only the top-level categories become a horizontal pill strip; sub-items
+     are reached via the grid overview instead, since a nested tree doesn't
+     linearize cleanly at this width. */
+  .tree-children { display: none !important; }
+  .tree-cat {
+    border-bottom: 2px solid transparent !important;
+    padding: 8px 14px !important; white-space: nowrap !important; flex-shrink: 0;
+  }
+  .tree-cat.active { border-bottom-color: var(--accent) !important; }
+  #settingsPanel > div:nth-child(2) { min-width: 0 !important; min-height: 0 !important; }
+  #iconPicker { left: 0 !important; top: 0 !important; }
+
+  /* Leaf detail page: show the "← Back" control to return to the grid */
+  #settingsPanel.settings-leaf-active #settingsBackBtn { display: inline-flex !important; }
+
+  .category-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)) !important; gap: 10px !important; }
 }
 
 @media (max-width: 640px) {
@@ -445,37 +485,6 @@ body.layout-edit-mode #layoutEditBar { display: flex; }
   [data-section-id] { grid-template-columns: 1fr !important; gap: 14px !important; }
   [data-widget-id] { grid-column: 1 / -1 !important; grid-row: auto !important; }
   #diskGrid { grid-template-columns: 1fr !important; gap: 12px !important; }
-
-  /* Settings modal: true fullscreen, sidebar becomes a horizontal nav strip */
-  #settingsModal { padding: 0 !important; }
-  #settingsPanel {
-    width: 100vw !important; height: 100vh !important; border-radius: 0 !important;
-    flex-direction: column !important;
-  }
-  #settingsPanel > div:first-child {
-    width: 100% !important; flex-shrink: 0 !important; flex-direction: row !important;
-    overflow-x: auto !important; padding: 10px 8px !important;
-    border-right: none !important; border-bottom: 1px solid var(--border-3);
-    -webkit-overflow-scrolling: touch;
-  }
-  #settingsPanel > div:first-child > div:first-child { display: none !important; }
-  #settingsTree { display: flex !important; flex-direction: row !important; overflow-y: visible !important; }
-  /* Only the top-level categories become a horizontal pill strip; sub-items
-     are reached via the grid overview instead, since a nested tree doesn't
-     linearize cleanly at phone width. */
-  .tree-children { display: none !important; }
-  .tree-cat {
-    border-bottom: 2px solid transparent !important;
-    padding: 8px 14px !important; white-space: nowrap !important; flex-shrink: 0;
-  }
-  .tree-cat.active { border-bottom-color: var(--accent) !important; }
-  #settingsPanel > div:nth-child(2) { min-width: 0 !important; min-height: 0 !important; }
-  #iconPicker { left: 0 !important; top: 0 !important; }
-
-  /* Leaf detail page: show the "← Back" control to return to the grid */
-  #settingsPanel.settings-leaf-active #settingsBackBtn { display: inline-flex !important; }
-
-  .category-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)) !important; gap: 10px !important; }
 
   /* Module tabs / About tab: 2-3 col input grids collapse to 1 column */
   #settingsPanel [data-tab="adguard"] div[style*="grid-template-columns"],

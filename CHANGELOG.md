@@ -4,6 +4,11 @@ All notable changes to Dash# are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/), and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.1] - 2026-07-01
+
+### Fixed
+- Settings sidebar no longer gets clipped on landscape phones and portrait tablets/phablets (641-900px viewport width): the compact pill + icon-grid navigation now applies across that whole range instead of only below 640px, avoiding a narrow column that tried to hold the full desktop tree without room to scroll
+
 ## [0.2.0] - 2026-07-01
 
 ### Changed
