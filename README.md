@@ -26,10 +26,9 @@
 
 I run a small homelab and wanted one good-looking start page for it — a place to jump to my services
 and see live status at a glance: system load, Docker containers, DNS filtering, media, network, storage.
-I tried the usual homelab dashboards out there and kept running into the same wall: either they wanted
-a database, a build pipeline, a YAML config I had to hand-edit for every little change, or they simply
-didn't support the services I actually run. So I built Dash# to be the dashboard I actually wanted —
-configurable entirely from the browser, one small container, nothing else to babysit.
+I tried a few of the dashboards out there, and while they're solid projects, none of them quite gave me
+the exact mix of integrations and workflow I was after. So I built Dash# to be the dashboard that fit
+my setup — configurable entirely from the browser, one small container, nothing else to babysit.
 
 Under the hood it's a plain **Node.js + Express** app that serves a static frontend and proxies every
 integration **server-side**: the backend talks to your services with your stored credentials and returns
