@@ -575,7 +575,23 @@ function renderAdGuard(d) {
   const blockedEl = $('adguardBlocked');
   if (blockedEl) { blockedEl.textContent = fmtNum(d.blocked); blockedEl.style.color = color; }
   setText('adguardAvgMs', d.avgMs != null ? d.avgMs.toFixed(1) : '–');
-  setText('adguardTopDomain', d.topDomain || '–');
+
+  const list = $('adguardTopList');
+  if (list) {
+    list.innerHTML = '';
+    const top = d.topBlocked || [];
+    if (!top.length) {
+      list.innerHTML = `<div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">–</div>`;
+    }
+    for (const item of top) {
+      const row = document.createElement('div');
+      row.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;font:500 11px 'JetBrains Mono',monospace";
+      row.innerHTML =
+        `<span style="color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.domain}</span>` +
+        `<span style="color:var(--text-3);flex-shrink:0">${fmtNum(item.count)}</span>`;
+      list.appendChild(row);
+    }
+  }
 }
 async function pollAdGuard() {
   if (!state.liveOn) return;
@@ -1902,6 +1918,7 @@ async function loadSecrets() {
     const d = await fetch('/api/secrets', { cache: 'no-store' }).then(r => r.json());
     const set = (id, val) => { const el = $(id); if (el && val) el.value = val; };
     set('secretGlancesUrl',  d.GLANCES_URL);
+    set('secretGlancesLabel', d.GLANCES_LABEL);
     set('secretAdguardUrl',  d.ADGUARD_URL);
     set('secretAdguardUser', d.ADGUARD_USER);
     set('secretAdguardPass', d.ADGUARD_PASS);
@@ -1927,7 +1944,7 @@ async function saveSecrets(card) {
   const val = (id) => ($(id) || {}).value || '';
   let body = {};
   if (card === 'glances') {
-    body = { GLANCES_URL: val('secretGlancesUrl') };
+    body = { GLANCES_URL: val('secretGlancesUrl'), GLANCES_LABEL: val('secretGlancesLabel') };
   } else if (card === 'adguard') {
     body = { ADGUARD_URL: val('secretAdguardUrl'), ADGUARD_USER: val('secretAdguardUser'), ADGUARD_PASS: val('secretAdguardPass') };
   } else if (card === 'plex') {

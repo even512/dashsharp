@@ -189,8 +189,20 @@ function glancesCfg() {
     if (!out.url && g.url) out.url = g.url;
     if (g.label) out.label = g.label;
   } catch (_) { /* ignore */ }
+  const secretLabel = getSecret('GLANCES_LABEL');
+  if (secretLabel) out.label = secretLabel;
   if (out.url) out.url = String(out.url).replace(/\/+$/, '');
   return out;
+}
+
+// Docker vergibt Containern ohne --uts=host eine 12-stellige Hex-Kurz-ID als
+// Kernel-Hostname; taucht sowas in Glances' "system.hostname" auf, ist das
+// der Glances-Container selbst, nicht der eigentliche Host.
+function looksLikeContainerId(host) {
+  return typeof host === 'string' && /^[0-9a-f]{12}$/i.test(host);
+}
+function hostFromUrl(url) {
+  try { return new URL(url).hostname; } catch (_) { return null; }
 }
 
 async function gFetch(base, plugin) {
@@ -362,9 +374,12 @@ app.get('/api/glances', async (req, res) => {
     const ctrTotal  = ctrNet  ? ctrNet.rxMbit  + ctrNet.txMbit  : 0;
     const netResult = ctrNet && ctrTotal > hostTotal ? ctrNet : (hostNet || ctrNet);
 
+    let systemHost = system && system.hostname;
+    if (looksLikeContainerId(systemHost)) systemHost = null;
+
     const result = {
       ok: true,
-      label: label || (system && system.hostname) || 'host',
+      label: label || systemHost || hostFromUrl(url) || 'host',
       os: system ? system.os_version || system.linux_distro : null,
       cpu: typeof cpu.total === 'number' ? +cpu.total.toFixed(1) : null,
       cores: cpu.cpucore || (load && load.cpucore) || null,
@@ -508,11 +523,13 @@ async function agFetch(base, path, auth) {
   return res.json();
 }
 
-function topDomain(list) {
-  if (!Array.isArray(list) || !list.length) return null;
-  const first = list[0];
-  if (!first || typeof first !== 'object') return null;
-  return Object.keys(first)[0] || null;
+function topBlockedList(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((item) => item && typeof item === 'object')
+    .slice(0, 10)
+    .map((item) => ({ domain: Object.keys(item)[0], count: Object.values(item)[0] }))
+    .filter((item) => item.domain);
 }
 
 app.get('/api/adguard', async (req, res) => {
@@ -541,9 +558,9 @@ app.get('/api/adguard', async (req, res) => {
       total,
       blocked,
       blockedPct: total > 0 ? Math.round(blocked / total * 100) : 0,
-      topDomain:  topDomain(stats.top_blocked_domains),
+      topBlocked: topBlockedList(stats.top_blocked_domains),
       avgMs:      typeof stats.avg_processing_time === 'number'
-                    ? +stats.avg_processing_time.toFixed(2) : null,
+                    ? +(stats.avg_processing_time * 1000).toFixed(1) : null,
     };
     cache.adguard = { ts: Date.now(), data: result };
     res.json(result);
@@ -883,7 +900,7 @@ app.post('/api/quicklinks', (req, res) => {
   }
 });
 
-const SECRETS_KEYS = ['GLANCES_URL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH'];
+const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH'];
 const SECRETS_MASKED = new Set(['ADGUARD_PASS', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'NEXTCLOUD_PASS']);
 
 app.get('/api/secrets', (req, res) => {

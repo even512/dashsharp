@@ -94,6 +94,14 @@ Everything is configured from the web UI under **Settings → Integrations** and
 Any value can also be set as an environment variable (see [`.env.example`](.env.example)); env vars take
 precedence over the UI values.
 
+> **Docker tile shows only running containers?** That's controlled by Glances itself, not Dash#.
+> Set `all = True` under `[containers]` (or the legacy `[docker]` section) in `glances.conf` on
+> your Glances host and restart Glances to include stopped/exited containers too.
+
+> **System panel shows a container ID instead of your hostname?** This happens when the Glances
+> container isn't run with `--uts=host`, so it reports its own Docker-assigned hostname. Fix it at
+> the source (`--uts=host`), or set a fixed override under **Settings → Glances → Hostname**.
+
 ## Data & persistence
 
 All mutable state lives in the mounted `/app/config` volume:
