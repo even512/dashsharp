@@ -44,7 +44,7 @@ and no build step.
 <!-- Add a screenshot at docs/screenshot.png and uncomment the line below: -->
 <!-- <p align="center"><img src="docs/screenshot.png" width="820" alt="Dash# dashboard"></p> -->
 
-_Coming soon — drop a screenshot at `docs/screenshot.png`._
+_Coming soon`._
 
 ## Quick start
 
