@@ -1,0 +1,377 @@
+/* Globale Styles & Helfer fuer das Homelab-Dashboard
+   Statisches Layout liegt inline im HTML (1:1 aus dem Design);
+   hier nur Resets, Keyframes und JS-gesteuerte Zustaende. */
+
+:root {
+  /* ── Dark mode (default) ───────────────────────────────── */
+  --bg-base:        #090c12;
+  --bg-card:        #11161f;
+  --bg-card-end:    #0c1118;
+  --bg-glass:       rgba(17,22,31,0.7);
+  --bg-modal:       #111827;
+  --bg-modal-side:  rgba(6,10,18,0.55);
+  --bg-info-card:   rgba(4,6,12,0.7);
+  --bg-panel:       rgba(120,150,200,0.05);
+  --overlay:        rgba(5,8,14,0.92);
+  --glow-1:         rgba(91,157,255,0.08);
+  --glow-2:         rgba(91,157,255,0.05);
+  --grid-line:      rgba(120,150,200,0.025);
+  --border-1:       rgba(120,150,200,0.14);
+  --border-2:       rgba(120,150,200,0.12);
+  --border-3:       rgba(120,150,200,0.10);
+  --border-4:       rgba(120,150,200,0.08);
+  --border-modal:   rgba(120,150,200,0.18);
+  --track:          rgba(120,150,200,0.10);
+  --accent-subtle:  rgba(91,157,255,0.07);
+  --accent-border:  rgba(91,157,255,0.16);
+  --switch-off:     rgba(120,150,200,0.22);
+  --text-1:         #eef3fa;
+  --text-15:        #dde5f0;
+  --text-2:         #c9d4e3;
+  --text-3:         #6b7689;
+  --text-4:         #8b97a8;
+  --text-5:         #5b7a9a;
+  --text-dim:       #576070;
+  --text-status:    #3a5060;
+  --sep:            #2c3645;
+  --accent:         #5b9dff;
+  --green:          #3ddc97;
+  --orange:         #ff8a4c;
+  --purple:         #8b6dff;
+  --yellow:         #ffb454;
+  --red:            #f43f5e;
+}
+
+/* ── Light mode overrides ─────────────────────────────────── */
+[data-theme="light"] {
+  --bg-base:        #eef3fa;
+  --bg-card:        #ffffff;
+  --bg-card-end:    #f4f8fd;
+  --bg-glass:       rgba(255,255,255,0.9);
+  --bg-modal:       #f2f7ff;
+  --bg-modal-side:  rgba(225,236,255,0.97);
+  --bg-info-card:   rgba(215,230,255,0.55);
+  --bg-panel:       rgba(220,235,255,0.5);
+  --overlay:        rgba(18,32,60,0.55);
+  --glow-1:         rgba(37,99,235,0.07);
+  --glow-2:         rgba(37,99,235,0.04);
+  --grid-line:      rgba(80,120,200,0.05);
+  --border-1:       rgba(80,130,220,0.22);
+  --border-2:       rgba(80,130,220,0.17);
+  --border-3:       rgba(80,130,220,0.13);
+  --border-4:       rgba(80,130,220,0.09);
+  --border-modal:   rgba(80,130,220,0.28);
+  --track:          rgba(80,130,220,0.12);
+  --accent-subtle:  rgba(37,99,235,0.08);
+  --accent-border:  rgba(37,99,235,0.22);
+  --switch-off:     rgba(120,160,220,0.3);
+  --text-1:         #1a2840;
+  --text-15:        #253854;
+  --text-2:         #344e70;
+  --text-3:         #5a7090;
+  --text-4:         #3f5878;
+  --text-5:         #2a5898;
+  --text-dim:       #4a6282;
+  --text-status:    #4a6282;
+  --sep:            #b8cce0;
+  --accent:         #2563eb;
+  --green:          #0e9e6e;
+  --orange:         #d06028;
+  --purple:         #6d28d9;
+  --yellow:         #b07800;
+  --red:            #cc2038;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg-base); }
+
+::selection { background: rgba(91, 157, 255, 0.3); }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: rgba(120, 150, 200, 0.18); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+input::placeholder { color: #515c6e; }
+select { -webkit-appearance: none; appearance: none; }
+
+@keyframes blink   { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
+@keyframes pulse   { 0%,100% { box-shadow: 0 0 0 0 rgba(61,220,151,0.5); } 50% { box-shadow: 0 0 0 5px rgba(61,220,151,0); } }
+@keyframes floaty  { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes sweepin { from { opacity: 0; transform: translateY(14px) scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes fadein  { from { opacity: 0; } to { opacity: 1; } }
+
+/* Animationen global abschaltbar (Einstellung "Animationen") */
+.no-anim *, .no-anim *::before, .no-anim *::after { animation: none !important; }
+
+/* ── Wetter-Icons (animiertes Inline-SVG) ─────────────────── */
+.wi { display: block; }
+.wi-spin   { transform-box: fill-box; transform-origin: center; animation: wiSpin 16s linear infinite; }
+.wi-pulse  { transform-box: fill-box; transform-origin: center; animation: wiPulse 3.4s ease-in-out infinite; }
+.wi-cloud  { transform-box: fill-box; transform-origin: center; animation: wiDrift 5s ease-in-out infinite; }
+.wi-cloud2 { transform-box: fill-box; transform-origin: center; animation: wiDrift 6.5s ease-in-out infinite reverse; }
+.wi-drop   { animation: wiDrop 1.15s linear infinite; }
+.wi-flake  { animation: wiFlake 2.6s ease-in-out infinite; }
+.wi-bolt   { animation: wiFlash 2.6s steps(1, end) infinite; }
+.wi-star   { animation: wiTwinkle 2.2s ease-in-out infinite; }
+.wi-fog    { animation: wiFog 3.6s ease-in-out infinite; }
+@keyframes wiSpin    { to { transform: rotate(360deg); } }
+@keyframes wiPulse   { 0%,100% { transform: scale(1); } 50% { transform: scale(1.07); } }
+@keyframes wiDrift   { 0%,100% { transform: translateX(-1.2px); } 50% { transform: translateX(1.2px); } }
+@keyframes wiDrop    { 0% { transform: translateY(-3px); opacity: 0; } 25% { opacity: 1; } 100% { transform: translateY(7px); opacity: 0; } }
+@keyframes wiFlake   { 0% { transform: translateY(-2px) translateX(0); opacity: 0; } 25% { opacity: 1; } 100% { transform: translateY(7px) translateX(1.6px); opacity: 0; } }
+@keyframes wiFlash   { 0%,42%,47%,100% { opacity: 0; } 44%,45% { opacity: 1; } }
+@keyframes wiTwinkle { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
+@keyframes wiFog     { 0%,100% { transform: translateX(-1.6px); } 50% { transform: translateX(1.6px); } }
+
+/* Glaseffekt abschaltbar (Einstellung "Glaseffekt") */
+.no-glass .glassy { backdrop-filter: none !important; }
+
+/* Schnellzugriff-Kacheln: Hover-Lift (ersetzt liftOn/liftOff aus dem Design) */
+.ql-tile { transition: transform .2s, border-color .2s, background .2s, color .2s; }
+.ql-tile:hover {
+  transform: translateY(-3px);
+  border-color: rgba(91, 157, 255, 0.45) !important;
+  background: rgba(91, 157, 255, 0.08) !important;
+}
+
+/* Panel mit Hover-Hervorhebung (System-Auslastung) */
+.card { transition: border-color .2s, box-shadow .2s; }
+.card:hover {
+  border-color: rgba(91, 157, 255, 0.4) !important;
+  box-shadow: 0 8px 30px rgba(91, 157, 255, 0.1);
+}
+[data-theme="light"] .card:hover { box-shadow: 0 8px 30px rgba(37,99,235,0.12); }
+
+/* Layout-Edit-Modus: Drag-Handle & Hide-Button pro Kachel */
+.tile-controls {
+  display: none; position: absolute; top: 12px; right: 12px; z-index: 2;
+  gap: 6px; align-items: center;
+}
+body.layout-edit-mode .tile-controls { display: flex; }
+.tile-drag-handle, .tile-hide-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 6px;
+  background: rgba(8,12,20,0.7); border: 1px solid rgba(120,150,200,0.25);
+  color: var(--text-4); transition: color .15s, border-color .15s, background .15s;
+}
+.tile-drag-handle { cursor: grab; }
+.tile-drag-handle:active { cursor: grabbing; }
+.tile-hide-btn { cursor: pointer; font-size: 12px; line-height: 1; }
+.tile-drag-handle:hover { color: var(--accent); border-color: rgba(91,157,255,0.4); }
+.tile-hide-btn:hover { color: var(--red); border-color: rgba(244,63,94,0.4); }
+[data-theme="light"] .tile-drag-handle, [data-theme="light"] .tile-hide-btn { background: rgba(255,255,255,0.85); }
+
+/* SortableJS Drag-Zustände */
+.sortable-ghost { opacity: 0.35; border: 1.5px dashed var(--accent) !important; }
+.sortable-chosen { box-shadow: 0 8px 30px rgba(91,157,255,0.25); }
+.sortable-drag { opacity: 0.9; }
+
+/* Schwebende Speichern-Leiste im Layout-Edit-Modus */
+#layoutEditBar { display: none; }
+body.layout-edit-mode #layoutEditBar { display: flex; }
+#layoutEditBtn.active { color: var(--accent) !important; border-color: rgba(91,157,255,0.4) !important; background: rgba(91,157,255,0.08) !important; }
+
+/* Icon-Button (Zahnrad, Mond/Sonne) */
+.icon-btn { transition: all .2s; }
+.icon-btn:hover { border-color: rgba(91, 157, 255, 0.4) !important; color: var(--text-1) !important; }
+
+/* Toggle-Schalter (Einstellungen) */
+.switch {
+  width: 40px; height: 23px; border-radius: 12px;
+  background: var(--switch-off);
+  position: relative; cursor: pointer; transition: background .2s; flex: 0 0 auto;
+}
+.switch.on { background: var(--accent); }
+.switch > span {
+  position: absolute; top: 2px; left: 2px; width: 19px; height: 19px;
+  border-radius: 50%; background: #fff; transition: left .2s; box-shadow: 0 1px 3px rgba(0,0,0,.35);
+}
+.switch.on > span { left: 19px; }
+
+/* Settings Modal — GPU-kompositierte Animation statt display-toggle */
+#settingsModal {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+#settingsModal.open { opacity: 1; }
+#settingsPanel {
+  transform: translateY(10px) scale(0.985);
+  opacity: 0;
+  transition: transform 0.22s cubic-bezier(0.22,1,0.36,1), opacity 0.18s ease;
+  will-change: transform, opacity;
+}
+#settingsModal.open #settingsPanel { transform: none; opacity: 1; }
+
+/* Settings-Navigation */
+.nav-item {
+  padding: 10px 16px 10px 20px; cursor: pointer; user-select: none;
+  font: 500 13px 'JetBrains Mono', monospace; letter-spacing: 0.06em;
+  color: var(--text-4); border-left: 2px solid transparent;
+  transition: color 0.1s, border-color 0.1s, background 0.1s;
+}
+.nav-item:hover { color: var(--text-2); background: rgba(91,157,255,0.04); }
+.nav-item.active { color: var(--accent); border-left-color: var(--accent); background: rgba(91,157,255,0.06); }
+[data-theme="light"] .nav-item:hover { background: rgba(37,99,235,0.05); }
+[data-theme="light"] .nav-item.active { background: rgba(37,99,235,0.08); }
+
+/* Tab-Wechsel: sofort sichtbar, kurzes Fade */
+.tab { display: none; }
+.tab.active { display: block; animation: tabIn 55ms ease; }
+@keyframes tabIn { from { opacity: 0.5; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+/* Einstellungs-Zeile */
+.cfg-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 10px 0; min-height: 36px;
+  border-bottom: 1px solid rgba(120,150,200,0.09);
+}
+.cfg-row:last-child { border-bottom: none; }
+.cfg-key {
+  font: 500 12px 'JetBrains Mono', monospace;
+  letter-spacing: 0.08em; text-transform: uppercase; color: #9baabb;
+  white-space: nowrap; flex-shrink: 0;
+}
+.cfg-section {
+  font: 600 11px 'JetBrains Mono', monospace; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--accent); padding: 16px 0 10px;
+  border-bottom: 1px solid rgba(91,157,255,0.15); margin-bottom: 4px;
+}
+.cfg-section::before { content: '// '; color: #4a7aab; }
+[data-theme="light"] .cfg-section { border-bottom-color: rgba(37,99,235,0.18); }
+[data-theme="light"] .cfg-section::before { color: #3060b0; }
+
+/* Inputs */
+.cfg-input {
+  background: rgba(8,12,20,0.8); border: 1px solid var(--border-modal);
+  border-radius: 6px; padding: 6px 10px;
+  color: var(--text-2); font: 500 13px 'JetBrains Mono', monospace;
+  outline: none; box-sizing: border-box; width: 100%;
+  transition: border-color 0.1s;
+}
+.cfg-input:focus { border-color: rgba(91,157,255,0.5); color: var(--text-1); background: rgba(10,16,28,0.9); }
+.cfg-input::placeholder { color: var(--text-dim); }
+[data-theme="light"] .cfg-input { background: rgba(255,255,255,0.9); }
+[data-theme="light"] .cfg-input:focus { background: #fff; }
+
+/* Buttons */
+.cfg-btn {
+  background: transparent; border: 1px solid rgba(120,150,200,0.22);
+  border-radius: 6px; padding: 5px 12px; color: var(--text-4);
+  font: 500 12px 'JetBrains Mono', monospace; cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  transition: color 0.1s, border-color 0.1s, background 0.1s;
+}
+.cfg-btn:hover { color: var(--accent); border-color: rgba(91,157,255,0.4); background: rgba(91,157,255,0.05); }
+.cfg-btn-del { color: #7a5060; }
+.cfg-btn-del:hover { color: var(--red); border-color: rgba(244,63,94,0.4); background: rgba(244,63,94,0.05); }
+[data-theme="light"] .cfg-btn { border-color: var(--border-2); }
+[data-theme="light"] .cfg-btn:hover { border-color: var(--accent); background: rgba(37,99,235,0.06); }
+
+/* Quicklink-Tabelle */
+.ql-thead, .ql-row {
+  display: grid;
+  grid-template-columns: 20px 1fr 1.5fr 44px 68px 40px;
+  gap: 4px; align-items: center;
+}
+.ql-thead {
+  padding: 0 0 6px; margin-bottom: 4px;
+  font: 500 10px 'JetBrains Mono', monospace; letter-spacing: 0.1em;
+  color: #6b7a8e; text-transform: uppercase;
+  border-bottom: 1px solid rgba(120,150,200,0.12);
+}
+.ql-row { padding: 5px 0; border-bottom: 1px solid rgba(120,150,200,0.08); }
+
+/* Icon Picker */
+.icon-item {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 8px 4px 6px; border-radius: 8px; cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.12s, border-color 0.12s;
+  text-align: center; min-width: 0;
+}
+.icon-item:hover { background: rgba(91,157,255,0.08); border-color: rgba(91,157,255,0.22); }
+.icon-item.selected {
+  background: rgba(91,157,255,0.14); border-color: rgba(91,157,255,0.55);
+  box-shadow: 0 0 0 1px rgba(91,157,255,0.3);
+}
+.icon-item img {
+  width: 40px; height: 40px; object-fit: contain; border-radius: 6px; flex-shrink: 0;
+}
+.icon-item span {
+  font: 500 9px 'JetBrains Mono', monospace; color: #6b7a8e;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 100%;
+}
+
+.icon-cat-btn {
+  background: transparent; border: 1px solid rgba(120,150,200,0.15); border-radius: 5px;
+  padding: 4px 10px; color: #7a8fa8;
+  font: 500 10px 'JetBrains Mono', monospace; cursor: pointer;
+  white-space: nowrap; flex-shrink: 0; transition: all 0.1s;
+}
+.icon-cat-btn:hover { border-color: rgba(91,157,255,0.3); color: var(--text-4); }
+.icon-cat-btn.active { background: rgba(91,157,255,0.1); border-color: rgba(91,157,255,0.45); color: var(--accent); }
+[data-theme="light"] .icon-cat-btn { border-color: var(--border-2); color: var(--text-3); }
+[data-theme="light"] .icon-cat-btn.active { background: rgba(37,99,235,0.1); border-color: rgba(37,99,235,0.4); }
+[data-theme="light"] .icon-item span { color: var(--text-3); }
+[data-theme="light"] .icon-item:hover { background: rgba(37,99,235,0.07); border-color: rgba(37,99,235,0.2); }
+[data-theme="light"] .icon-item.selected { background: rgba(37,99,235,0.12); border-color: rgba(37,99,235,0.5); }
+
+/* ── Quicklink tiles (JS-generated) ─────────────────────── */
+.ql-tile { background: rgba(120,150,200,0.05); border: 1px solid rgba(120,150,200,0.1); }
+[data-theme="light"] .ql-tile { background: rgba(255,255,255,0.92) !important; border-color: var(--border-2) !important; }
+[data-theme="light"] .ql-tile:hover { border-color: rgba(37,99,235,0.45) !important; background: rgba(37,99,235,0.05) !important; }
+[data-theme="light"] .ql-name { color: var(--text-1) !important; }
+
+/* ── SVG light mode overrides ───────────────────────────── */
+[data-theme="light"] .ring-track { stroke: var(--track); }
+[data-theme="light"] #cpuArea  { fill: rgba(37,99,235,0.08); }
+[data-theme="light"] #netArea  { fill: rgba(37,99,235,0.08); }
+[data-theme="light"] #cpuLine  { stroke: var(--accent); }
+[data-theme="light"] #netLine  { stroke: var(--accent); }
+[data-theme="light"] #ramArc   { stroke: var(--purple); }
+[data-theme="light"] #upLine   { stroke: var(--green); }
+[data-theme="light"] #adguardArc { stroke: var(--green); }
+
+/* ── Light mode JS-generated content ───────────────────── */
+[data-theme="light"] #dockerList  span[style*="#dde5f0"],
+[data-theme="light"] #serviceList span[style*="#dde5f0"],
+[data-theme="light"] #plexSessions > div { color: var(--text-2); }
+
+/* ── Theme toggle button ─────────────────────────────────── */
+#themeToggle { transition: all .2s; }
+
+/* ── Disk-Kacheln (Speicher) ────────────────────────────── */
+.disk-track {
+  height: 7px; border-radius: 6px; background: var(--track); overflow: hidden;
+  transition: box-shadow .3s;
+}
+.disk-fill {
+  height: 100%; border-radius: 6px;
+  background: linear-gradient(90deg, #5b9dff, #3ddc97);
+  transition: width .8s cubic-bezier(.4,0,.2,1);
+}
+/* "Fast voll": Balkenfarbe bleibt, Track glüht/pulsiert als Warnung. */
+.disk-warn .disk-track { animation: diskPulseWarn 2s ease-in-out infinite; }
+.disk-crit .disk-track { animation: diskPulseCrit 1.4s ease-in-out infinite; }
+@keyframes diskPulseWarn {
+  0%,100% { box-shadow: 0 0 0 1px rgba(255,180,84,0.3),  0 0 5px  rgba(255,180,84,0.15); }
+  50%     { box-shadow: 0 0 0 1px rgba(255,180,84,0.5),  0 0 11px rgba(255,180,84,0.4); }
+}
+@keyframes diskPulseCrit {
+  0%,100% { box-shadow: 0 0 0 1px rgba(244,63,94,0.4),  0 0 6px  rgba(244,63,94,0.25); }
+  50%     { box-shadow: 0 0 0 1px rgba(244,63,94,0.7),  0 0 13px rgba(244,63,94,0.55); }
+}
+
+/* ── UniFi Device-Chips ─────────────────────────────────── */
+.unifi-chip {
+  font: 500 10px 'JetBrains Mono', monospace;
+  color: var(--text-4);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-4);
+  border-radius: 6px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+[data-theme="light"] .unifi-chip {
+  background: var(--bg-info-card);
+  border-color: var(--border-3);
+  color: var(--text-3);
+}

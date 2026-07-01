@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Dash-Sharp</Name>
+  <Repository>YOUR_DOCKERHUB_USER/dashsharp:latest</Repository>
+  <Registry>https://hub.docker.com/r/YOUR_DOCKERHUB_USER/dashsharp</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/YOUR_GITHUB_USER/dashsharp/issues</Support>
+  <Project>https://github.com/YOUR_GITHUB_USER/dashsharp</Project>
+  <Overview>Dash# - selfhosted Homelab-Startseite mit frei verschieb- und ausblendbaren Kacheln und Live-Widgets (Glances/System, Docker, AdGuard Home, Plex, UniFi Network &amp; Protect, Nextcloud, Wetter). Die Konfiguration erfolgt komplett in der Weboberflaeche unter /settings und wird im gemappten Config-Ordner gespeichert.</Overview>
+  <Category>HomeAutomation: Tools: Productivity:</Category>
+  <WebUI>http://[IP]:[PORT:8085]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/YOUR_GITHUB_USER/dashsharp/main/unraid/dashsharp.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/YOUR_GITHUB_USER/dashsharp/main/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="WebUI Port" Target="3000" Default="8085" Mode="tcp" Description="Host-Port fuer die Weboberflaeche" Type="Port" Display="always" Required="true" Mask="false">8085</Config>
+  <Config Name="Appdata (config)" Target="/app/config" Default="/mnt/user/appdata/dashsharp" Mode="rw" Description="Persistente Konfiguration, Secrets und Kachel-Layout" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/dashsharp</Config>
+  <Config Name="TZ" Target="TZ" Default="Europe/Berlin" Mode="" Description="Zeitzone (z.B. Europe/Berlin)" Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Berlin</Config>
+</Container>

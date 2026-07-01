@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Lokale Secrets / Umgebung – NIEMALS committen
+.env
+
+# Laufzeit-Daten (werden im /config-Volume erzeugt, nicht versionieren)
+config/secrets.json
+config/dashboard-layout.json
+config/disks.json
+config/quicklinks.json
+config/status.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code / Editor (lokal)
+.claude/

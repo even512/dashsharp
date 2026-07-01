@@ -1,0 +1,21 @@
+services:
+  dashsharp:
+    build: .
+    image: dashsharp:latest
+    # Alternativ das publizierte Image nutzen (ohne lokalen Build):
+    #   image: YOUR_DOCKERHUB_USER/dashsharp:latest
+    container_name: dashsharp
+    ports:
+      # Host:Container  -> Dashboard erreichbar unter http://<host>:8085
+      - "8085:3000"
+    env_file:
+      # Optional: lokale Overrides. Fuer den Normalbetrieb nicht noetig
+      # (Konfiguration laeuft ueber die UI). Vorlage: .env.example
+      - .env
+    environment:
+      - PORT=3000
+      - TZ=Europe/Berlin
+    volumes:
+      # Persistente Konfiguration, Secrets & Kachel-Layout (per UI beschreibbar)
+      - ./config:/app/config
+    restart: unless-stopped

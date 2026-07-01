@@ -1,0 +1,39 @@
+# Dash# – Konfiguration
+# -------------------------------------------------------------------
+# Wird live gelesen: Aenderungen sind nach einem Browser-Reload sichtbar
+# (kein Rebuild noetig, da als Docker-Volume gemountet).
+#
+# quicklinks  -> Kacheln im Bereich "Schnellzugriff"
+#   name   : Anzeigename
+#   url    : Link-Ziel
+#   label  : kleine Zeile darunter (z.B. Port oder Pfad)
+#   color  : Akzentfarbe des Icon-Badges (Hex)
+#   icon   : 1-2 Buchstaben (Badge) ODER Bild-URL (https://... / *.png / *.svg)
+#   newTab : true -> in neuem Tab oeffnen (optional)
+#
+# Dies ist die Standard-/Beispielkonfiguration. Am einfachsten passt du
+# alles direkt in der Weboberflaeche unter /settings an.
+# -------------------------------------------------------------------
+
+title: "Dash#"
+
+search:
+  engine: "https://duckduckgo.com/?q="
+
+# Live-Daten-Integrationen (serverseitig abgefragt -> kein CORS).
+# Glances-URL am besten in den Einstellungen (Integrationen) hinterlegen;
+# alternativ hier eintragen, z.B. http://<host>:61208
+integrations:
+  glances:
+    url: ""            # z.B. http://192.168.1.10:61208
+    label: ""          # Anzeigename im System-Panel (optional)
+
+quicklinks:
+  - { name: "Plex",       url: "http://homelab.local:32400",  label: ":32400", color: "#ff8a4c", icon: "P" }
+  - { name: "Jellyfin",   url: "http://homelab.local:8096",   label: ":8096",  color: "#8b6dff", icon: "J" }
+  - { name: "Home Asst.", url: "http://homelab.local:8123",   label: ":8123",  color: "#5b9dff", icon: "H" }
+  - { name: "Nextcloud",  url: "https://homelab.local",       label: ":443",   color: "#5b9dff", icon: "N" }
+  - { name: "UniFi",      url: "https://homelab.local:8443",  label: ":8443",  color: "#3ddc97", icon: "U" }
+  - { name: "Pi-hole",    url: "http://homelab.local/admin",  label: "/admin", color: "#f43f5e", icon: "P" }
+  - { name: "Unraid",     url: "http://homelab.local",        label: ":80",    color: "#ff8a4c", icon: "U" }
+  - { name: "Portainer",  url: "http://homelab.local:9000",   label: ":9000",  color: "#3ddc97", icon: "Po" }

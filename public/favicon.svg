@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Dash#">
+  <title>Dash#</title>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#0F172A" stroke="#475569" stroke-width="2"/>
+  <rect x="102" y="102" width="52" height="52" rx="6" fill="#7C6CFF"/>
+  <g stroke="#E2E8F0" stroke-width="16" stroke-linecap="round">
+    <line x1="102" y1="58" x2="102" y2="198"/>
+    <line x1="154" y1="58" x2="154" y2="198"/>
+    <line x1="58" y1="102" x2="198" y2="102"/>
+    <line x1="58" y1="154" x2="198" y2="154"/>
+  </g>
+</svg>
