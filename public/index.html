@@ -231,10 +231,8 @@
             </div>
           </div>
         </div>
-        <div style="display:flex;justify-content:space-between;font:500 11px 'JetBrains Mono',monospace;color:var(--text-4);padding-top:14px;border-top:1px solid rgba(120,150,200,0.08)">
-          <span style="color:var(--text-3)">Top blocked</span>
-          <span id="adguardTopDomain" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;text-align:right">–</span>
-        </div>
+        <div style="font:600 9px/1 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase;padding-top:14px;margin-top:2px;border-top:1px solid rgba(120,150,200,0.08)">Top blocked</div>
+        <div id="adguardTopList" style="display:flex;flex-direction:column;gap:6px;max-height:150px;overflow-y:auto;padding-right:4px;margin-right:-4px;margin-top:8px"></div>
       </div>
     </div>
 
@@ -303,29 +301,42 @@
           <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">UniFi · Network</div>
           <div id="unifiStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">● –</div>
         </div>
-        <!-- WAN Throughput -->
-        <div style="display:flex;gap:18px;margin-bottom:12px;align-items:baseline;flex-wrap:wrap">
-          <div><span style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3)">↓ </span><span id="unifiRxRate" style="font:600 18px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</span><span style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3)"> Mbit/s</span></div>
-          <div><span style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3)">↑ </span><span id="unifiTxRate" style="font:600 18px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</span><span style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3)"> Mbit/s</span></div>
-          <div style="display:flex;gap:10px;align-items:center">
-            <span id="unifiWanIp" style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-4)">–</span>
-            <span style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3)">|</span>
-            <span id="unifiLatency" style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-4)">–</span><span style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3)"> ms</span>
+        <!-- Vier Spalten: WAN | Clients | Wireless/Wired | Geraete -->
+        <div id="unifiGrid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:20px;align-items:start">
+          <!-- WAN -->
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="font:600 9px/1 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase">WAN</div>
+            <div><span style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3)">↓ </span><span id="unifiRxRate" style="font:600 18px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</span><span style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3)"> Mbit/s</span></div>
+            <div><span style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3)">↑ </span><span id="unifiTxRate" style="font:600 18px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</span><span style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3)"> Mbit/s</span></div>
+            <div style="display:flex;flex-direction:column;gap:2px">
+              <span id="unifiWanIp" style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-4)">–</span>
+              <span><span id="unifiLatency" style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-4)">–</span><span style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3)"> ms</span></span>
+            </div>
+          </div>
+          <!-- Clients -->
+          <div style="display:flex;flex-direction:column;gap:3px">
+            <div style="font:600 9px/1 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase;margin-bottom:5px">Clients</div>
+            <div id="unifiTotal" style="font:600 26px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</div>
+          </div>
+          <!-- Wireless / Wired / Baender -->
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="font:600 9px/1 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase">Verbindung</div>
+            <div style="display:flex;gap:16px">
+              <div><div id="unifiWireless" style="font:600 18px/1 'Space Grotesk',sans-serif;color:var(--accent)">–</div><div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">Wireless</div></div>
+              <div><div id="unifiWired" style="font:600 18px/1 'Space Grotesk',sans-serif;color:var(--green)">–</div><div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">Wired</div></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px">
+              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-4)">2.4G&nbsp;<span id="unifi24" style="color:var(--text-2)">–</span></div>
+              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-4)">5G&nbsp;&nbsp;<span id="unifi5" style="color:var(--text-2)">–</span></div>
+              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-4)">6G&nbsp;&nbsp;<span id="unifi6" style="color:var(--text-2)">–</span></div>
+            </div>
+          </div>
+          <!-- Geraete -->
+          <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+            <div style="font:600 9px/1 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase">Geräte</div>
+            <div id="unifiDevices" style="display:flex;flex-direction:column;gap:6px;max-height:140px;overflow-y:auto;padding-right:4px;margin-right:-4px"></div>
           </div>
         </div>
-        <!-- Client counts -->
-        <div style="display:flex;gap:18px;margin-bottom:14px;align-items:flex-start">
-          <div><div id="unifiTotal" style="font:600 26px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</div><div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">Clients</div></div>
-          <div><div id="unifiWireless" style="font:600 26px/1 'Space Grotesk',sans-serif;color:var(--accent)">–</div><div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">Wireless</div></div>
-          <div><div id="unifiWired" style="font:600 26px/1 'Space Grotesk',sans-serif;color:var(--green)">–</div><div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">Wired</div></div>
-          <div style="display:flex;flex-direction:column;justify-content:center;gap:5px;padding-top:2px">
-            <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-4)">2.4G&nbsp;<span id="unifi24" style="color:var(--text-2)">–</span></div>
-            <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-4)">5G&nbsp;&nbsp;<span id="unifi5" style="color:var(--text-2)">–</span></div>
-            <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-4)">6G&nbsp;&nbsp;<span id="unifi6" style="color:var(--text-2)">–</span></div>
-          </div>
-        </div>
-        <!-- Device-Chips -->
-        <div id="unifiDevices" style="display:flex;gap:6px;flex-wrap:wrap"></div>
       </div>
     </div>
 
@@ -468,10 +479,12 @@
                 <span id="glancesSettingsStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-status)">● –</span>
                 <div style="display:flex;gap:6px">
                   <input id="secretGlancesUrl" placeholder="http://host:61208" class="cfg-input" style="width:200px" />
+                  <input id="secretGlancesLabel" placeholder="Hostname (optional)" class="cfg-input" style="width:140px" />
                   <button onclick="saveSecrets('glances')" class="cfg-btn">↵</button>
                 </div>
               </div>
             </div>
+            <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);padding:0 0 12px">Zeigt Glances eine Container-ID statt des echten Hostnamens an? Trage hier einen festen Namen ein.</div>
 
             <div class="cfg-row">
               <div style="display:flex;align-items:center;gap:10px">
@@ -483,6 +496,7 @@
               </div>
               <span id="dockerSettingsStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-status)">● –</span>
             </div>
+            <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);padding:0 0 4px">Nur laufende Container sichtbar? Setze <code>all = True</code> unter <code>[containers]</code> in der glances.conf auf dem Glances-Host und starte Glances neu.</div>
           </div>
 
           <!-- TAB: DISKS -->

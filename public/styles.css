@@ -412,6 +412,10 @@ body.layout-edit-mode #layoutEditBar { display: flex; }
   padding: 4px 8px;
   white-space: nowrap;
 }
+#unifiDevices .unifi-chip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 [data-theme="light"] .unifi-chip {
   background: var(--bg-info-card);
   border-color: var(--border-3);
@@ -475,6 +479,8 @@ body.layout-edit-mode #layoutEditBar { display: flex; }
   #settingsPanel.settings-leaf-active #settingsBackBtn { display: inline-flex !important; }
 
   .category-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)) !important; gap: 10px !important; }
+
+  #unifiGrid { grid-template-columns: repeat(2, 1fr) !important; gap: 16px !important; }
 }
 
 @media (max-width: 640px) {
@@ -491,6 +497,7 @@ body.layout-edit-mode #layoutEditBar { display: flex; }
   [data-section-id] { grid-template-columns: 1fr !important; gap: 14px !important; }
   [data-widget-id] { grid-column: 1 / -1 !important; grid-row: auto !important; }
   #diskGrid { grid-template-columns: 1fr !important; gap: 12px !important; }
+  #unifiGrid { grid-template-columns: 1fr !important; gap: 14px !important; }
 
   /* Module tabs / About tab: 2-3 col input grids collapse to 1 column */
   #settingsPanel [data-tab="adguard"] div[style*="grid-template-columns"],
