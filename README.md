@@ -144,13 +144,6 @@ Regenerate the logo/icons after editing [`logo.svg`](logo.svg):
 npm i -D sharp && node scripts/render-icon.mjs
 ```
 
-## Roadmap
-
-- [ ] Home Assistant integration (currently a static demo)
-- [ ] Optional authentication
-- [ ] Listing in the Unraid Community Applications
-- [ ] Self-hosted fonts & icons (zero external requests)
-
 ## Contributing
 
 Issues and PRs are welcome. This is a young project — small, focused improvements are the easiest to land.
