@@ -4,6 +4,11 @@ All notable changes to Dash# are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/), and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.7] - 2026-07-02
+
+### Fixed
+- Sparkline freeze still occurring on larger/real-world setups despite #11: the scroll-progress `p` was soft-capped at 1.5x the estimated poll interval, so once a Glances round-trip took longer than that (plausible on a large real array, or a slow upstream response) `p` pinned at its cap and the line froze until the data arrived — the same class of bug #11 fixed, just requiring a longer delay to trigger. The cap is now 20x, effectively no longer a normal operating limit — the line keeps scrolling smoothly through realistic delays instead of stalling. Verified against a mock backend with variable 300-3200ms response latency (35% "slow" responses): a single isolated frame hiccup over 60s, no recurring pattern.
+
 ## [0.2.6] - 2026-07-01
 
 ### Fixed
