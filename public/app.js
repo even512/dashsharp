@@ -417,15 +417,18 @@ let _graphFrameHandle = null;
 function graphFrame() {
   const anim = state.animOn;
   const interval = state.sampleIntervalEst || state.updateMs || 1600;
-  // Soft-capped, not hard-capped at 1: real poll gaps vary (server cache
-  // TTL vs. poll cadence beat against each other, network jitter, etc.), so
-  // a sample regularly arrives a bit later than `interval`. Clamping p to
-  // exactly 1 froze the line dead for that overshoot and then snapped it —
-  // a small but rhythmic stutter once per poll. Letting p drift up to 1.5
-  // keeps the scroll moving through that overshoot (a harmless few-pixel
-  // overshoot past the "expected" position, corrected seamlessly once the
-  // next sample lands and p resets) instead of visibly halting.
-  const p = anim ? Math.min(1.5, Math.max(0, (performance.now() - state.lastSampleTs) / interval)) : 1;
+  // Capped high (20x), not tight: real poll gaps vary — server cache TTL
+  // beating against poll cadence, network jitter, and on a large real array
+  // Glances itself can genuinely take a while to answer. A tight cap (even
+  // the earlier 1.5x) still gets hit whenever a sample is late enough,
+  // pinning p and visibly freezing the line until it lands — the exact
+  // rhythmic stutter this was meant to fix, just needing a longer delay to
+  // trigger it. Letting p keep drifting means the line keeps scrolling
+  // through any realistic delay instead of stopping; points that scroll
+  // past the left edge are simply clipped by the SVG viewport (harmless).
+  // The cap here is only a sanity bound for pathological cases (Glances
+  // truly unreachable for a long time), not a normal operating limit.
+  const p = anim ? Math.min(20, Math.max(0, (performance.now() - state.lastSampleTs) / interval)) : 1;
   // Only skip "unchanged" writes while animOn is off, where p/k below are
   // exact repeated constants (see the comment on _lastGraph above).
   const skip = !anim;
