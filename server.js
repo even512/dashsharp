@@ -318,7 +318,9 @@ const cache = {
   unifi:    { ts: 0, data: null },
   nextcloud:{ ts: 0, data: null },
 };
-const GLANCES_TTL   = 2000;   // ms – Glances-Metriken hoechstens 1x/2s abrufen
+const GLANCES_TTL   = 500;    // ms – Glances-Metriken hoechstens 2x/s abrufen; muss unter dem
+                              // kleinsten Client-Poll-Intervall (400 ms Slider-Minimum) liegen,
+                              // sonst bekommen Clients periodisch identische Samples zurueck
 const DOCKER_TTL    = 8000;   // ms – Container-Liste aendert sich selten
 const ADGUARD_TTL   = 30000;  // ms – aggregierte Stats, aendern sich langsam
 const PLEX_LIB_TTL  = 300000; // ms – Bibliothekszahlen (5 min)
@@ -381,6 +383,10 @@ app.get('/api/glances', async (req, res) => {
 
     const result = {
       ok: true,
+      // Sample-Timestamp: der Client dedupliziert damit Cache-Hits (gleicher
+      // ts = gleiches Sample → kein neuer Graph-Punkt). Der _stale-Fallback
+      // unten traegt den alten ts automatisch weiter.
+      ts: Date.now(),
       label: label || systemHost || hostFromUrl(url) || 'host',
       os: system ? system.os_version || system.linux_distro : null,
       cpu: typeof cpu.total === 'number' ? +cpu.total.toFixed(1) : null,
@@ -393,7 +399,7 @@ app.get('/api/glances', async (req, res) => {
       load: load ? { min1: load.min1, min5: load.min5, min15: load.min15 } : null,
       uptime: typeof uptime === 'string' ? uptime : (uptime && uptime.seconds) || null,
     };
-    cache.glances = { ts: Date.now(), data: result };
+    cache.glances = { ts: result.ts, data: result };
     res.json(result);
   } catch (err) {
     glancesFailStreak++;
