@@ -218,12 +218,16 @@ function _rebuildIconWrap(wrap, hiddenInput, val) {
 const state = {
   cpu: 0, ram: 0, cpuTemp: null,
   netDown: 0, netUp: 0,
-  cpuHist: new Array(46).fill(0),
-  ramHist: new Array(46).fill(0),
-  netHist: new Array(40).fill(0),
-  upHist: new Array(40).fill(0),
+  // Graph histories are arrays of { t, v } samples (t = performance.now() at
+  // arrival). Each point's x position is derived purely from its own
+  // timestamp, so uneven poll gaps can never shift already-drawn points
+  // (see graphFrame).
+  cpuHist: [],
+  ramHist: [],
+  netHist: [],
+  upHist: [],
   dispDown: 0, dispUpVal: 0,
-  netMaxDisp: 10, lastSampleTs: 0,
+  netMaxDisp: 10, lastSampleTs: 0, glancesTs: null,
   liveOn: true, gridOn: true, animOn: true, glassOn: true, searchOn: true,
   updateMs: 1600, accent: '#5b9dff',
   settingsCategory: 'general',
@@ -296,6 +300,14 @@ function diffList(container, items, keyFn, createFn, updateFn) {
     if (!seen.has(key)) { entry.node.remove(); map.delete(key); }
   }
 }
+// Assigns innerHTML only when the markup actually changed (cached on the
+// element) — repeated polls with identical payloads become a string compare
+// instead of a DOM teardown + layout pass.
+function setHtmlIfChanged(el, html) {
+  if (el._lastHtml === html) return;
+  el._lastHtml = html;
+  el.innerHTML = html;
+}
 function hexA(hex, a) {
   const m = String(hex).replace('#', '');
   const n = m.length === 3 ? m.split('').map((c) => c + c).join('') : m;
@@ -322,42 +334,51 @@ function tickClock() {
 /* ---------- Gauges & Sparklines ---------- */
 const CIRC = 2 * Math.PI * 46;
 function dash(p) { return `${(p / 100 * CIRC).toFixed(1)} ${(CIRC - p / 100 * CIRC + 0.5).toFixed(1)}`; }
-// Sparkline that continuously scrolls left: the parameter p (0..1) is the
-// progress since the last sample. Each point is shifted left by p*step;
-// the current value is held at the right edge. On sample change
-// (p jumps 1→0 while the array shifts by one) the transition is
-// seamless → smooth 60fps motion instead of hard jumps.
-function flowSpark(arr, w, h, max, pad, p) {
+/* Time-based sparklines: each history entry is { t, v } and its x position
+   is w − (now − t) · (w / windowMs). A point's position depends only on its
+   own timestamp, so the line scrolls left at constant speed and a new sample
+   merely adds a vertex near the right edge — nothing already on screen ever
+   shifts, no matter how early/late or irregular the samples arrive. (The
+   previous model interpolated a progress value against an *estimated* poll
+   interval and re-anchored the whole array on every sample; any mismatch
+   between estimate and reality made the entire line jump once per poll.) */
+const CPU_HIST_N = 46, NET_HIST_N = 40; // visual point density, as before
+function histWindowMs(n) { return (n - 1) * (state.updateMs || 1600); }
+// Appends a sample. Seeds a flat line when the history is empty or the gap
+// since the previous sample exceeds the window (tab was hidden, Glances was
+// down) — otherwise that gap would render as one long diagonal. Prunes
+// points that scrolled out on the left, keeping one beyond the edge so the
+// polyline still crosses it (SVG clips the rest).
+function pushSample(arr, t, v, windowMs) {
+  const last = arr[arr.length - 1];
+  if (last && t - last.t > windowMs) arr.length = 0;
+  if (!arr.length) arr.push({ t: t - windowMs, v });
+  arr.push({ t, v });
+  const cutoff = t - windowMs;
+  while (arr.length > 2 && arr[1].t < cutoff) arr.shift();
+}
+function sparkPoints(arr, w, h, max, pad, now, windowMs) {
   const n = arr.length;
-  const mx = (max || Math.max(...arr) * 1.15) || 1;
+  const mx = max || 1;
   const pd = pad || 0;
   const eff = h - pd;
-  const step = w / (n - 1);
-  const prog = p || 0;
+  const pxPerMs = w / windowMs;
   const y = (v) => (pd + eff - (v / mx) * eff);
-  // Coordinates are rounded to 2 decimals (0.01px), not 1: at typical scroll
-  // rates (a ~10px step spread over a multi-second poll interval) a single
-  // frame's movement is well under 0.1px, so 1-decimal rounding made the
-  // string stay byte-identical for several consecutive frames — invisible
-  // with the old code (which rewrote the same value every frame anyway) but
-  // a visible stutter now that identical writes are skipped (see
-  // setAttrIfChanged). 0.01px resolves sub-frame motion so the string keeps
-  // changing every frame the way it visually should.
   let s = '';
-  for (let i = 0; i < n; i++) s += `${((i - prog) * step).toFixed(2)},${y(arr[i]).toFixed(2)} `;
-  return s + `${w},${y(arr[n - 1]).toFixed(2)}`; // right edge: hold current value
+  for (let i = 0; i < n; i++) {
+    s += `${(w - (now - arr[i].t) * pxPerMs).toFixed(2)},${y(arr[i].v).toFixed(2)} `;
+  }
+  return s + `${w},${y(arr[n - 1].v).toFixed(2)}`; // right edge: hold current value
 }
-function flowArea(arr, w, h, max, pad, p) {
-  const step = w / (arr.length - 1);
-  const x0 = (-(p || 0) * step).toFixed(2);
-  return `${x0},${h} ${flowSpark(arr, w, h, max, pad, p)} ${w},${h}`;
+function areaPoints(arr, w, h, max, pad, now, windowMs) {
+  const x0 = (w - (now - arr[0].t) * (w / windowMs)).toFixed(2);
+  return `${x0},${h} ${sparkPoints(arr, w, h, max, pad, now, windowMs)} ${w},${h}`;
 }
 function fmtNet(v) {
   if (v >= 100) return v.toFixed(0);
   if (v >= 10)  return v.toFixed(1);
   return v.toFixed(2);
 }
-function push(arr, v) { const a = arr.slice(1); a.push(v); return a; }
 
 function renderData() {
   // Only rings + values (which run smoothly via CSS transition).
@@ -370,90 +391,52 @@ function renderData() {
 }
 
 /* ---------- Graphs: one shared rAF loop for smooth scrolling ----------
-   CPU/RAM and network lines are redrawn every frame and scroll time-based
-   continuously to the left (see flowSpark). The big network numbers count
-   up smoothly, the network scale is smoothed. With animations disabled,
-   values are set immediately. */
+   CPU/RAM and network lines scroll time-based continuously to the left
+   (see sparkPoints). The big network numbers count up smoothly, the network
+   scale is smoothed. With animations disabled nothing is written per frame;
+   the graphs are drawn once per new sample instead (dirty flag). */
 function maxOfTwo(a, b) {
   let m = 0;
-  for (let i = 0; i < a.length; i++) if (a[i] > m) m = a[i];
-  for (let i = 0; i < b.length; i++) if (b[i] > m) m = b[i];
+  for (let i = 0; i < a.length; i++) if (a[i].v > m) m = a[i].v;
+  for (let i = 0; i < b.length; i++) if (b[i].v > m) m = b[i].v;
   return m;
-}
-// Caches the last value written per graph target so graphFrame() can skip
-// the actual DOM write (which triggers SVG layout) once nothing will visibly
-// change until the next poll. `skipIfSame` must only be true while animOn is
-// false: in that state `p` is pinned at the exact constant 1 (see below), so
-// flowSpark/flowArea's output is byte-identical frame to frame with no
-// rounding ambiguity — comparing strings is exact and safe there. While
-// animOn is true, `p` is a continuously-varying real number and comparing
-// its *rounded* output is NOT safe at any fixed precision: any interpolation
-// with rounded coordinates has stretches where genuinely-still-moving values
-// round to an identical string, and skipping those writes reproduces the
-// exact rhythmic freeze this was meant to fix, just at whatever scroll
-// speed/interval happens to fall below that frame's rounding step. So while
-// animating, always write — the actual per-frame cost of that was measured
-// (DevTools CPU throttling up to 6x) to be a non-issue; the wasted-work
-// problem this optimization targets only exists in the settled/animOn-off
-// case anyway.
-const _lastGraph = {
-  cpuArea: null, cpuLine: null, ramLine: null,
-  netArea: null, netLine: null, upLine: null,
-  netDownTxt: null, netUpTxt: null,
-};
-function setAttrIfChanged(id, attr, v, cacheKey, skipIfSame) {
-  if (skipIfSame && _lastGraph[cacheKey] === v) return;
-  _lastGraph[cacheKey] = v;
-  setAttr(id, attr, v);
-}
-function setTextIfChanged(id, v, cacheKey, skipIfSame) {
-  if (skipIfSame && _lastGraph[cacheKey] === v) return;
-  _lastGraph[cacheKey] = v;
-  setText(id, v);
 }
 
 let graphRafStarted = false;
 let _graphFrameHandle = null;
+let _graphDirty = false; // set on new sample / animOn or updateMs change
 function graphFrame() {
   const anim = state.animOn;
-  const interval = state.sampleIntervalEst || state.updateMs || 1600;
-  // Capped high (20x), not tight: real poll gaps vary — server cache TTL
-  // beating against poll cadence, network jitter, and on a large real array
-  // Glances itself can genuinely take a while to answer. A tight cap (even
-  // the earlier 1.5x) still gets hit whenever a sample is late enough,
-  // pinning p and visibly freezing the line until it lands — the exact
-  // rhythmic stutter this was meant to fix, just needing a longer delay to
-  // trigger it. Letting p keep drifting means the line keeps scrolling
-  // through any realistic delay instead of stopping; points that scroll
-  // past the left edge are simply clipped by the SVG viewport (harmless).
-  // The cap here is only a sanity bound for pathological cases (Glances
-  // truly unreachable for a long time), not a normal operating limit.
-  const p = anim ? Math.min(20, Math.max(0, (performance.now() - state.lastSampleTs) / interval)) : 1;
-  // Only skip "unchanged" writes while animOn is off, where p/k below are
-  // exact repeated constants (see the comment on _lastGraph above).
-  const skip = !anim;
+  if (state.cpuHist.length && (anim || _graphDirty)) {
+    _graphDirty = false;
+    // With animations off, draw the static frame anchored at the last sample
+    // so the newest point sits exactly on the right edge.
+    const now = anim ? performance.now() : state.lastSampleTs;
+    const cpuWin = histWindowMs(CPU_HIST_N);
+    const netWin = histWindowMs(NET_HIST_N);
 
-  // System: CPU + RAM (feste Skala 0..100)
-  setAttrIfChanged('cpuArea', 'points', flowArea(state.cpuHist, 460, 64, 100, 0, p), 'cpuArea', skip);
-  setAttrIfChanged('cpuLine', 'points', flowSpark(state.cpuHist, 460, 64, 100, 0, p), 'cpuLine', skip);
-  setAttrIfChanged('ramLine', 'points', flowSpark(state.ramHist, 460, 64, 100, 0, p), 'ramLine', skip);
+    // System: CPU + RAM (feste Skala 0..100)
+    setAttr('cpuArea', 'points', areaPoints(state.cpuHist, 460, 64, 100, 0, now, cpuWin));
+    setAttr('cpuLine', 'points', sparkPoints(state.cpuHist, 460, 64, 100, 0, now, cpuWin));
+    setAttr('ramLine', 'points', sparkPoints(state.ramHist, 460, 64, 100, 0, now, cpuWin));
 
-  // Network: auto-scaled, scale eases toward target (prevents height jumps)
-  const targetMax = Math.max(10, maxOfTwo(state.netHist, state.upHist) * 1.15);
-  state.netMaxDisp += (targetMax - state.netMaxDisp) * (anim ? 0.08 : 1);
-  const nm = state.netMaxDisp || targetMax;
-  setAttrIfChanged('netArea', 'points', flowArea(state.netHist, 380, 80, nm, 6, p), 'netArea', skip);
-  setAttrIfChanged('netLine', 'points', flowSpark(state.netHist, 380, 80, nm, 6, p), 'netLine', skip);
-  setAttrIfChanged('upLine',  'points', flowSpark(state.upHist,  380, 80, nm, 6, p), 'upLine', skip);
+    // Network: auto-scaled, scale eases toward target (prevents height jumps)
+    const targetMax = Math.max(10, maxOfTwo(state.netHist, state.upHist) * 1.15);
+    state.netMaxDisp += (targetMax - state.netMaxDisp) * (anim ? 0.08 : 1);
+    const nm = state.netMaxDisp || targetMax;
+    setAttr('netArea', 'points', areaPoints(state.netHist, 380, 80, nm, 6, now, netWin));
+    setAttr('netLine', 'points', sparkPoints(state.netHist, 380, 80, nm, 6, now, netWin));
+    setAttr('upLine',  'points', sparkPoints(state.upHist,  380, 80, nm, 6, now, netWin));
 
-  // Smoothly count up the big ↓/↑ numbers
-  const k = anim ? 0.12 : 1;
-  state.dispDown  += (state.netDown - state.dispDown) * k;
-  state.dispUpVal += (state.netUp   - state.dispUpVal) * k;
-  if (Math.abs(state.netDown - state.dispDown)  < 0.04) state.dispDown  = state.netDown;
-  if (Math.abs(state.netUp   - state.dispUpVal) < 0.04) state.dispUpVal = state.netUp;
-  setTextIfChanged('netDown', fmtNet(state.dispDown), 'netDownTxt', skip);
-  setTextIfChanged('netUp', fmtNet(state.dispUpVal), 'netUpTxt', skip);
+    // Smoothly count up the big ↓/↑ numbers
+    const k = anim ? 0.12 : 1;
+    state.dispDown  += (state.netDown - state.dispDown) * k;
+    state.dispUpVal += (state.netUp   - state.dispUpVal) * k;
+    if (Math.abs(state.netDown - state.dispDown)  < 0.04) state.dispDown  = state.netDown;
+    if (Math.abs(state.netUp   - state.dispUpVal) < 0.04) state.dispUpVal = state.netUp;
+    setText('netDown', fmtNet(state.dispDown));
+    setText('netUp', fmtNet(state.dispUpVal));
+  }
 
   _graphFrameHandle = requestAnimationFrame(graphFrame);
 }
@@ -534,6 +517,14 @@ function setHost(text, color) {
   if (el) { el.textContent = text; el.style.color = color; }
 }
 function applyMetrics(d) {
+  // Dedupe: the server tags every real Glances fetch with a sample timestamp
+  // and replays it for cache hits / stale fallbacks. An unchanged ts means
+  // "same sample as last time" — pushing it again would insert duplicate
+  // graph points and make rings/values only visibly change on every n-th
+  // poll (the old rhythmic-stutter beat between poll rate and cache TTL).
+  if (d.ts && d.ts === state.glancesTs) return;
+  state.glancesTs = d.ts || null;
+
   state.cpu = d.cpu != null ? d.cpu : state.cpu;
   state.ram = d.mem ? d.mem.percent : state.ram;
   state.cpuTemp = d.cpuTemp != null ? d.cpuTemp : state.cpuTemp;
@@ -545,36 +536,19 @@ function applyMetrics(d) {
     const sep = $('netIfaceSep'); if (sep) sep.style.display = '';
   }
 
+  const now = performance.now();
+  pushSample(state.cpuHist, now, state.cpu, histWindowMs(CPU_HIST_N));
+  pushSample(state.ramHist, now, state.ram, histWindowMs(CPU_HIST_N));
+  pushSample(state.netHist, now, state.netDown, histWindowMs(NET_HIST_N));
+  pushSample(state.upHist, now, state.netUp, histWindowMs(NET_HIST_N));
   if (!seeded) {
-    state.cpuHist = new Array(46).fill(state.cpu);
-    state.ramHist = new Array(46).fill(state.ram);
-    state.netHist = new Array(40).fill(state.netDown);
-    state.upHist = new Array(40).fill(state.netUp);
     state.dispDown = state.netDown;
     state.dispUpVal = state.netUp;
     state.netMaxDisp = Math.max(10, Math.max(state.netDown, state.netUp) * 1.15);
     seeded = true;
-  } else {
-    state.cpuHist = push(state.cpuHist, state.cpu);
-    state.ramHist = push(state.ramHist, state.ram);
-    state.netHist = push(state.netHist, state.netDown);
-    state.upHist = push(state.upHist, state.netUp);
   }
-  const now = performance.now();
-  if (state.lastSampleTs) {
-    // The real gap between samples rarely matches updateMs exactly — e.g.
-    // the server's Glances cache TTL (2s) beats against the client poll
-    // cadence, so roughly every other poll is a cheap cache hit and the
-    // other a real upstream round-trip, plus ordinary network jitter. If
-    // graphFrame() always interpolated against the configured updateMs, a
-    // late-arriving sample would leave p pinned at 1 (fully scrolled) until
-    // it lands, freezing the line and then snapping — a small but rhythmic
-    // stutter roughly once per poll. Smoothing the *observed* gap instead
-    // lets the scroll speed track the real, uneven cadence.
-    const gap = Math.min(Math.max(now - state.lastSampleTs, 200), (state.updateMs || 1600) * 3);
-    state.sampleIntervalEst = state.sampleIntervalEst ? state.sampleIntervalEst * 0.7 + gap * 0.3 : gap;
-  }
-  state.lastSampleTs = now; // start time for frame-based scrolling
+  state.lastSampleTs = now;
+  _graphDirty = true;
 
   renderData();
   renderDisks(d.disks || [], d.diskTotal);
@@ -737,6 +711,7 @@ function renderAdGuard(d) {
   if (list) {
     const top = d.topBlocked || [];
     if (!top.length) {
+      list._diffMap = null; // reset diff state clobbered by the placeholder markup
       list.innerHTML = `<div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">–</div>`;
     } else {
       diffList(list, top, (item) => item.domain, createAdguardDomainRow, updateAdguardDomainRow);
@@ -852,29 +827,40 @@ function setPlexStatus(text, color) {
   });
 }
 
-function renderPlexSession(s) {
-  const card = document.createElement('div');
-  card.style.cssText = 'display:flex;gap:14px;align-items:flex-start';
+/* Plex session cards are diffed in place (see diffList): one card per
+   session key, only changed fields touch the DOM. The old code tore the
+   whole tile down via innerHTML every 5s poll — recreating the poster
+   <img>s forced image re-decodes and a layout pass, a periodic main-thread
+   hitch that dropped animation frames. */
+const PLEX_POSTER_PH_CSS = 'width:52px;height:76px;border-radius:7px;flex-shrink:0;background:repeating-linear-gradient(135deg,rgba(255,138,76,0.18),rgba(255,138,76,0.18) 6px,rgba(255,138,76,0.08) 6px,rgba(255,138,76,0.08) 12px);border:1px solid rgba(255,138,76,0.22);display:flex;align-items:center;justify-content:center;font:600 7px \'JetBrains Mono\',monospace;color:#ff8a4c;text-align:center';
 
-  // Poster
-  if (s.thumb) {
+function plexPosterEl(thumb) {
+  if (thumb) {
     const img = document.createElement('img');
-    img.src = s.thumb;
+    img.src = thumb;
     img.alt = '';
     img.style.cssText = 'width:52px;height:76px;border-radius:7px;object-fit:cover;flex-shrink:0;background:rgba(255,138,76,0.1)';
     img.onerror = function () {
       const ph = document.createElement('div');
-      ph.style.cssText = 'width:52px;height:76px;border-radius:7px;flex-shrink:0;background:repeating-linear-gradient(135deg,rgba(255,138,76,0.18),rgba(255,138,76,0.18) 6px,rgba(255,138,76,0.08) 6px,rgba(255,138,76,0.08) 12px);border:1px solid rgba(255,138,76,0.22);display:flex;align-items:center;justify-content:center;font:600 7px \'JetBrains Mono\',monospace;color:#ff8a4c;text-align:center';
+      ph.style.cssText = PLEX_POSTER_PH_CSS;
       ph.textContent = 'POSTER';
       this.replaceWith(ph);
     };
-    card.appendChild(img);
-  } else {
-    const ph = document.createElement('div');
-    ph.style.cssText = 'width:52px;height:76px;border-radius:7px;flex-shrink:0;background:repeating-linear-gradient(135deg,rgba(255,138,76,0.18),rgba(255,138,76,0.18) 6px,rgba(255,138,76,0.08) 6px,rgba(255,138,76,0.08) 12px);border:1px solid rgba(255,138,76,0.22);display:flex;align-items:center;justify-content:center;font:600 7px \'JetBrains Mono\',monospace;color:#ff8a4c;text-align:center';
-    ph.textContent = 'POSTER';
-    card.appendChild(ph);
+    return img;
   }
+  const ph = document.createElement('div');
+  ph.style.cssText = PLEX_POSTER_PH_CSS;
+  ph.textContent = 'POSTER';
+  return ph;
+}
+
+function createPlexCard(s) {
+  const card = document.createElement('div');
+  card.style.cssText = 'display:flex;gap:14px;align-items:flex-start';
+
+  const poster = document.createElement('div');
+  poster.style.cssText = 'flex-shrink:0;display:flex';
+  card.appendChild(poster);
 
   // Textblock
   const txt = document.createElement('div');
@@ -886,28 +872,65 @@ function renderPlexSession(s) {
 
   const titleEl = document.createElement('div');
   titleEl.style.cssText = "font:600 14px/1.25 'Space Grotesk',sans-serif;color:#eef3fa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0";
-  titleEl.textContent = s.type === 'episode' && s.showTitle ? s.showTitle : s.title;
   titleRow.appendChild(titleEl);
 
   const userChip = document.createElement('span');
   userChip.style.cssText = "font:700 10px 'JetBrains Mono',monospace;color:#5b9dff;background:rgba(91,157,255,0.14);border-radius:5px;padding:3px 8px;flex-shrink:0;white-space:nowrap";
-  userChip.textContent = s.user;
   titleRow.appendChild(userChip);
 
   txt.appendChild(titleRow);
 
-  if (s.type === 'episode' && s.showTitle) {
-    const sub = document.createElement('div');
-    sub.style.cssText = "font:500 11px 'JetBrains Mono',monospace;color:#8b97a8;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
-    sub.textContent = (s.seasonEpisode ? s.seasonEpisode + ' · ' : '') + s.title;
-    txt.appendChild(sub);
-  }
+  const sub = document.createElement('div');
+  sub.style.cssText = "font:500 11px 'JetBrains Mono',monospace;color:#8b97a8;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:none";
+  txt.appendChild(sub);
+
+  const infoRows = document.createElement('div');
+  txt.appendChild(infoRows);
+
+  // Progress – directly from the viewOffset reported by Plex
+  const barOuter = document.createElement('div');
+  barOuter.style.cssText = 'height:3px;border-radius:3px;background:rgba(120,150,200,0.12);overflow:hidden';
+  const barFill = document.createElement('div');
+  barFill.style.cssText = `height:100%;width:0%;border-radius:3px;background:${PLEX_COLOR}`;
+  barOuter.appendChild(barFill);
+
+  const timeRow = document.createElement('div');
+  timeRow.style.cssText = "display:flex;justify-content:space-between;font:500 10px 'JetBrains Mono',monospace;color:#6b7689;margin-top:5px";
+
+  const prog = document.createElement('div');
+  prog.style.cssText = 'margin-top:10px';
+  prog.append(barOuter, timeRow);
+  txt.appendChild(prog);
+
+  card.appendChild(txt);
+  card._poster = poster;
+  card._title = titleEl;
+  card._user = userChip;
+  card._sub = sub;
+  card._infoRows = infoRows;
+  card._barFill = barFill;
+  card._timeRow = timeRow;
+  return card;
+}
+
+// All fields that feed the info token rows; rebuild them only when one changes.
+function plexInfoSignature(s) {
+  return [
+    s.resolution, s.streamType, s.bandwidth, s.bitrate, s.transcodeSpeed,
+    s.videoDisplayTitle, s.videoDecision, s.transVideoCodec,
+    s.audioDisplayTitle, s.audioDecision, s.transAudioCodec, s.transAudioCh,
+    s.product, s.device, s.platform, s.location, s.subtitle,
+  ].join('|');
+}
+
+function rebuildPlexInfoRows(wrap, s) {
+  wrap.innerHTML = '';
 
   // Row 1: resolution · stream type · bitrate (+ transcode speed if relevant)
   const speedToken = (s.transcodeSpeed && s.streamType !== 'directplay')
     ? { text: `×${s.transcodeSpeed}`, color: plexSpeedColor(s.transcodeSpeed), weight: '700' }
     : null;
-  txt.appendChild(plexInfoRow([
+  wrap.appendChild(plexInfoRow([
     { text: s.resolution || '?', color: plexResColor(s.resolution), weight: '700' },
     { text: plexStreamLabel(s.streamType), color: '#6b7689' },
     { text: fmtBitrate(s.bandwidth || s.bitrate), color: '#8b97a8' },
@@ -931,7 +954,7 @@ function renderPlexSession(s) {
     return s.audioDisplayTitle;
   })();
   if (videoChain || audioChain) {
-    txt.appendChild(plexInfoRow([
+    wrap.appendChild(plexInfoRow([
       { text: videoChain, color: '#8b97a8' },
       { text: audioChain, color: '#8b97a8' },
     ]));
@@ -941,7 +964,7 @@ function renderPlexSession(s) {
   const locToken = s.location
     ? { text: s.location.toUpperCase(), color: plexLocationColor(s.location), weight: '700' }
     : null;
-  txt.appendChild(plexInfoRow([
+  wrap.appendChild(plexInfoRow([
     { text: s.product || s.device, color: '#6b7689' },
     { text: s.platform && s.product && !s.product.toLowerCase().includes(s.platform.toLowerCase()) ? s.platform : null, color: '#6b7689' },
     locToken,
@@ -949,35 +972,44 @@ function renderPlexSession(s) {
 
   // Row 4: subtitle (only when active)
   if (s.subtitle) {
-    txt.appendChild(plexInfoRow([
+    wrap.appendChild(plexInfoRow([
       { text: 'SUB', color: '#8b6dff', weight: '700' },
       { text: s.subtitle, color: '#6b7689' },
     ]));
   }
+}
 
-  // Progress – directly from the viewOffset reported by Plex
+function updatePlexCard(card, s, prev) {
+  if (!prev || prev.thumb !== s.thumb) {
+    card._poster.replaceChildren(plexPosterEl(s.thumb));
+  }
+
+  const title = s.type === 'episode' && s.showTitle ? s.showTitle : s.title;
+  if (!prev || card._title.textContent !== title) card._title.textContent = title;
+  if (!prev || prev.user !== s.user) card._user.textContent = s.user;
+
+  const subText = s.type === 'episode' && s.showTitle
+    ? (s.seasonEpisode ? s.seasonEpisode + ' · ' : '') + s.title
+    : null;
+  if (!prev || card._sub.textContent !== (subText || '')) {
+    card._sub.textContent = subText || '';
+    card._sub.style.display = subText ? '' : 'none';
+  }
+
+  if (!prev || plexInfoSignature(prev) !== plexInfoSignature(s)) {
+    rebuildPlexInfoRows(card._infoRows, s);
+  }
+
   const pct = s.duration > 0 ? Math.round(s.viewOffset / s.duration * 100) : 0;
-  const barOuter = document.createElement('div');
-  barOuter.style.cssText = 'height:3px;border-radius:3px;background:rgba(120,150,200,0.12);overflow:hidden';
-  const barFill = document.createElement('div');
-  barFill.style.cssText = `height:100%;width:${pct}%;border-radius:3px;background:${PLEX_COLOR}`;
-  barOuter.appendChild(barFill);
+  const prevPct = prev && prev.duration > 0 ? Math.round(prev.viewOffset / prev.duration * 100) : 0;
+  if (!prev || prevPct !== pct) card._barFill.style.width = pct + '%';
 
-  const stateSpan = s.state === 'playing' ? `<span style="color:${PLEX_COLOR}">▶ playing</span>`
-    : s.state === 'paused' ? `<span style="color:#ffb454">⏸ paused</span>`
-    : `<span style="color:#6b7689">↺ buffering</span>`;
-
-  const timeRow = document.createElement('div');
-  timeRow.style.cssText = "display:flex;justify-content:space-between;font:500 10px 'JetBrains Mono',monospace;color:#6b7689;margin-top:5px";
-  timeRow.innerHTML = `<span>${fmtDuration(s.viewOffset)}</span>${stateSpan}<span>${fmtDuration(s.duration)}</span>`;
-
-  const prog = document.createElement('div');
-  prog.style.cssText = 'margin-top:10px';
-  prog.append(barOuter, timeRow);
-  txt.appendChild(prog);
-
-  card.appendChild(txt);
-  return card;
+  if (!prev || prev.viewOffset !== s.viewOffset || prev.duration !== s.duration || prev.state !== s.state) {
+    const stateSpan = s.state === 'playing' ? `<span style="color:${PLEX_COLOR}">▶ playing</span>`
+      : s.state === 'paused' ? `<span style="color:#ffb454">⏸ paused</span>`
+      : `<span style="color:#6b7689">↺ buffering</span>`;
+    card._timeRow.innerHTML = `<span>${fmtDuration(s.viewOffset)}</span>${stateSpan}<span>${fmtDuration(s.duration)}</span>`;
+  }
 }
 
 function renderPlex(d) {
@@ -989,9 +1021,12 @@ function renderPlex(d) {
 
   const container = $('plexSessions');
   if (!container) return;
-  container.innerHTML = '';
 
   if (!d.sessions || !d.sessions.length) {
+    if (container._emptyShown) return;
+    container._emptyShown = true;
+    container._diffMap = null; // drop diff state so the next session list rebuilds cleanly
+    container.innerHTML = '';
     const empty = document.createElement('div');
     empty.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:28px 0';
     empty.innerHTML = `<span style="font:500 11px 'JetBrains Mono',monospace;color:#3f4a5c">Nobody is streaming right now</span>`;
@@ -999,9 +1034,11 @@ function renderPlex(d) {
     return;
   }
 
-  for (const s of d.sessions) {
-    container.appendChild(renderPlexSession(s));
+  if (container._emptyShown) {
+    container._emptyShown = false;
+    container._diffMap = null; // diffList clears the empty-state markup on re-init
   }
+  diffList(container, d.sessions, (s) => s.key, createPlexCard, updatePlexCard);
 }
 
 async function pollPlex() {
@@ -1070,6 +1107,7 @@ function renderServiceStatus(d) {
   const list = $('serviceList');
   if (list) {
     if (!d.total) {
+      list._diffMap = null; // reset diff state clobbered by the placeholder markup
       list.innerHTML = '';
       const em = document.createElement('div');
       em.style.cssText = "font:500 11px 'JetBrains Mono',monospace;color:#566073;padding:12px 4px;text-align:center";
@@ -1489,11 +1527,11 @@ function renderUnifiAps(devices) {
   if (!wrap) return;
   const aps = devices.filter(d => d.type === 'uap');
   if (!aps.length) {
-    wrap.innerHTML = '<div style="font:500 11px \'JetBrains Mono\',monospace;color:var(--text-3)">No access points found</div>';
+    setHtmlIfChanged(wrap, '<div style="font:500 11px \'JetBrains Mono\',monospace;color:var(--text-3)">No access points found</div>');
     return;
   }
 
-  wrap.innerHTML = aps.map(ap => {
+  const html = aps.map(ap => {
     const onlineDot = ap.online ? 'var(--green)' : 'var(--red)';
     const radiosHtml = (ap.radios || []).map(r =>
       `<div style="display:flex;align-items:center;gap:10px;margin-top:6px">
@@ -1532,6 +1570,10 @@ function renderUnifiAps(devices) {
       ${apClients ? `<div style="margin-top:8px">${apClients}</div>` : ''}
     </div>`;
   }).join('<div style="height:1px;background:var(--border-4);margin:4px 0"></div>');
+
+  // Skip the innerHTML teardown when nothing changed — the 10s poll usually
+  // returns identical data, and a full rebuild costs a layout pass.
+  setHtmlIfChanged(wrap, html);
 }
 
 async function pollUnifiSnapshot() {
@@ -1562,12 +1604,18 @@ async function pollUnifiSnapshot() {
   const url = `/api/unifi/snapshot?cam=${encodeURIComponent(cam.id)}&_t=${Date.now()}`;
   const tmp = new Image();
   tmp.onload = () => {
-    img.src = url;
-    img.style.display = 'block';
-    if (ph) ph.style.display = 'none';
-    setText('unifiSnapshotTs', 'Snapshot: ' + new Date().toLocaleTimeString('en-US', { hour12: false }));
-    if (camSt) { camSt.textContent = '● online'; camSt.style.color = 'var(--green)'; }
-    setText('unifiCamName', cam.name);
+    const swap = () => {
+      img.src = url;
+      img.style.display = 'block';
+      if (ph) ph.style.display = 'none';
+      setText('unifiSnapshotTs', 'Snapshot: ' + new Date().toLocaleTimeString('en-US', { hour12: false }));
+      if (camSt) { camSt.textContent = '● online'; camSt.style.color = 'var(--green)'; }
+      setText('unifiCamName', cam.name);
+    };
+    // Decode the JPEG off the paint path first; otherwise the swap forces a
+    // synchronous full-image decode that drops animation frames every 30s.
+    if (tmp.decode) tmp.decode().then(swap, swap);
+    else swap();
   };
   tmp.onerror = () => {
     if (camSt) { camSt.textContent = '● snapshot error'; camSt.style.color = 'var(--orange)'; }
@@ -1639,6 +1687,7 @@ function renderNcUsers(users) {
   const list = $('ncUserList');
   if (!list) return;
   if (!users || !users.length) {
+    list._diffMap = null; // reset diff state clobbered by the placeholder markup
     list.innerHTML = '';
     const em = document.createElement('div');
     em.style.cssText = "font:500 11px 'JetBrains Mono',monospace;color:#566073;padding:6px 4px";
@@ -2360,7 +2409,10 @@ function toggle(key) {
   state[key] = !state[key];
   applyToggleVisual(key);
   if (key === 'gridOn') { const g = $('gridOverlay'); if (g) g.style.display = state.gridOn ? 'block' : 'none'; }
-  if (key === 'animOn') document.body.classList.toggle('no-anim', !state.animOn);
+  if (key === 'animOn') {
+    document.body.classList.toggle('no-anim', !state.animOn);
+    _graphDirty = true; // draw one static frame when animations get disabled
+  }
   if (key === 'glassOn') document.body.classList.toggle('no-glass', !state.glassOn);
   if (key === 'searchOn') applySearchVisible();
   if (key === 'liveOn') { if (state.liveOn) startLive(); else pauseLive(); }
@@ -2425,6 +2477,7 @@ function setAccent(c) {
 function setUpdateMs(v) {
   state.updateMs = parseInt(v, 10) || 1600;
   setText('updateSec', (state.updateMs / 1000).toFixed(1));
+  _graphDirty = true; // graph window is derived from updateMs → rescale once
   startLive();
   saveUiPrefs();
 }
