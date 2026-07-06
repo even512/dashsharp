@@ -112,6 +112,206 @@ const ICON_DB = [
   { id:'redis',             name:'Redis',             cat:'Database' },
   { id:'influxdb',          name:'InfluxDB',          cat:'Database' },
   { id:'mongodb',           name:'MongoDB',           cat:'Database' },
+
+  /* ---------- Popular brand & website logos ---------- */
+  // Web & Social
+  { id:'github',                name:'GitHub',           cat:'Web & Social' },
+  { id:'reddit',                name:'Reddit',           cat:'Web & Social' },
+  { id:'discord',               name:'Discord',          cat:'Web & Social' },
+  { id:'twitter',               name:'Twitter / X',      cat:'Web & Social', kw:'x' },
+  { id:'mastodon',              name:'Mastodon',         cat:'Web & Social' },
+  { id:'bluesky',               name:'Bluesky',          cat:'Web & Social' },
+  { id:'facebook',              name:'Facebook',         cat:'Web & Social' },
+  { id:'instagram',             name:'Instagram',        cat:'Web & Social' },
+  { id:'linkedin',              name:'LinkedIn',         cat:'Web & Social' },
+  { id:'telegram',              name:'Telegram',         cat:'Web & Social' },
+  { id:'whatsapp',              name:'WhatsApp',         cat:'Web & Social' },
+  { id:'signal',                name:'Signal',           cat:'Web & Social' },
+  { id:'tiktok',                name:'TikTok',           cat:'Web & Social' },
+  { id:'pinterest',             name:'Pinterest',        cat:'Web & Social' },
+  { id:'snapchat',              name:'Snapchat',         cat:'Web & Social' },
+  { id:'tumblr',                name:'Tumblr',           cat:'Web & Social' },
+  { id:'threads',               name:'Threads',          cat:'Web & Social' },
+  { id:'wikipedia',             name:'Wikipedia',        cat:'Web & Social' },
+  { id:'medium-light',          name:'Medium',           cat:'Web & Social', kw:'medium' },
+  { id:'patreon',               name:'Patreon',          cat:'Web & Social' },
+  { id:'ko-fi',                 name:'Ko-fi',            cat:'Web & Social' },
+  { id:'facebook-messenger',    name:'Messenger',        cat:'Web & Social', kw:'facebook messenger' },
+  { id:'viber',                 name:'Viber',            cat:'Web & Social' },
+  // Browsers
+  { id:'firefox',               name:'Firefox',          cat:'Browsers' },
+  { id:'brave',                 name:'Brave',            cat:'Browsers' },
+  { id:'opera',                 name:'Opera',            cat:'Browsers' },
+  { id:'vivaldi',               name:'Vivaldi',          cat:'Browsers' },
+  { id:'duckduckgo',            name:'DuckDuckGo',       cat:'Browsers', kw:'ddg' },
+  // Google
+  { id:'google',                name:'Google',           cat:'Google' },
+  { id:'gmail',                 name:'Gmail',            cat:'Google' },
+  { id:'google-drive',          name:'Google Drive',     cat:'Google' },
+  { id:'google-photos',         name:'Google Photos',    cat:'Google' },
+  { id:'google-calendar',       name:'Google Calendar',  cat:'Google' },
+  { id:'google-maps',           name:'Google Maps',      cat:'Google' },
+  { id:'google-chrome',         name:'Chrome',           cat:'Google', kw:'google chrome' },
+  { id:'youtube',               name:'YouTube',          cat:'Google' },
+  { id:'youtube-music',         name:'YouTube Music',    cat:'Google' },
+  { id:'android',               name:'Android',          cat:'Google' },
+  { id:'google-play',           name:'Google Play',      cat:'Google' },
+  { id:'google-keep',           name:'Google Keep',      cat:'Google' },
+  { id:'google-translate',      name:'Google Translate', cat:'Google' },
+  { id:'google-meet',           name:'Google Meet',      cat:'Google' },
+  { id:'google-cloud-platform', name:'Google Cloud',     cat:'Google', kw:'gcp google cloud' },
+  { id:'firebase',              name:'Firebase',         cat:'Google' },
+  { id:'google-assistant',      name:'Google Assistant', cat:'Google' },
+  // Microsoft
+  { id:'microsoft',             name:'Microsoft',        cat:'Microsoft' },
+  { id:'microsoft-outlook',     name:'Outlook',          cat:'Microsoft', kw:'microsoft outlook' },
+  { id:'microsoft-onedrive',    name:'OneDrive',         cat:'Microsoft', kw:'microsoft onedrive' },
+  { id:'microsoft-teams',       name:'Teams',            cat:'Microsoft', kw:'microsoft teams' },
+  { id:'microsoft-office',      name:'Office 365',       cat:'Microsoft', kw:'microsoft office' },
+  { id:'microsoft-excel',       name:'Excel',            cat:'Microsoft' },
+  { id:'microsoft-word',        name:'Word',             cat:'Microsoft' },
+  { id:'microsoft-powerpoint',  name:'PowerPoint',       cat:'Microsoft' },
+  { id:'azure',                 name:'Azure',            cat:'Microsoft', kw:'microsoft azure' },
+  { id:'microsoft-edge',        name:'Edge',             cat:'Microsoft', kw:'microsoft edge' },
+  { id:'bing',                  name:'Bing',             cat:'Microsoft' },
+  { id:'windows-11',            name:'Windows',          cat:'Microsoft', kw:'microsoft windows' },
+  { id:'xbox',                  name:'Xbox',             cat:'Microsoft' },
+  { id:'microsoft-sql-server',  name:'SQL Server',       cat:'Microsoft' },
+  { id:'microsoft-sharepoint',  name:'SharePoint',       cat:'Microsoft' },
+  { id:'skype',                 name:'Skype',            cat:'Microsoft' },
+  // Apple
+  { id:'apple',                 name:'Apple',            cat:'Apple' },
+  { id:'apple-music',           name:'Apple Music',      cat:'Apple' },
+  { id:'apple-tv-plus',         name:'Apple TV+',        cat:'Apple', kw:'apple tv' },
+  { id:'apple-podcasts',        name:'Apple Podcasts',   cat:'Apple' },
+  { id:'icloud',                name:'iCloud',           cat:'Apple' },
+  { id:'safari',                name:'Safari',           cat:'Apple' },
+  { id:'apple-maps',            name:'Apple Maps',       cat:'Apple' },
+  // Cloud & Dev
+  { id:'aws',                   name:'AWS',              cat:'Cloud & Dev', kw:'amazon web services' },
+  { id:'digital-ocean',         name:'DigitalOcean',     cat:'Cloud & Dev' },
+  { id:'linode',                name:'Linode',           cat:'Cloud & Dev' },
+  { id:'vultr',                 name:'Vultr',            cat:'Cloud & Dev' },
+  { id:'vercel',                name:'Vercel',           cat:'Cloud & Dev' },
+  { id:'netlify',               name:'Netlify',          cat:'Cloud & Dev' },
+  { id:'terraform',             name:'Terraform',        cat:'Cloud & Dev' },
+  { id:'ansible',               name:'Ansible',          cat:'Cloud & Dev' },
+  { id:'kubernetes',            name:'Kubernetes',       cat:'Cloud & Dev', kw:'k8s' },
+  { id:'helm',                  name:'Helm',             cat:'Cloud & Dev' },
+  { id:'argo-cd',               name:'Argo CD',          cat:'Cloud & Dev', kw:'argocd' },
+  { id:'rancher',               name:'Rancher',          cat:'Cloud & Dev' },
+  { id:'nginx',                 name:'NGINX',            cat:'Cloud & Dev' },
+  { id:'apache',                name:'Apache',           cat:'Cloud & Dev' },
+  { id:'nodejs',                name:'Node.js',          cat:'Cloud & Dev', kw:'node' },
+  { id:'python',                name:'Python',           cat:'Cloud & Dev' },
+  { id:'php',                   name:'PHP',              cat:'Cloud & Dev' },
+  { id:'rust',                  name:'Rust',             cat:'Cloud & Dev' },
+  { id:'go',                    name:'Go',               cat:'Cloud & Dev', kw:'golang' },
+  { id:'angular',               name:'Angular',          cat:'Cloud & Dev' },
+  { id:'svelte',                name:'Svelte',           cat:'Cloud & Dev' },
+  { id:'reactjs',               name:'React',            cat:'Cloud & Dev', kw:'react' },
+  { id:'vue-js',                name:'Vue',              cat:'Cloud & Dev', kw:'vuejs' },
+  { id:'nextjs',                name:'Next.js',          cat:'Cloud & Dev', kw:'nextjs' },
+  { id:'laravel',               name:'Laravel',          cat:'Cloud & Dev' },
+  { id:'ruby-on-rails',         name:'Rails',            cat:'Cloud & Dev', kw:'ruby rails' },
+  { id:'bootstrap',             name:'Bootstrap',        cat:'Cloud & Dev' },
+  { id:'npm',                   name:'npm',              cat:'Cloud & Dev' },
+  { id:'git',                   name:'Git',              cat:'Cloud & Dev' },
+  { id:'bitbucket',             name:'Bitbucket',        cat:'Cloud & Dev' },
+  { id:'visual-studio-code',    name:'VS Code',          cat:'Cloud & Dev', kw:'vscode visual studio code' },
+  { id:'sentry',                name:'Sentry',           cat:'Cloud & Dev' },
+  { id:'sonarqube',             name:'SonarQube',        cat:'Cloud & Dev' },
+  { id:'coolify',               name:'Coolify',          cat:'Cloud & Dev' },
+  { id:'dokploy',               name:'Dokploy',          cat:'Cloud & Dev' },
+  { id:'rabbitmq',              name:'RabbitMQ',         cat:'Cloud & Dev' },
+  { id:'elasticsearch',         name:'Elasticsearch',    cat:'Cloud & Dev' },
+  { id:'vault',                 name:'Vault',            cat:'Cloud & Dev', kw:'hashicorp vault' },
+  // AI
+  { id:'openai',                name:'OpenAI',           cat:'AI' },
+  { id:'chatgpt',               name:'ChatGPT',          cat:'AI', kw:'openai gpt' },
+  { id:'claude-ai',             name:'Claude',           cat:'AI', kw:'anthropic claude' },
+  { id:'google-gemini',         name:'Gemini',           cat:'AI', kw:'google bard' },
+  { id:'microsoft-copilot',     name:'Copilot',          cat:'AI', kw:'microsoft copilot' },
+  { id:'github-copilot',        name:'GitHub Copilot',   cat:'AI' },
+  { id:'hugging-face',          name:'Hugging Face',     cat:'AI', kw:'huggingface' },
+  { id:'ollama',                name:'Ollama',           cat:'AI' },
+  { id:'midjourney',            name:'Midjourney',       cat:'AI' },
+  { id:'mistral-ai',            name:'Mistral',          cat:'AI' },
+  { id:'deepseek',              name:'DeepSeek',         cat:'AI' },
+  { id:'grok',                  name:'Grok',             cat:'AI', kw:'xai' },
+  { id:'perplexity-light',      name:'Perplexity',       cat:'AI', kw:'perplexity' },
+  // Gaming
+  { id:'steam',                 name:'Steam',            cat:'Gaming' },
+  { id:'epic-games',            name:'Epic Games',       cat:'Gaming' },
+  { id:'playstation',           name:'PlayStation',      cat:'Gaming' },
+  { id:'nintendo-switch',       name:'Nintendo Switch',  cat:'Gaming' },
+  { id:'twitch',                name:'Twitch',           cat:'Gaming' },
+  { id:'minecraft',             name:'Minecraft',        cat:'Gaming' },
+  { id:'romm',                  name:'RomM',             cat:'Gaming' },
+  { id:'pterodactyl',           name:'Pterodactyl',      cat:'Gaming' },
+  { id:'terraria',              name:'Terraria',         cat:'Gaming' },
+  { id:'kick',                  name:'Kick',             cat:'Gaming' },
+  // Streaming
+  { id:'netflix',               name:'Netflix',          cat:'Streaming' },
+  { id:'spotify',               name:'Spotify',          cat:'Streaming' },
+  { id:'disney-plus',           name:'Disney+',          cat:'Streaming', kw:'disney' },
+  { id:'prime-video',           name:'Prime Video',      cat:'Streaming', kw:'amazon prime' },
+  { id:'max',                   name:'Max',              cat:'Streaming', kw:'hbo' },
+  { id:'soundcloud',            name:'SoundCloud',       cat:'Streaming' },
+  { id:'deezer',                name:'Deezer',           cat:'Streaming' },
+  { id:'tidal',                 name:'Tidal',            cat:'Streaming' },
+  { id:'crunchyroll',           name:'Crunchyroll',      cat:'Streaming' },
+  { id:'bandcamp',              name:'Bandcamp',         cat:'Streaming' },
+  // Shopping & Finance
+  { id:'amazon',                name:'Amazon',           cat:'Shopping & Finance' },
+  { id:'ebay',                  name:'eBay',             cat:'Shopping & Finance' },
+  { id:'aliexpress',            name:'AliExpress',       cat:'Shopping & Finance' },
+  { id:'paypal',                name:'PayPal',           cat:'Shopping & Finance' },
+  { id:'shopify',               name:'Shopify',          cat:'Shopping & Finance' },
+  { id:'woocommerce',           name:'WooCommerce',      cat:'Shopping & Finance' },
+  { id:'bitcoin',               name:'Bitcoin',          cat:'Shopping & Finance', kw:'btc crypto' },
+  { id:'ethereum',              name:'Ethereum',         cat:'Shopping & Finance', kw:'eth crypto' },
+  { id:'firefly-iii',           name:'Firefly III',      cat:'Shopping & Finance' },
+  { id:'actual-budget',         name:'Actual Budget',    cat:'Shopping & Finance' },
+  { id:'ynab',                  name:'YNAB',             cat:'Shopping & Finance' },
+  // Comms & Tools
+  { id:'slack',                 name:'Slack',            cat:'Comms & Tools' },
+  { id:'zoom',                  name:'Zoom',             cat:'Comms & Tools' },
+  { id:'notion',                name:'Notion',           cat:'Comms & Tools' },
+  { id:'obsidian',              name:'Obsidian',         cat:'Comms & Tools' },
+  { id:'todoist',               name:'Todoist',          cat:'Comms & Tools' },
+  { id:'atlassian-trello',      name:'Trello',           cat:'Comms & Tools', kw:'trello' },
+  { id:'jira',                  name:'Jira',             cat:'Comms & Tools' },
+  { id:'confluence',            name:'Confluence',       cat:'Comms & Tools' },
+  { id:'figma',                 name:'Figma',            cat:'Comms & Tools' },
+  { id:'excalidraw',            name:'Excalidraw',       cat:'Comms & Tools' },
+  { id:'miro',                  name:'Miro',             cat:'Comms & Tools' },
+  { id:'dropbox',               name:'Dropbox',          cat:'Comms & Tools' },
+  { id:'airtable',              name:'Airtable',         cat:'Comms & Tools' },
+  { id:'asana',                 name:'Asana',            cat:'Comms & Tools' },
+  { id:'clickup',               name:'ClickUp',          cat:'Comms & Tools' },
+  { id:'zapier',                name:'Zapier',           cat:'Comms & Tools' },
+  { id:'thunderbird',           name:'Thunderbird',      cat:'Comms & Tools' },
+  { id:'proton-mail',           name:'Proton Mail',      cat:'Comms & Tools', kw:'protonmail' },
+  { id:'proton-drive',          name:'Proton Drive',     cat:'Comms & Tools' },
+  { id:'proton-vpn',            name:'Proton VPN',       cat:'Comms & Tools', kw:'protonvpn' },
+  { id:'nordvpn',               name:'NordVPN',          cat:'Comms & Tools' },
+  { id:'mullvad',               name:'Mullvad',          cat:'Comms & Tools' },
+  { id:'rocket-chat',           name:'Rocket.Chat',      cat:'Comms & Tools' },
+  { id:'mattermost',            name:'Mattermost',       cat:'Comms & Tools' },
+  { id:'matrix',                name:'Matrix',           cat:'Comms & Tools' },
+  { id:'element',               name:'Element',          cat:'Comms & Tools' },
+  { id:'1password',             name:'1Password',        cat:'Comms & Tools' },
+  { id:'lastpass',              name:'LastPass',         cat:'Comms & Tools' },
+  { id:'keepassxc',             name:'KeePassXC',        cat:'Comms & Tools', kw:'keepass' },
+  // Hardware & OS
+  { id:'raspberry-pi',          name:'Raspberry Pi',     cat:'Hardware & OS' },
+  { id:'arduino',               name:'Arduino',          cat:'Hardware & OS' },
+  { id:'nvidia',                name:'NVIDIA',           cat:'Hardware & OS' },
+  { id:'amd',                   name:'AMD',              cat:'Hardware & OS' },
+  { id:'linux',                 name:'Linux',            cat:'Hardware & OS' },
+  { id:'fedora',                name:'Fedora',           cat:'Hardware & OS' },
+  { id:'arch-linux',            name:'Arch Linux',       cat:'Hardware & OS', kw:'arch' },
 ];
 
 let _iconPickInput = null;
@@ -168,7 +368,7 @@ function renderIconGrid(term, cat) {
   const q = term.toLowerCase();
   const list = ICON_DB.filter(ic => {
     const inCat  = cat === 'All' || ic.cat === cat;
-    const inTerm = !q || ic.name.toLowerCase().includes(q) || ic.id.includes(q);
+    const inTerm = !q || ic.name.toLowerCase().includes(q) || ic.id.includes(q) || (ic.kw && ic.kw.includes(q));
     return inCat && inTerm;
   });
   grid.innerHTML = '';
@@ -2544,10 +2744,85 @@ function toggleTheme() {
   localStorage.setItem('theme', next);
 }
 
+/* ---------- Widget-Kachel-Deko: dezente animierte Ecken-Akzente ----------
+   Ein kleines, zum jeweiligen Widget passendes Inline-SVG pro Karte
+   (data-widget-id), unten rechts als ruhiger Watermark-Akzent. Aufbau exakt
+   wie die Wetter-Icons: SVG-String + CSS-Klassen + @keyframes. Die Bewegung
+   respektiert damit automatisch die globale "Animationen"-Einstellung
+   (.no-anim). Farbe kommt aus den Theme-Variablen -> Hell/Dunkel passt. */
+function _td(inner) {
+  return `<svg class="td-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+    `stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ` +
+    `xmlns="http://www.w3.org/2000/svg" style="overflow:visible">${inner}</svg>`;
+}
+const WIDGET_DECOR = {
+  // CPU-Chip mit sanft pulsierendem Kern
+  'system-load': { color: 'var(--accent)', svg: () => _td(
+    `<rect x="7" y="7" width="10" height="10" rx="1.5"/>` +
+    `<rect class="td-pulse" x="10" y="10" width="4" height="4" rx="0.6"/>` +
+    `<path d="M9 4v2M12 4v2M15 4v2M9 18v2M12 18v2M15 18v2M4 9h2M4 12h2M4 15h2M18 9h2M18 12h2M18 15h2"/>`) },
+  // Auf/ab fließende Pfeile (Durchsatz)
+  'network-throughput': { color: 'var(--green)', svg: () => _td(
+    `<path class="td-up" d="M8 16V8M5 11l3-3 3 3"/>` +
+    `<path class="td-down" d="M16 8v8M13 13l3 3 3-3"/>`) },
+  // Sich drehende Festplatte
+  'disk-storage': { color: 'var(--accent)', svg: () => _td(
+    `<rect x="3" y="5" width="18" height="14" rx="2"/>` +
+    `<g class="td-spin"><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="8.4" r="0.9" fill="currentColor" stroke="none"/></g>` +
+    `<circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>`) },
+  // Herzschlag-/Pulslinie
+  'service-status': { color: 'var(--green)', svg: () => _td(
+    `<path class="td-pulse" d="M3 12h4l2-5 3 10 2-6 2 3h5"/>`) },
+  // Leicht schwebende Container
+  'docker': { color: 'var(--accent)', svg: () => _td(
+    `<g class="td-float">` +
+    `<rect x="6" y="11" width="3" height="3"/><rect x="9.5" y="11" width="3" height="3"/><rect x="13" y="11" width="3" height="3"/>` +
+    `<rect x="9.5" y="7.5" width="3" height="3"/><rect x="13" y="7.5" width="3" height="3"/>` +
+    `<path d="M4 15h13.5a3.8 3.8 0 0 0 3.3-2"/></g>`) },
+  // Schutzschild mit dezentem Puls
+  'adguard': { color: 'var(--green)', svg: () => _td(
+    `<path class="td-pulse" d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/>` +
+    `<path d="M9 12l2 2 4-4"/>`) },
+  // Plex-Chevron mit sanftem Puls/Glow
+  'plex': { color: 'var(--yellow)', svg: () => _td(
+    `<path class="td-pulse" d="M9 5l7 7-7 7" stroke-width="2.4"/>`) },
+  // Driftende Wolke
+  'nextcloud': { color: 'var(--accent)', svg: () => _td(
+    `<path class="td-drift" d="M7 17a4 4 0 0 1 .3-8A5.5 5.5 0 0 1 17.5 10 3.5 3.5 0 0 1 17 17z"/>`) },
+  // Pulsierende WLAN-Bögen
+  'unifi-network': { color: 'var(--accent)', svg: () => _td(
+    `<path class="td-ping" d="M4 9a12 12 0 0 1 16 0"/>` +
+    `<path d="M7 12a8 8 0 0 1 10 0"/>` +
+    `<circle cx="12" cy="16" r="1.2" fill="currentColor" stroke="none"/>`) },
+  // Access-Point-Signal (Ping)
+  'unifi-aps': { color: 'var(--accent)', svg: () => _td(
+    `<path class="td-ping" d="M5 8a10 10 0 0 1 14 0"/>` +
+    `<path d="M8 11a6 6 0 0 1 8 0"/>` +
+    `<circle cx="12" cy="15" r="1.4" fill="currentColor" stroke="none"/>`) },
+  // Kamera-Linse mit dezentem Blinzeln
+  'unifi-cameras': { color: 'var(--purple)', svg: () => _td(
+    `<rect x="3" y="7" width="12" height="10" rx="2"/>` +
+    `<path d="M15 10l6-2.5v9L15 14z"/>` +
+    `<circle class="td-blink" cx="9" cy="12" r="2"/>`) },
+};
+function injectTileDecor() {
+  document.querySelectorAll('[data-widget-id]').forEach(card => {
+    const def = WIDGET_DECOR[card.getAttribute('data-widget-id')];
+    if (!def || card.querySelector(':scope > .tile-decor')) return;
+    const d = document.createElement('div');
+    d.className = 'tile-decor';
+    d.setAttribute('aria-hidden', 'true');
+    d.style.color = def.color;
+    d.innerHTML = def.svg();
+    card.appendChild(d);
+  });
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   _applyTheme(localStorage.getItem('theme') || 'dark');
   loadUiPrefs();
   await loadDashboardLayout();
+  injectTileDecor();
   tickClock();
   clockTimer = setInterval(tickClock, 1000);
   renderData();
