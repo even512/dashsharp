@@ -2808,13 +2808,16 @@ const WIDGET_DECOR = {
 function injectTileDecor() {
   document.querySelectorAll('[data-widget-id]').forEach(card => {
     const def = WIDGET_DECOR[card.getAttribute('data-widget-id')];
-    if (!def || card.querySelector(':scope > .tile-decor')) return;
-    const d = document.createElement('div');
+    if (!def) return;
+    // Titel-Kopfzeile der Karte (erstes Element mit text-transform:uppercase)
+    const title = card.querySelector('[style*="text-transform:uppercase"]');
+    if (!title || title.querySelector(':scope > .tile-decor')) return;
+    const d = document.createElement('span');
     d.className = 'tile-decor';
     d.setAttribute('aria-hidden', 'true');
     d.style.color = def.color;
     d.innerHTML = def.svg();
-    card.appendChild(d);
+    title.insertBefore(d, title.firstChild);
   });
 }
 
