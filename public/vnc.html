@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>VNC-Konsole</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0a0e16; overflow: hidden;
+    font-family: 'JetBrains Mono', ui-monospace, monospace; color: #c9d4e3; }
+  #bar { position: fixed; top: 0; left: 0; right: 0; height: 34px; z-index: 10;
+    display: flex; align-items: center; gap: 12px; padding: 0 12px;
+    background: rgba(12,18,28,0.92); border-bottom: 1px solid rgba(120,150,200,0.14);
+    font-size: 11px; backdrop-filter: blur(6px); }
+  #bar.hidden { display: none; }
+  #status { display: flex; align-items: center; gap: 7px; }
+  #dot { width: 8px; height: 8px; border-radius: 50%; background: #6b7689; flex-shrink: 0; }
+  #vmname { color: #eef3fa; font-weight: 600; }
+  #spacer { flex: 1; }
+  .b { background: transparent; border: 1px solid rgba(120,150,200,0.24); border-radius: 6px;
+    padding: 4px 10px; color: #9fb0c4; font: 600 10px 'JetBrains Mono', monospace; cursor: pointer; }
+  .b:hover { color: #5b9dff; border-color: rgba(91,157,255,0.5); }
+  #screen { position: absolute; top: 34px; left: 0; right: 0; bottom: 0; background: #000; }
+  #msg { position: fixed; inset: 34px 0 0 0; display: none; align-items: center; justify-content: center;
+    text-align: center; padding: 30px; z-index: 5; }
+  #msg .box { max-width: 520px; }
+  #msg h2 { color: #eef3fa; font-size: 15px; margin: 0 0 10px; }
+  #msg p { color: #8b99ad; font-size: 12px; line-height: 1.7; margin: 4px 0; }
+  #msg code { color: #5b9dff; }
+  #msg a { color: #5b9dff; }
+</style>
+</head>
+<body>
+  <div id="bar">
+    <div id="status"><span id="dot"></span><span id="statusText">Verbinde…</span></div>
+    <span id="vmname"></span>
+    <span id="spacer"></span>
+    <button class="b" id="ctrlAltDel" title="Strg+Alt+Entf senden">C-A-D</button>
+    <button class="b" id="reconnect">Neu verbinden</button>
+    <button class="b" id="fullscreen">Vollbild</button>
+  </div>
+  <div id="screen"></div>
+  <div id="msg"><div class="box"><h2 id="msgTitle"></h2><div id="msgBody"></div></div></div>
+
+<script type="module">
+import { RFB } from './vendor/novnc/novnc.esm.js';
+
+const params = new URLSearchParams(location.search);
+const id = params.get('id') || '';
+const nameFromUrl = params.get('name') || '';
+
+const $ = (i) => document.getElementById(i);
+const dot = $('dot'), statusText = $('statusText'), screen = $('screen');
+$('vmname').textContent = nameFromUrl;
+
+let rfb = null;
+let password = '';
+
+function setStatus(text, color) { statusText.textContent = text; dot.style.background = color || '#6b7689'; }
+function showMsg(title, bodyHtml) {
+  $('msgTitle').textContent = title;
+  $('msgBody').innerHTML = bodyHtml;
+  $('msg').style.display = 'flex';
+}
+function hideMsg() { $('msg').style.display = 'none'; }
+
+async function connect() {
+  hideMsg();
+  setStatus('Hole VNC-Info…', '#ffb454');
+  if (rfb) { try { rfb.disconnect(); } catch (_) {} rfb = null; }
+  screen.innerHTML = '';
+
+  let info;
+  try {
+    const r = await fetch('/api/vm/vnc-info?id=' + encodeURIComponent(id), { cache: 'no-store' });
+    info = await r.json();
+  } catch (e) {
+    setStatus('Fehler', '#f43f5e');
+    return showMsg('Verbindung fehlgeschlagen', 'Die VNC-Info konnte nicht geladen werden.');
+  }
+  if (!info || !info.ok) {
+    setStatus('Nicht verfügbar', '#f43f5e');
+    if (info && info.error === 'not_configured') {
+      return showMsg('SSH nicht konfiguriert',
+        'Für den direkten VNC-Zugriff muss der SSH-Zugang zu Unraid hinterlegt sein.<br>' +
+        'Trage ihn in Dash# unter <code>Einstellungen → Unraid VMs</code> ein.');
+    }
+    return showMsg('Konsole nicht verfügbar',
+      (info && info.message ? info.message : 'Der VNC-Port der VM konnte nicht ermittelt werden.') +
+      '<br>Läuft die VM?');
+  }
+  password = info.password || '';
+
+  const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const url = wsProto + '://' + location.host + '/api/vm/vnc-ws?id=' + encodeURIComponent(id);
+  setStatus('Verbinde…', '#ffb454');
+
+  try {
+    rfb = new RFB(screen, url, { credentials: { password } });
+  } catch (e) {
+    setStatus('Fehler', '#f43f5e');
+    return showMsg('noVNC-Fehler', String(e && e.message || e));
+  }
+  rfb.scaleViewport = true;
+  rfb.clipViewport = false;
+  rfb.focusOnClick = true;
+
+  rfb.addEventListener('connect', () => { setStatus('Verbunden', '#3ddc97'); hideMsg(); screen.focus(); });
+  rfb.addEventListener('disconnect', (e) => {
+    setStatus('Getrennt', '#f43f5e');
+    if (!(e.detail && e.detail.clean)) {
+      showMsg('Verbindung getrennt', 'Die VNC-Verbindung wurde unterbrochen. Läuft die VM noch?');
+    }
+  });
+  rfb.addEventListener('credentialsrequired', () => rfb.sendCredentials({ password }));
+  rfb.addEventListener('securityfailure', (e) => {
+    setStatus('Auth-Fehler', '#f43f5e');
+    showMsg('Authentifizierung fehlgeschlagen',
+      'Das VNC-Passwort der VM wurde nicht akzeptiert.' + (e.detail && e.detail.reason ? '<br>' + e.detail.reason : ''));
+  });
+}
+
+$('reconnect').addEventListener('click', connect);
+$('ctrlAltDel').addEventListener('click', () => { if (rfb) rfb.sendCtrlAltDel(); });
+$('fullscreen').addEventListener('click', () => {
+  const el = document.documentElement;
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (el.requestFullscreen) el.requestFullscreen();
+});
+
+if (!id) {
+  setStatus('Kein VM-Parameter', '#f43f5e');
+  showMsg('Keine VM angegeben', 'Es wurde keine VM-ID übergeben.');
+} else {
+  connect();
+}
+</script>
+</body>
+</html>

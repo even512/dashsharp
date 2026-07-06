@@ -98,7 +98,8 @@ Everything is configured from the web UI under **Settings → Integrations** and
 Manage your Unraid VMs from a dashboard tile: live status, one-click **start / stop / pause / resume /
 reboot / force-stop**, and a **VNC** button that opens Unraid's built-in noVNC console in a new tab.
 
-Uses the official [Unraid GraphQL API](https://docs.unraid.net/API/) (Unraid **7.2+**). Setup:
+Uses the official [Unraid GraphQL API](https://docs.unraid.net/API/) (Unraid **7.2+**) for status and
+control. Setup:
 
 1. Enable the API and create a key on your Unraid box:
    ```bash
@@ -107,9 +108,21 @@ Uses the official [Unraid GraphQL API](https://docs.unraid.net/API/) (Unraid **7
    (or generate one from the Unraid web UI). A read/VM-control scoped key is enough.
 2. In **Settings → Unraid VMs**, enter your Unraid URL (e.g. `http://tower.local`) and the API key.
 
-> The VNC button opens Unraid's own VM manager (`/VMs`), where each VM's noVNC console lives — so the
-> console runs entirely on Unraid, nothing extra to install. Per-VM CPU/RAM graphs are not exposed by
-> the GraphQL API and are therefore not shown.
+#### Direct VNC console (no Unraid login)
+
+By default the VNC button opens Unraid's own VM manager, which sits behind the Unraid web login.
+To jump **straight into the console** — embedded in the dashboard, with no login — add SSH access
+in the same settings tab (host defaults to the Unraid URL, user defaults to `root`; password *or*
+private key). Dash# then reads the VM's VNC port over SSH (`virsh dumpxml`), tunnels the connection,
+and renders it with a bundled [noVNC](https://github.com/novnc/noVNC) — talking directly to the VM's
+QEMU VNC port, bypassing Unraid's login entirely. The console modal also has **open-in-new-tab** and
+**fullscreen** buttons.
+
+> [!WARNING]
+> This gives Dash# SSH access to your Unraid box — only enable it on a trusted LAN. If you serve
+> Dash# over **HTTPS**, browsers block the plain `ws://` VNC connection (mixed content); run Dash#
+> over HTTP on your LAN for the embedded console. Per-VM CPU/RAM graphs are not exposed by the
+> GraphQL API and are therefore not shown.
 
 Any value can also be set as an environment variable (see [`.env.example`](.env.example)); env vars take
 precedence over the UI values.

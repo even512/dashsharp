@@ -864,7 +864,8 @@ function startDocker() {
 
 /* ---------- Unraid VMs (via GraphQL API) ---------- */
 const VM_DOT = { running: '#3ddc97', paused: '#ffb454', stopped: '#f43f5e' };
-let _vmManageUrl = null;   // Unraid VM-Manager-URL fuer den VNC-Button
+let _vmManageUrl = null;   // Unraid VM-Manager-URL (VNC-Fallback ohne SSH)
+let _vmSshEnabled = false; // true -> eingebettete noVNC-Konsole verfuegbar
 let _vmById = {};          // letzte VM-Daten je id (fuer Modal-Refresh)
 
 // Aktions-Metadaten: Label + Button-Stil + ob eine Rueckfrage noetig ist.
@@ -928,7 +929,7 @@ function createVmRow(vm) {
     const a = VM_PRIMARY[row._vm.state];
     if (a) vmAction(row._vm.id, a, btn);
   });
-  const vnc = makeVmBtn('VNC', '', () => openVmVnc(row._vm));
+  const vnc = makeVmBtn('VNC', '', () => openVmConsole(row._vm));
   const details = makeVmBtn('⋯', '', () => openVmDetails(row._vm));
   actions.append(primary, vnc, details);
   row.appendChild(actions);
@@ -954,6 +955,7 @@ function updateVmRow(row, vm, prev) {
 }
 function renderVms(d) {
   _vmManageUrl = d.manageUrl || null;
+  _vmSshEnabled = !!d.sshEnabled;
   _vmById = {};
   (d.vms || []).forEach((v) => { _vmById[v.id] = v; });
   setVmBadge(d._stale ? 'stale' : (d.running != null ? d.running + ' running' : 'unraid'), d._stale ? '#ffb454' : '#3ddc97');
@@ -1018,9 +1020,45 @@ async function vmAction(id, action, btn) {
   }
 }
 
-function openVmVnc(vm) {
-  if (!_vmManageUrl) return;
-  window.open(_vmManageUrl, '_blank', 'noopener');
+// VNC: bei konfiguriertem SSH die eingebettete noVNC-Konsole (an Unraids Login
+// vorbei), sonst Fallback auf Unraids VM-Manager in neuem Tab.
+let _vmConsoleUrl = null;
+function openVmConsole(vm) {
+  if (!_vmSshEnabled) {
+    if (_vmManageUrl) window.open(_vmManageUrl, '_blank', 'noopener');
+    return;
+  }
+  const url = '/vnc.html?id=' + encodeURIComponent(vm.id) + '&name=' + encodeURIComponent(vm.name || '');
+  _vmConsoleUrl = url;
+  const frame = $('vmConsoleFrame');
+  if (frame) frame.src = url;
+  setText('vmConsoleName', vm.name || 'VNC');
+  const m = $('vmConsoleModal');
+  if (m) m.style.display = 'flex';
+}
+function closeVmConsole() {
+  const m = $('vmConsoleModal');
+  if (m) m.style.display = 'none';
+  const frame = $('vmConsoleFrame');
+  if (frame) frame.src = 'about:blank'; // WS-Sitzung beenden
+  _vmConsoleUrl = null;
+}
+function setupVmConsoleModal() {
+  const m = $('vmConsoleModal');
+  if (m) m.addEventListener('click', closeVmConsole);
+  const panel = $('vmConsolePanel');
+  if (panel) panel.addEventListener('click', (e) => e.stopPropagation());
+  const close = $('vmConsoleClose');
+  if (close) close.addEventListener('click', closeVmConsole);
+  const tab = $('vmConsoleTab');
+  if (tab) tab.addEventListener('click', () => { if (_vmConsoleUrl) window.open(_vmConsoleUrl, '_blank', 'noopener'); });
+  const fs = $('vmConsoleFs');
+  if (fs) fs.addEventListener('click', () => {
+    if (panel && panel.requestFullscreen) { const p = panel.requestFullscreen(); if (p && p.catch) p.catch(() => {}); }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && m && m.style.display !== 'none' && !document.fullscreenElement) closeVmConsole();
+  });
 }
 
 /* ---------- VM-Detail-/Steuerungs-Modal ---------- */
@@ -1068,7 +1106,7 @@ function setupVmModal() {
   const close = $('vmModalClose');
   if (close) close.addEventListener('click', closeVmModal);
   const vnc = $('vmModalVnc');
-  if (vnc) vnc.addEventListener('click', () => { if (_vmModalVm) openVmVnc(_vmModalVm); });
+  if (vnc) vnc.addEventListener('click', () => { if (_vmModalVm) openVmConsole(_vmModalVm); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && _vmModalVm) closeVmModal(); });
 }
 
@@ -2612,6 +2650,11 @@ async function loadSecrets() {
     set('secretNextcloudPath', d.NEXTCLOUD_SHARE_PATH);
     set('secretUnraidUrl',    d.UNRAID_URL);
     set('secretUnraidApiKey', d.UNRAID_API_KEY);
+    set('secretUnraidSshHost', d.UNRAID_SSH_HOST);
+    set('secretUnraidSshPort', d.UNRAID_SSH_PORT);
+    set('secretUnraidSshUser', d.UNRAID_SSH_USER);
+    set('secretUnraidSshPass', d.UNRAID_SSH_PASSWORD);
+    set('secretUnraidSshKey',  d.UNRAID_SSH_KEY);
   } catch { /* ignore, fields stay empty */ }
 }
 
@@ -2631,7 +2674,12 @@ async function saveSecrets(card) {
   } else if (card === 'nextcloud') {
     body = { NEXTCLOUD_URL: val('secretNextcloudUrl'), NEXTCLOUD_USER: val('secretNextcloudUser'), NEXTCLOUD_PASS: val('secretNextcloudPass'), NEXTCLOUD_SHARE_PATH: val('secretNextcloudPath') };
   } else if (card === 'unraid') {
-    body = { UNRAID_URL: val('secretUnraidUrl'), UNRAID_API_KEY: val('secretUnraidApiKey') };
+    body = {
+      UNRAID_URL: val('secretUnraidUrl'), UNRAID_API_KEY: val('secretUnraidApiKey'),
+      UNRAID_SSH_HOST: val('secretUnraidSshHost'), UNRAID_SSH_PORT: val('secretUnraidSshPort'),
+      UNRAID_SSH_USER: val('secretUnraidSshUser'), UNRAID_SSH_PASSWORD: val('secretUnraidSshPass'),
+      UNRAID_SSH_KEY: val('secretUnraidSshKey'),
+    };
   }
   try {
     const r = await fetch('/api/secrets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -3054,6 +3102,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupSearch();
   setupSettings();
   setupVmModal();
+  setupVmConsoleModal();
   setupNextcloudUpload();
   loadConfig();
   loadVersionInfo();
