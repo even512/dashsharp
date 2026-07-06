@@ -20,6 +20,8 @@ function readConfig() {
 
 const http  = require('http');
 const https = require('https');
+const { Client: SSHClient } = require('ssh2');
+const { WebSocketServer } = require('ws');
 
 /* ============================================================
    UniFi Cloud API — api.ui.com, X-API-Key, kein lokaler Zugriff nötig
@@ -909,8 +911,8 @@ app.post('/api/quicklinks', (req, res) => {
   }
 });
 
-const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH', 'UNRAID_URL', 'UNRAID_API_KEY'];
-const SECRETS_MASKED = new Set(['ADGUARD_PASS', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'NEXTCLOUD_PASS', 'UNRAID_API_KEY']);
+const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH', 'UNRAID_URL', 'UNRAID_API_KEY', 'UNRAID_SSH_HOST', 'UNRAID_SSH_PORT', 'UNRAID_SSH_USER', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY'];
+const SECRETS_MASKED = new Set(['ADGUARD_PASS', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'NEXTCLOUD_PASS', 'UNRAID_API_KEY', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY']);
 
 app.get('/api/secrets', (req, res) => {
   const out = {};
@@ -1426,7 +1428,8 @@ app.get('/api/vms', async (req, res) => {
 
     const result = {
       ok:        true,
-      manageUrl: `${cfg.base}/VMs`,   // Unraid VM-Manager (eingebautes noVNC pro VM)
+      manageUrl: `${cfg.base}/VMs`,   // Unraid VM-Manager (Fallback, falls kein SSH)
+      sshEnabled: !!unraidSshCfg(),   // true -> direkte noVNC-Konsole ueber /vnc.html
       total:     vms.length,
       running:   vms.filter(v => v.state === 'running').length,
       paused:    vms.filter(v => v.state === 'paused').length,
@@ -1468,10 +1471,187 @@ app.post('/api/vm/action', async (req, res) => {
   }
 });
 
+/* ============================================================
+   Direkter VNC-Zugriff (ohne Unraid-Login)
+   Dash# liest den VNC-Port der VM per SSH (`virsh dumpxml`) von Unraid,
+   tunnelt die RFB-Verbindung durch SSH zum QEMU-VNC-Port und stellt sie
+   dem Browser als WebSocket bereit (Websockify). Die Konsole rendert
+   die gevendorte noVNC-Seite unter /vnc.html – komplett an Unraids
+   Weblogin vorbei.
+   ============================================================ */
+
+function unraidSshCfg() {
+  let host = getSecret('UNRAID_SSH_HOST');
+  if (!host) { try { host = new URL(getSecret('UNRAID_URL')).hostname; } catch (_) { host = ''; } }
+  const user = getSecret('UNRAID_SSH_USER') || 'root';
+  const port = parseInt(getSecret('UNRAID_SSH_PORT') || '22', 10) || 22;
+  const password = getSecret('UNRAID_SSH_PASSWORD') || '';
+  const key = getSecret('UNRAID_SSH_KEY') || '';
+  if (!host || (!password && !key)) return null;
+  return { host, user, port, password, key };
+}
+
+// Shell-sicheres Single-Quoting fuer Remote-Kommandos (verhindert Injection).
+function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+
+function sshConnect(cfg, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const conn = new SSHClient();
+    let settled = false;
+    const done = (fn, arg) => { if (settled) return; settled = true; clearTimeout(t); fn(arg); };
+    const t = setTimeout(() => { done(reject, new Error('ssh_timeout')); try { conn.end(); } catch (_) {} }, timeoutMs);
+    conn.on('ready', () => done(resolve, conn));
+    conn.on('error', (e) => done(reject, e));
+    const auth = { host: cfg.host, port: cfg.port, username: cfg.user, readyTimeout: timeoutMs, keepaliveInterval: 15000 };
+    if (cfg.key) auth.privateKey = cfg.key; else auth.password = cfg.password;
+    try { conn.connect(auth); } catch (e) { done(reject, e); }
+  });
+}
+
+function sshExec(conn, cmd, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    conn.exec(cmd, (err, stream) => {
+      if (err) return reject(err);
+      let out = '', errout = '';
+      const t = setTimeout(() => { try { stream.close(); } catch (_) {} reject(new Error('exec_timeout')); }, timeoutMs);
+      stream.on('data', (d) => { out += d; });
+      stream.stderr.on('data', (d) => { errout += d; });
+      stream.on('close', (code) => {
+        clearTimeout(t);
+        if (code === 0) return resolve(out);
+        reject(new Error('virsh_exit_' + code + (errout ? ': ' + errout.trim().slice(0, 120) : '')));
+      });
+    });
+  });
+}
+
+// <graphics type='vnc' port='59xx' ... passwd='...'> aus dumpxml parsen.
+function parseVncGraphics(xml) {
+  const m = String(xml).match(/<graphics\b[^>]*type=['"]vnc['"][^>]*>/i);
+  if (!m) return null;
+  const tag = m[0];
+  const port   = (tag.match(/\bport=['"](-?\d+)['"]/)   || [])[1];
+  const passwd = (tag.match(/\bpasswd=['"]([^'"]*)['"]/) || [])[1] || '';
+  const p = parseInt(port, 10);
+  if (!p || p < 0) return null; // -1 = kein Port (VM nicht gestartet)
+  return { vncPort: p, password: passwd };
+}
+
+// id (PrefixedID) -> Domain-Referenz fuer virsh (bevorzugt uuid, sonst Name).
+async function resolveVmRef(id) {
+  const pick = (list) => {
+    const vm = (list || []).find((v) => v.id === id);
+    if (!vm) return null;
+    if (vm.uuid && /^[0-9a-fA-F-]{8,}$/.test(vm.uuid)) return vm.uuid;
+    return vm.name;
+  };
+  let ref = pick(cache.unraid.data && cache.unraid.data.vms);
+  if (ref) return ref;
+  const cfg = unraidCfg();
+  if (cfg) {
+    try {
+      const domains = await fetchVmDomains(cfg);
+      ref = pick(domains.map((v) => ({ id: v.id, name: v.name, uuid: v.uuid })));
+    } catch (_) { /* ignore */ }
+  }
+  return ref || null;
+}
+
+// Kleiner Cache, damit vnc-info + vnc-ws nicht zweimal per SSH abfragen.
+const _vncCache = new Map(); // id -> { ts, data }
+async function getVncGraphics(id) {
+  const cfg = unraidSshCfg();
+  if (!cfg) { const e = new Error('not_configured'); e.code = 'not_configured'; throw e; }
+  const hit = _vncCache.get(id);
+  if (hit && Date.now() - hit.ts < 5000) return hit.data;
+
+  const ref = await resolveVmRef(id);
+  if (!ref) throw new Error('unknown_vm');
+
+  const conn = await sshConnect(cfg);
+  try {
+    const xml = await sshExec(conn, `virsh dumpxml --security-info ${shq(ref)}`);
+    const g = parseVncGraphics(xml);
+    if (!g) throw new Error('no_vnc_or_not_running');
+    _vncCache.set(id, { ts: Date.now(), data: g });
+    return g;
+  } finally {
+    try { conn.end(); } catch (_) {}
+  }
+}
+
+app.get('/api/vm/vnc-info', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.query.id || '');
+  if (!id) return res.json({ ok: false, error: 'missing_id' });
+  try {
+    const g = await getVncGraphics(id);
+    // Passwort noetig, damit noVNC die RFB-Challenge beantworten kann (LAN, same-origin).
+    res.json({ ok: true, hasPassword: !!g.password, password: g.password || '' });
+  } catch (e) {
+    if (e.code === 'not_configured') return res.json({ ok: false, error: 'not_configured' });
+    console.error('VNC-Info fehlgeschlagen:', e.message);
+    res.json({ ok: false, error: 'unavailable', message: e.message });
+  }
+});
+
+// Websockify: Browser-WebSocket <-> SSH-Tunnel zum QEMU-VNC-Port (roher RFB).
+const vncWss = new WebSocketServer({ noServer: true });
+async function handleVncWs(ws, id) {
+  const cfg = unraidSshCfg();
+  if (!cfg) { try { ws.close(1011, 'not_configured'); } catch (_) {} return; }
+
+  let conn = null, stream = null, closed = false;
+  const cleanup = () => {
+    closed = true;
+    try { if (ws.readyState === ws.OPEN) ws.close(); } catch (_) {}
+    try { if (stream) stream.destroy(); } catch (_) {}
+    try { if (conn) conn.end(); } catch (_) {}
+  };
+
+  // Message-Listener sofort registrieren und fruehe Bytes puffern, damit
+  // waehrend des SSH-Setups gesendete Daten nicht verloren gehen.
+  const pending = [];
+  ws.on('message', (data) => { if (stream) { try { stream.write(data); } catch (_) {} } else pending.push(data); });
+  ws.on('close', cleanup);
+  ws.on('error', cleanup);
+
+  try {
+    const g = await getVncGraphics(id);
+    conn = await sshConnect(cfg);
+    stream = await new Promise((resolve, reject) => {
+      conn.forwardOut('127.0.0.1', 0, '127.0.0.1', g.vncPort, (err, s) => err ? reject(err) : resolve(s));
+    });
+  } catch (e) {
+    console.error('VNC-Tunnel fehlgeschlagen:', e.message);
+    try { ws.close(1011, String(e.message || 'error').slice(0, 60)); } catch (_) {}
+    if (conn) { try { conn.end(); } catch (_) {} }
+    return;
+  }
+  if (closed) { cleanup(); return; } // ws bereits waehrend Setup geschlossen
+
+  stream.on('data',  (d) => { try { if (ws.readyState === ws.OPEN) ws.send(d); } catch (_) {} });
+  stream.on('close', cleanup);
+  stream.on('error', cleanup);
+  for (const d of pending) { try { stream.write(d); } catch (_) {} }
+  pending.length = 0;
+}
+
 // Healthcheck fuer Docker / Monitoring
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
-app.listen(PORT, () => {
+const server = http.createServer(app);
+server.on('upgrade', (req, socket, head) => {
+  let url;
+  try { url = new URL(req.url, 'http://localhost'); } catch (_) { socket.destroy(); return; }
+  if (url.pathname === '/api/vm/vnc-ws') {
+    const id = url.searchParams.get('id') || '';
+    vncWss.handleUpgrade(req, socket, head, (ws) => handleVncWs(ws, id));
+  } else {
+    socket.destroy();
+  }
+});
+server.listen(PORT, () => {
   console.log(`Homelab Dashboard running on http://localhost:${PORT}`);
   console.log(`Config: ${CONFIG_PATH}`);
 });
