@@ -36,7 +36,8 @@ small, normalized JSON. So there's no CORS, your tokens never reach the browser,
 and no build step.
 
 - 🧩 **Drag-and-drop tiles** — rearrange and hide widgets; the layout is saved server-side
-- ⚡ **Live widgets** — System (via [Glances](https://nicolargo.github.io/glances/)), Docker, AdGuard Home, Plex, UniFi Network & Protect, Nextcloud, weather
+- ⚡ **Live widgets** — System (via [Glances](https://nicolargo.github.io/glances/)), Docker, AdGuard Home, Plex, UniFi Network & Protect, Nextcloud, Unraid VMs, weather
+- 🖥️ **Unraid VM control** — list VMs with live status, start/stop/pause/reboot right from the dashboard, and jump into the built-in VNC console
 - ⚙️ **Configure in the browser** — everything under `/settings`, no config files to hand-edit
 - 🔒 **Private by design** — no telemetry, no tracking; secrets stay in your mounted config volume
 - 🐳 **One container** — `node:20-alpine`, multi-arch (amd64/arm64), healthcheck, ~48 MB
@@ -89,7 +90,26 @@ Everything is configured from the web UI under **Settings → Integrations** and
 | Plex | URL, X-Plex-Token |
 | UniFi | Cloud API key (api.ui.com) |
 | Nextcloud | URL, user, app password |
+| Unraid VMs | Unraid URL + GraphQL API key |
 | Weather | City (Open-Meteo, no key) |
+
+### Unraid VMs
+
+Manage your Unraid VMs from a dashboard tile: live status, one-click **start / stop / pause / resume /
+reboot / force-stop**, and a **VNC** button that opens Unraid's built-in noVNC console in a new tab.
+
+Uses the official [Unraid GraphQL API](https://docs.unraid.net/API/) (Unraid **7.2+**). Setup:
+
+1. Enable the API and create a key on your Unraid box:
+   ```bash
+   unraid-api apikey --create
+   ```
+   (or generate one from the Unraid web UI). A read/VM-control scoped key is enough.
+2. In **Settings → Unraid VMs**, enter your Unraid URL (e.g. `http://tower.local`) and the API key.
+
+> The VNC button opens Unraid's own VM manager (`/VMs`), where each VM's noVNC console lives — so the
+> console runs entirely on Unraid, nothing extra to install. Per-VM CPU/RAM graphs are not exposed by
+> the GraphQL API and are therefore not shown.
 
 Any value can also be set as an environment variable (see [`.env.example`](.env.example)); env vars take
 precedence over the UI values.

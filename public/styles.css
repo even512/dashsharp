@@ -332,6 +332,21 @@ body.layout-edit-mode #layoutEditBar { display: flex; }
 [data-theme="light"] .cfg-btn { border-color: var(--border-2); }
 [data-theme="light"] .cfg-btn:hover { border-color: var(--accent); background: rgba(37,99,235,0.06); }
 
+/* VM-Aktions-Buttons (kompakt, in der VM-Kachel und im VM-Modal) */
+.vm-btn {
+  background: transparent; border: 1px solid rgba(120,150,200,0.22);
+  border-radius: 7px; padding: 5px 9px; color: var(--text-4);
+  font: 600 10px 'JetBrains Mono', monospace; letter-spacing: 0.03em;
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  transition: color 0.12s, border-color 0.12s, background 0.12s, opacity 0.12s;
+}
+.vm-btn:hover { color: var(--accent); border-color: rgba(91,157,255,0.4); background: rgba(91,157,255,0.06); }
+.vm-btn:disabled { opacity: 0.4; cursor: default; }
+.vm-btn.start { color: #3ddc97; border-color: rgba(61,220,151,0.32); }
+.vm-btn.start:hover { color: #3ddc97; background: rgba(61,220,151,0.12); border-color: rgba(61,220,151,0.5); }
+.vm-btn.stop { color: #f43f5e; border-color: rgba(244,63,94,0.3); }
+.vm-btn.stop:hover { color: #f43f5e; background: rgba(244,63,94,0.12); border-color: rgba(244,63,94,0.5); }
+
 /* Quicklink-Tabelle */
 .ql-thead, .ql-row {
   display: grid;

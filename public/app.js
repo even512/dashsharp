@@ -446,6 +446,7 @@ let weatherTimer = null;
 let unifiTimer = null;
 let unifiSnapTimer = null;
 let nextcloudTimer = null;
+let vmTimer = null;
 
 const UNIFI_POLL_MS = 10000;
 const UNIFI_SNAP_MS = 30000;
@@ -859,6 +860,216 @@ function startDocker() {
   clearInterval(dockerTimer);
   pollDocker();
   dockerTimer = setInterval(pollDocker, DOCKER_POLL_MS);
+}
+
+/* ---------- Unraid VMs (via GraphQL API) ---------- */
+const VM_DOT = { running: '#3ddc97', paused: '#ffb454', stopped: '#f43f5e' };
+let _vmManageUrl = null;   // Unraid VM-Manager-URL fuer den VNC-Button
+let _vmById = {};          // letzte VM-Daten je id (fuer Modal-Refresh)
+
+// Aktions-Metadaten: Label + Button-Stil + ob eine Rueckfrage noetig ist.
+const VM_ACTION_META = {
+  start:     { label: '▶ Start',      cls: 'start', confirm: false },
+  stop:      { label: '■ Stop',       cls: 'stop',  confirm: true  },
+  pause:     { label: '⏸ Pause',      cls: '',      confirm: false },
+  resume:    { label: '▶ Resume',     cls: 'start', confirm: false },
+  reboot:    { label: '↻ Reboot',     cls: '',      confirm: true  },
+  forceStop: { label: '⏻ Force-Stop', cls: 'stop',  confirm: true  },
+};
+// Primaere Inline-Aktion je Status (der prominente Button in der Kachel-Zeile).
+const VM_PRIMARY = { stopped: 'start', running: 'stop', paused: 'resume' };
+// Volle Aktionsliste je Status (fuer das Detail-Modal).
+const VM_ACTIONS_BY_STATE = {
+  stopped: ['start'],
+  running: ['stop', 'pause', 'reboot', 'forceStop'],
+  paused:  ['resume', 'stop', 'forceStop'],
+};
+
+function vmStateLabel(vm) {
+  const raw = (vm.rawState || vm.state || '').toString().toLowerCase();
+  return raw ? raw.replace(/_/g, ' ') : vm.state;
+}
+function setVmBadge(text, color) {
+  const el = $('vmBadge');
+  if (!el) return;
+  el.style.color = color;
+  el.innerHTML = `<span style="width:6px;height:6px;border-radius:2px;background:${color}"></span>${text}`;
+}
+function setVmSettingsStatus(text, color) {
+  const el = $('unraidSettingsStatus');
+  if (!el) return;
+  el.textContent = '● ' + text;
+  el.style.color = color;
+}
+
+function makeVmBtn(label, cls, onClick) {
+  const b = document.createElement('button');
+  b.className = 'vm-btn' + (cls ? ' ' + cls : '');
+  b.textContent = label;
+  b.addEventListener('click', (e) => { e.stopPropagation(); onClick(b); });
+  return b;
+}
+
+function createVmRow(vm) {
+  const row = document.createElement('div');
+  row.className = 'vm-row';
+  row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px';
+  row.innerHTML =
+    `<div style="display:flex;align-items:center;gap:9px;min-width:0">` +
+      `<span class="vm-dot" style="width:7px;height:7px;border-radius:50%;flex-shrink:0"></span>` +
+      `<div style="min-width:0">` +
+        `<div class="vm-name" style="color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:500 12px 'JetBrains Mono',monospace"></div>` +
+        `<div class="vm-state" style="font:500 9px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:1px;text-transform:capitalize"></div>` +
+      `</div>` +
+    `</div>`;
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;align-items:center;gap:4px;flex-shrink:0';
+  const primary = makeVmBtn('', '', (btn) => {
+    const a = VM_PRIMARY[row._vm.state];
+    if (a) vmAction(row._vm.id, a, btn);
+  });
+  const vnc = makeVmBtn('VNC', '', () => openVmVnc(row._vm));
+  const details = makeVmBtn('⋯', '', () => openVmDetails(row._vm));
+  actions.append(primary, vnc, details);
+  row.appendChild(actions);
+  row._dot = row.querySelector('.vm-dot');
+  row._name = row.querySelector('.vm-name');
+  row._stateEl = row.querySelector('.vm-state');
+  row._primary = primary;
+  return row;
+}
+function updateVmRow(row, vm, prev) {
+  row._vm = vm;
+  if (!prev || prev.state !== vm.state) row._dot.style.background = VM_DOT[vm.state] || '#6b7689';
+  if (!prev || prev.name !== vm.name) row._name.textContent = vm.name;
+  const label = vmStateLabel(vm);
+  if (!prev || vmStateLabel(prev) !== label) row._stateEl.textContent = label;
+  if (!prev || prev.state !== vm.state) {
+    const a = VM_PRIMARY[vm.state];
+    const meta = a && VM_ACTION_META[a];
+    row._primary.textContent = meta ? meta.label : '–';
+    row._primary.className = 'vm-btn' + (meta && meta.cls ? ' ' + meta.cls : '');
+    row._primary.disabled = !meta;
+  }
+}
+function renderVms(d) {
+  _vmManageUrl = d.manageUrl || null;
+  _vmById = {};
+  (d.vms || []).forEach((v) => { _vmById[v.id] = v; });
+  setVmBadge(d._stale ? 'stale' : (d.running != null ? d.running + ' running' : 'unraid'), d._stale ? '#ffb454' : '#3ddc97');
+  setText('vmCount', d.total != null ? d.total : '–');
+
+  const parts = [`<span style="color:#3ddc97">${d.running || 0} running</span>`];
+  if (d.paused) parts.push(`<span style="color:#ffb454">${d.paused} paused</span>`);
+  if (d.stopped) parts.push(`<span style="color:#6b7689">${d.stopped} stopped</span>`);
+  const sum = $('vmSummary');
+  if (sum) sum.innerHTML = 'VMs · ' + parts.join(' · ');
+
+  const list = $('vmList');
+  if (list) diffList(list, d.vms || [], (v) => v.id, createVmRow, updateVmRow);
+  if (_vmModalVm) refreshVmModal(); // offenes Modal aktualisieren
+}
+async function pollVms() {
+  if (!state.liveOn) return;
+  try {
+    const res = await fetch('/api/vms', { cache: 'no-store' });
+    const d = await res.json();
+    if (!d || !d.ok) {
+      const msg = d && d.error === 'not_configured' ? 'not configured' : 'offline';
+      setVmBadge(msg, '#f43f5e');
+      setVmSettingsStatus(msg, '#f43f5e');
+      return;
+    }
+    renderVms(d);
+    setVmSettingsStatus(`${d.running || 0} running · ${d.total} VMs`, '#3ddc97');
+  } catch (err) {
+    setVmBadge('offline', '#f43f5e');
+    setVmSettingsStatus('offline', '#f43f5e');
+    console.warn('VM poll failed:', err.message);
+  }
+}
+const VM_POLL_MS = 10000;
+function startVms() {
+  clearInterval(vmTimer);
+  pollVms();
+  vmTimer = setInterval(pollVms, VM_POLL_MS);
+}
+
+// Fuehrt eine VM-Aktion aus. `btn` (optional) wird bis zum Refresh deaktiviert.
+async function vmAction(id, action, btn) {
+  const meta = VM_ACTION_META[action];
+  if (!meta) return;
+  const vm = _vmById[id] || {};
+  if (meta.confirm && !confirm(`VM „${vm.name || id}" wirklich ${meta.label.replace(/^[^ ]+ /, '').toLowerCase()}?`)) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/vm/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, action }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) console.warn('VM action failed:', action, d.error || r.status);
+  } catch (err) {
+    console.warn('VM action error:', err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+    pollVms(); // Status sofort neu holen (Server-Cache wurde invalidiert)
+  }
+}
+
+function openVmVnc(vm) {
+  if (!_vmManageUrl) return;
+  window.open(_vmManageUrl, '_blank', 'noopener');
+}
+
+/* ---------- VM-Detail-/Steuerungs-Modal ---------- */
+let _vmModalVm = null;
+function openVmDetails(vm) {
+  _vmModalVm = vm;
+  refreshVmModal();
+  const m = $('vmModal');
+  if (m) m.style.display = 'flex';
+}
+function closeVmModal() {
+  _vmModalVm = null;
+  const m = $('vmModal');
+  if (m) m.style.display = 'none';
+}
+function refreshVmModal() {
+  if (!_vmModalVm) return;
+  const vm = _vmById[_vmModalVm.id] || _vmModalVm; // frischer Status wenn vorhanden
+  _vmModalVm = vm;
+  const dot = $('vmModalDot');
+  if (dot) dot.style.background = VM_DOT[vm.state] || '#6b7689';
+  setText('vmModalName', vm.name || '–');
+  const st = $('vmModalState');
+  if (st) { st.textContent = vmStateLabel(vm); st.style.color = VM_DOT[vm.state] || 'var(--text-3)'; }
+
+  const wrap = $('vmModalActions');
+  if (wrap) {
+    wrap.innerHTML = '';
+    (VM_ACTIONS_BY_STATE[vm.state] || []).forEach((a) => {
+      const meta = VM_ACTION_META[a];
+      wrap.appendChild(makeVmBtn(meta.label, meta.cls, (btn) => vmAction(vm.id, a, btn)));
+    });
+  }
+  const meta = $('vmModalMeta');
+  if (meta) {
+    const row = (k, v) => `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--text-3)">${k}</span><span style="color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%" title="${v}">${v}</span></div>`;
+    meta.innerHTML = row('Status', vmStateLabel(vm)) + row('UUID', vm.uuid || vm.id || '–');
+  }
+}
+function setupVmModal() {
+  const m = $('vmModal');
+  if (m) m.addEventListener('click', closeVmModal);
+  const panel = $('vmModalPanel');
+  if (panel) panel.addEventListener('click', (e) => e.stopPropagation());
+  const close = $('vmModalClose');
+  if (close) close.addEventListener('click', closeVmModal);
+  const vnc = $('vmModalVnc');
+  if (vnc) vnc.addEventListener('click', () => { if (_vmModalVm) openVmVnc(_vmModalVm); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && _vmModalVm) closeVmModal(); });
 }
 
 /* ---------- AdGuard Home ---------- */
@@ -1983,6 +2194,7 @@ function startLive() {
   startWeather();
   startUnifi();
   startNextcloud();
+  startVms();
 }
 // Counterpart to startLive(): actually clears every live timer (not just a
 // flag-check) so a hidden tab or "Live updates" off truly stops polling.
@@ -1996,6 +2208,7 @@ function pauseLive() {
   clearInterval(unifiTimer);     unifiTimer = null;
   clearInterval(unifiSnapTimer); unifiSnapTimer = null;
   clearInterval(nextcloudTimer); nextcloudTimer = null;
+  clearInterval(vmTimer);        vmTimer = null;
 }
 // Pauses polling and the graph rAF loop while the tab is hidden; resumes
 // (with an immediate refresh via startLive()) when it becomes visible again.
@@ -2217,6 +2430,7 @@ const DASHBOARD_WIDGETS = [
   { id: 'service-status',     section: 'dienste',         label: 'Service Status' },
   { id: 'docker',             section: 'dienste',         label: 'Docker' },
   { id: 'adguard',            section: 'dienste',         label: 'AdGuard Home' },
+  { id: 'unraid-vms',         section: 'dienste',         label: 'Unraid VMs' },
   { id: 'plex',               section: 'media',           label: 'Plex' },
   { id: 'nextcloud',          section: 'media',           label: 'Nextcloud' },
   { id: 'unifi-network',      section: 'netzwerk',        label: 'UniFi · Network' },
@@ -2396,6 +2610,8 @@ async function loadSecrets() {
     set('secretNextcloudUser', d.NEXTCLOUD_USER);
     set('secretNextcloudPass', d.NEXTCLOUD_PASS);
     set('secretNextcloudPath', d.NEXTCLOUD_SHARE_PATH);
+    set('secretUnraidUrl',    d.UNRAID_URL);
+    set('secretUnraidApiKey', d.UNRAID_API_KEY);
   } catch { /* ignore, fields stay empty */ }
 }
 
@@ -2414,12 +2630,14 @@ async function saveSecrets(card) {
     body = { UNIFI_API_KEY: val('secretUnifiApiKey'), UNIFI_HOST_ID: val('secretUnifiHostId'), UNIFI_CAMERA_ID: val('secretUnifiCamId') };
   } else if (card === 'nextcloud') {
     body = { NEXTCLOUD_URL: val('secretNextcloudUrl'), NEXTCLOUD_USER: val('secretNextcloudUser'), NEXTCLOUD_PASS: val('secretNextcloudPass'), NEXTCLOUD_SHARE_PATH: val('secretNextcloudPath') };
+  } else if (card === 'unraid') {
+    body = { UNRAID_URL: val('secretUnraidUrl'), UNRAID_API_KEY: val('secretUnraidApiKey') };
   }
   try {
     const r = await fetch('/api/secrets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     await loadSecrets();
-    if (card === 'glances' || card === 'adguard' || card === 'plex' || card === 'unifi' || card === 'nextcloud') startLive();
+    if (card === 'glances' || card === 'adguard' || card === 'plex' || card === 'unifi' || card === 'nextcloud' || card === 'unraid') startLive();
     if (card === 'weather') startWeather();
   } catch (err) {
     console.error('Failed to save secrets:', err.message);
@@ -2449,6 +2667,7 @@ const SETTINGS_TREE = [
       { id: 'nextcloud',  label: 'Nextcloud',          badge: 'NC', color: '#0082c9', statusEl: 'nextcloudSettingsStatus' },
       { id: 'weather',    label: 'Weather',            badge: 'WT', color: '#ffb454', statusEl: 'weatherSettingsStatus' },
       { id: 'unifi',      label: 'UniFi / Protect',    badge: 'UF', color: '#5b9dff', statusEl: 'unifiSettingsStatus' },
+      { id: 'unraid',     label: 'Unraid VMs',         badge: 'VM', color: '#ff7a30', statusEl: 'unraidSettingsStatus' },
       { id: 'monitoring', label: 'Service Monitoring', icon: '⏱' },
     ],
   },
@@ -2834,6 +3053,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupVisibilityHandling();
   setupSearch();
   setupSettings();
+  setupVmModal();
   setupNextcloudUpload();
   loadConfig();
   loadVersionInfo();

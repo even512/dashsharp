@@ -234,6 +234,19 @@
         <div style="font:600 9px/1 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase;padding-top:14px;margin-top:2px;border-top:1px solid rgba(120,150,200,0.08)">Top blocked</div>
         <div id="adguardTopList" style="display:flex;flex-direction:column;gap:6px;max-height:150px;overflow-y:auto;padding-right:4px;margin-right:-4px;margin-top:8px"></div>
       </div>
+
+      <div data-widget-id="unraid-vms" style="grid-column:span 4;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden">
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('unraid-vms')">✕</button></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase">Unraid VMs</div>
+          <div id="vmBadge" style="display:flex;align-items:center;gap:6px;font:500 11px 'JetBrains Mono',monospace;color:#5b9dff"><span style="width:6px;height:6px;border-radius:2px;background:#5b9dff"></span>–</div>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:16px">
+          <span id="vmCount" style="font:600 44px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</span>
+          <span id="vmSummary" style="font:500 12px 'JetBrains Mono',monospace;color:var(--text-3)">VMs</span>
+        </div>
+        <div id="vmList" style="display:flex;flex-direction:column;gap:8px;max-height:230px;overflow-y:auto;padding-right:6px;margin-right:-6px"></div>
+      </div>
     </div>
 
     <div style="font:600 12px/1 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5b9dff;text-transform:uppercase;display:flex;align-items:center;gap:11px;margin:30px 2px 14px"><span style="opacity:.45">//</span> Media &amp; Cloud <span style="flex:1;height:1px;background:linear-gradient(90deg,rgba(91,157,255,0.25),transparent)"></span></div>
@@ -631,6 +644,31 @@
             </div>
           </div>
 
+          <!-- TAB: UNRAID VMs -->
+          <div class="tab" data-tab="unraid">
+            <div class="cfg-section">Unraid VMs</div>
+            <div style="padding:4px 0 12px">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span style="font:700 11px 'JetBrains Mono',monospace;color:#ff7a30;min-width:22px;background:rgba(255,122,48,0.12);border-radius:4px;padding:2px 5px;text-align:center">VM</span>
+                  <div>
+                    <div class="cfg-key">Unraid GraphQL API</div>
+                    <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">VM-Status &amp; Steuerung · ab Unraid 7.2 · API-Key</div>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span id="unraidSettingsStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-status)">● –</span>
+                  <button onclick="saveSecrets('unraid')" class="cfg-btn">↵ Save</button>
+                </div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;padding-left:32px">
+                <input id="secretUnraidUrl" placeholder="http://tower.local (Unraid-URL)" class="cfg-input" />
+                <input id="secretUnraidApiKey" type="password" placeholder="API-Key" class="cfg-input" />
+              </div>
+              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:8px;padding-left:32px">API im Unraid aktivieren, dann Key erzeugen: <span style="color:var(--text-2)">unraid-api apikey --create</span> (oder via Unraid-UI). VNC öffnet Unraids VM-Manager im neuen Tab.</div>
+            </div>
+          </div>
+
           <!-- TAB: SERVICE MONITORING -->
           <div class="tab" data-tab="monitoring">
             <div class="cfg-section">Service Monitoring</div>
@@ -694,6 +732,31 @@
   <span style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">Edit layout · drag tiles by the handle to move or hide them</span>
   <button class="cfg-btn" onclick="saveDashboardLayout()">↵ Save</button>
   <button class="cfg-btn" onclick="toggleLayoutEditMode()">Done</button>
+</div>
+
+<!-- VM-Detail- & Steuerungs-Modal -->
+<div id="vmModal" style="display:none;position:fixed;inset:0;z-index:210;background:var(--overlay);align-items:center;justify-content:center;padding:24px;font-family:'JetBrains Mono',monospace">
+  <div id="vmModalPanel" style="width:min(460px,100%);background:var(--bg-modal);border:1px solid var(--border-modal);border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.8);overflow:hidden">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--border-3)">
+      <div style="display:flex;align-items:center;gap:11px;min-width:0">
+        <span id="vmModalDot" style="width:9px;height:9px;border-radius:50%;flex-shrink:0;background:#6b7689"></span>
+        <div style="min-width:0">
+          <div id="vmModalName" style="font:600 15px 'Space Grotesk',sans-serif;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">–</div>
+          <div id="vmModalState" style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:2px">–</div>
+        </div>
+      </div>
+      <button id="vmModalClose" class="cfg-btn" style="padding:4px 11px">✕</button>
+    </div>
+    <div style="padding:18px 20px">
+      <div style="font:600 9px 'JetBrains Mono',monospace;letter-spacing:0.12em;color:var(--text-3);text-transform:uppercase;margin-bottom:9px">Steuerung</div>
+      <div id="vmModalActions" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px"></div>
+      <div style="font:600 9px 'JetBrains Mono',monospace;letter-spacing:0.12em;color:var(--text-3);text-transform:uppercase;margin-bottom:9px">Konsole &amp; Info</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px">
+        <button id="vmModalVnc" class="vm-btn">🖥 VNC-Konsole</button>
+      </div>
+      <div id="vmModalMeta" style="display:flex;flex-direction:column;gap:6px;font:500 11px 'JetBrains Mono',monospace"></div>
+    </div>
+  </div>
 </div>
 
 <script src="vendor/sortable.min.js" defer></script>

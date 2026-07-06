@@ -317,6 +317,7 @@ const cache = {
   weather:  { ts: 0, data: null },
   unifi:    { ts: 0, data: null },
   nextcloud:{ ts: 0, data: null },
+  unraid:   { ts: 0, data: null },
 };
 const GLANCES_TTL   = 500;    // ms – Glances-Metriken hoechstens 2x/s abrufen; muss unter dem
                               // kleinsten Client-Poll-Intervall (400 ms Slider-Minimum) liegen,
@@ -908,8 +909,8 @@ app.post('/api/quicklinks', (req, res) => {
   }
 });
 
-const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH'];
-const SECRETS_MASKED = new Set(['ADGUARD_PASS', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'NEXTCLOUD_PASS']);
+const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH', 'UNRAID_URL', 'UNRAID_API_KEY'];
+const SECRETS_MASKED = new Set(['ADGUARD_PASS', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'NEXTCLOUD_PASS', 'UNRAID_API_KEY']);
 
 app.get('/api/secrets', (req, res) => {
   const out = {};
@@ -1301,6 +1302,169 @@ app.post('/api/nextcloud/upload', express.raw({ type: () => true, limit: '64mb' 
   } catch (err) {
     console.error('Nextcloud-Upload fehlgeschlagen:', err.message);
     return res.status(502).json({ ok: false, error: 'upload_failed', message: err.message });
+  }
+});
+
+/* ============================================================
+   Unraid VM-Integration
+   Offizielle Unraid-GraphQL-API (ab Unraid 7.2), Auth per API-Key
+   (Header: x-api-key). Liefert die VM-Liste inkl. Status und steuert
+   VMs (start/stop/pause/resume/reboot/forceStop/reset). Self-signed
+   Zertifikate werden akzeptiert, da Unraid haeufig ein solches nutzt.
+   ============================================================ */
+
+function unraidCfg() {
+  const base   = (getSecret('UNRAID_URL') || '').replace(/\/+$/, '');
+  const apiKey =  getSecret('UNRAID_API_KEY') || '';
+  if (!base || !apiKey) return null;
+  return { base, apiKey };
+}
+
+// Ein GraphQL-Request gegen ${base}/graphql. http/https je nach URL,
+// self-signed erlaubt. Wirft bei GraphQL-Errors, liefert sonst `data`.
+function unraidGraphQL(cfg, query, variables, timeoutMs = 6000) {
+  return new Promise((resolve, reject) => {
+    let parsed;
+    try { parsed = new URL(cfg.base + '/graphql'); } catch (e) { return reject(e); }
+    const lib = parsed.protocol === 'https:' ? https : http;
+    const payload = JSON.stringify({ query, variables: variables || {} });
+    let settled = false;
+    const req = lib.request(
+      {
+        hostname: parsed.hostname,
+        port:     parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+        path:     parsed.pathname + parsed.search,
+        method:   'POST',
+        rejectUnauthorized: false,
+        headers: {
+          'Content-Type':   'application/json',
+          Accept:           'application/json',
+          'x-api-key':      cfg.apiKey,
+          'Content-Length': Buffer.byteLength(payload),
+        },
+      },
+      (res) => {
+        let raw = '';
+        res.on('data', c => raw += c);
+        res.on('end', () => {
+          if (settled) return; settled = true;
+          clearTimeout(timer);
+          if (res.statusCode >= 400) return reject(new Error(`HTTP ${res.statusCode}`));
+          let json;
+          try { json = JSON.parse(raw); } catch (e) { return reject(e); }
+          if (json.errors && json.errors.length) {
+            return reject(new Error(json.errors[0].message || 'graphql_error'));
+          }
+          resolve(json.data || {});
+        });
+      }
+    );
+    const timer = setTimeout(() => {
+      if (settled) return; settled = true;
+      req.destroy();
+      reject(new Error('timeout'));
+    }, timeoutMs);
+    req.on('error', e => { if (settled) return; settled = true; clearTimeout(timer); reject(e); });
+    req.write(payload);
+    req.end();
+  });
+}
+
+// Unraid VmState-Enum -> grobe Kategorie fuer die UI.
+function vmState(state) {
+  const s = String(state || '').toUpperCase();
+  if (s === 'RUNNING' || s === 'IDLE') return 'running';
+  if (s === 'PAUSED'  || s === 'PMSUSPENDED') return 'paused';
+  return 'stopped';
+}
+
+// VM-Liste holen. Aktuelle Unraid-API kennt `domains`, aeltere nur `domain`.
+async function fetchVmDomains(cfg) {
+  const fields = 'id name state uuid';
+  try {
+    const d = await unraidGraphQL(cfg, `query { vms { domains { ${fields} } } }`);
+    return (d.vms && d.vms.domains) || [];
+  } catch (e) {
+    const d = await unraidGraphQL(cfg, `query { vms { domain { ${fields} } } }`);
+    return (d.vms && d.vms.domain) || [];
+  }
+}
+
+const VM_TTL = 5000; // ms – VM-Status hoechstens alle 5 s abrufen
+// Erlaubte Aktionen -> Name des GraphQL-Mutation-Felds (Allowlist).
+const VM_ACTIONS = {
+  start:     'start',
+  stop:      'stop',
+  pause:     'pause',
+  resume:    'resume',
+  reboot:    'reboot',
+  forceStop: 'forceStop',
+  reset:     'reset',
+};
+
+app.get('/api/vms', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const cfg = unraidCfg();
+  if (!cfg) return res.json({ ok: false, error: 'not_configured' });
+
+  if (cache.unraid.data && Date.now() - cache.unraid.ts < VM_TTL) {
+    return res.json(cache.unraid.data);
+  }
+
+  try {
+    const domains = await fetchVmDomains(cfg);
+    const vms = domains.map((v) => ({
+      id:       v.id,
+      name:     v.name || '?',
+      state:    vmState(v.state),
+      rawState: v.state || null,
+      uuid:     v.uuid || v.id || null,
+    }));
+    // Anzeige-Reihenfolge: laufend -> pausiert -> gestoppt, dann alphabetisch.
+    const order = { running: 0, paused: 1, stopped: 2 };
+    vms.sort((a, b) => (order[a.state] - order[b.state]) || a.name.localeCompare(b.name));
+
+    const result = {
+      ok:        true,
+      manageUrl: `${cfg.base}/VMs`,   // Unraid VM-Manager (eingebautes noVNC pro VM)
+      total:     vms.length,
+      running:   vms.filter(v => v.state === 'running').length,
+      paused:    vms.filter(v => v.state === 'paused').length,
+      stopped:   vms.filter(v => v.state === 'stopped').length,
+      vms,
+    };
+    cache.unraid = { ts: Date.now(), data: result };
+    res.json(result);
+  } catch (err) {
+    console.error('Unraid-VM-Abruf fehlgeschlagen:', err.message);
+    if (cache.unraid.data) return res.json({ ...cache.unraid.data, _stale: true });
+    res.json({ ok: false, error: 'fetch_failed', message: err.message });
+  }
+});
+
+app.post('/api/vm/action', async (req, res) => {
+  const cfg = unraidCfg();
+  if (!cfg) return res.status(400).json({ ok: false, error: 'not_configured' });
+
+  const id     = String((req.body && req.body.id)     || '').trim();
+  const action = String((req.body && req.body.action) || '').trim();
+  if (!id) return res.status(400).json({ ok: false, error: 'missing_id' });
+  const mutation = VM_ACTIONS[action];
+  if (!mutation) return res.status(400).json({ ok: false, error: 'bad_action' });
+
+  try {
+    const data = await unraidGraphQL(
+      cfg,
+      `mutation($id: PrefixedID!) { vm { ${mutation}(id: $id) } }`,
+      { id },
+      12000
+    );
+    const ok = !!(data.vm && data.vm[mutation]);
+    cache.unraid.ts = 0; // Cache invalidieren -> naechster Poll zeigt neuen Status
+    res.json({ ok });
+  } catch (err) {
+    console.error(`Unraid-VM-Aktion '${action}' fehlgeschlagen:`, err.message);
+    res.status(502).json({ ok: false, error: 'action_failed', message: err.message });
   }
 });
 
