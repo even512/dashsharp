@@ -122,18 +122,16 @@ select { -webkit-appearance: none; appearance: none; }
 @keyframes wiTwinkle { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
 @keyframes wiFog     { 0%,100% { transform: translateX(-1.6px); } 50% { transform: translateX(1.6px); } }
 
-/* ── Widget-Kachel-Deko: dezente animierte Ecken-Akzente ──── */
-/* Karte als Positionsanker + eigener Stacking-Kontext, damit der Akzent
-   hinter dem Inhalt (aber über dem Karten-Hintergrund) liegt und nie Text
-   überdeckt. Deckt auch die 2 Karten ab, die noch nicht position:relative sind. */
-[data-widget-id] { position: relative; isolation: isolate; }
+/* ── Widget-Kachel-Deko: kleines animiertes Icon vor dem Titel ──── */
+/* Sitzt inline direkt links vor dem Kachelnamen in der Kopfzeile,
+   klein und gut sichtbar (verdeckt nichts). */
+[data-widget-id] { position: relative; }
 .tile-decor {
-  position: absolute; right: 12px; bottom: 12px;
-  width: 62px; height: 62px; z-index: -1;
-  opacity: 0.14; pointer-events: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; margin-right: 6px;
+  vertical-align: middle; flex-shrink: 0; opacity: 0.9;
 }
 .tile-decor .td-svg { width: 100%; height: 100%; display: block; }
-[data-theme="light"] .tile-decor { opacity: 0.11; }
 
 .td-spin  { transform-box: fill-box; transform-origin: center; animation: wiSpin 15s linear infinite; }
 .td-pulse { transform-box: fill-box; transform-origin: center; animation: tdPulse 3.4s ease-in-out infinite; }
