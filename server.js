@@ -104,6 +104,7 @@ const SECRETS_PATH       = path.join(__dirname, 'config', 'secrets.json');
 const QUICKLINKS_PATH    = path.join(__dirname, 'config', 'quicklinks.json');
 const DISKS_CFG_PATH     = path.join(__dirname, 'config', 'disks.json');
 const LAYOUT_CFG_PATH    = path.join(__dirname, 'config', 'dashboard-layout.json');
+const DASHBOARD_CFG_PATH = path.join(__dirname, 'config', 'dashboard.json');
 const VM_CFG_PATH        = path.join(__dirname, 'config', 'vms.json');
 
 function readDiskCfg() {
@@ -143,6 +144,70 @@ function readLayoutCfg() {
     const d = JSON.parse(fs.readFileSync(LAYOUT_CFG_PATH, 'utf8'));
     return Array.isArray(d) ? d : [];
   } catch { return []; }
+}
+
+// Neues Dashboard-Modell: { version, pages:[{id,name,icon}],
+// tiles:[{id,type,page,x,y,w,h,hidden,text?,config?}] }. Gibt null zurueck,
+// wenn keine Datei existiert (Frontend faellt dann auf das alte
+// dashboard-layout.json bzw. auf Defaults zurueck und migriert clientseitig).
+function readDashboardCfg() {
+  try {
+    const d = JSON.parse(fs.readFileSync(DASHBOARD_CFG_PATH, 'utf8'));
+    return (d && typeof d === 'object' && !Array.isArray(d)) ? d : null;
+  } catch { return null; }
+}
+
+// Serverseitige Validierung/Begrenzung des Dashboard-Modells. Clampt Geometrie
+// aufs 12-Spalten-Raster, erzwingt mind. eine Seite, deckelt Mengen und laesst
+// unbekannte Felder weg. `config` bleibt fuer den spaeteren Inhalts-Editor
+// erhalten (jetzt ungenutzt), aber groessenbegrenzt.
+function sanitizeDashboard(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const clampInt = (v, min, max, dflt) => {
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) return dflt;
+    return Math.min(max, Math.max(min, n));
+  };
+  const pages = [];
+  const seenPage = new Set();
+  for (const p of (Array.isArray(body.pages) ? body.pages : [])) {
+    if (!p || typeof p !== 'object') continue;
+    const id = String(p.id || '').trim().slice(0, 40);
+    if (!id || seenPage.has(id)) continue;
+    seenPage.add(id);
+    pages.push({
+      id,
+      name: (String(p.name || '').trim().slice(0, 60)) || 'Page',
+      icon: String(p.icon || '').trim().slice(0, 40),
+    });
+    if (pages.length >= 20) break;
+  }
+  if (!pages.length) pages.push({ id: 'home', name: 'Dashboard', icon: 'grid' });
+  const pageIds = new Set(pages.map((p) => p.id));
+  const tiles = [];
+  for (const t of (Array.isArray(body.tiles) ? body.tiles : [])) {
+    if (!t || typeof t !== 'object') continue;
+    const id = String(t.id || '').trim().slice(0, 80);
+    if (!id) continue;
+    let page = String(t.page || '').trim().slice(0, 40);
+    if (!pageIds.has(page)) page = pages[0].id;
+    const type = t.type === 'heading' ? 'heading' : 'widget';
+    const entry = {
+      id, type, page,
+      x: clampInt(t.x, 0, 11, 0),
+      y: clampInt(t.y, 0, 1000, 0),
+      w: clampInt(t.w, 1, 12, 4),
+      h: clampInt(t.h, 1, 40, 2),
+      hidden: !!t.hidden,
+    };
+    if (type === 'heading') entry.text = String(t.text || '').trim().slice(0, 80);
+    if (t.config && typeof t.config === 'object' && !Array.isArray(t.config)) {
+      try { if (JSON.stringify(t.config).length <= 4000) entry.config = t.config; } catch { /* skip */ }
+    }
+    tiles.push(entry);
+    if (tiles.length >= 300) break;
+  }
+  return { version: 2, pages, tiles };
 }
 
 let _secrets = {};
@@ -892,6 +957,28 @@ app.post('/api/dashboard/layout', (req, res) => {
     res.json({ ok: true, count: clean.length });
   } catch (err) {
     console.error('Dashboard-Layout konnte nicht gespeichert werden:', err.message);
+    res.status(500).json({ ok: false, error: 'write_failed' });
+  }
+});
+
+// Neues Dashboard-Modell (Seiten, freie Raster-Geometrie, Ueberschriften).
+// GET liefert das gespeicherte Objekt oder null (dann migriert/initialisiert
+// das Frontend). Das alte /api/dashboard/layout bleibt fuer die einmalige
+// Migration lesbar.
+app.get('/api/dashboard', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(readDashboardCfg());
+});
+
+app.post('/api/dashboard', (req, res) => {
+  const clean = sanitizeDashboard(req.body);
+  if (!clean) return res.status(400).json({ ok: false, error: 'expected object' });
+  try {
+    fs.mkdirSync(path.dirname(DASHBOARD_CFG_PATH), { recursive: true });
+    fs.writeFileSync(DASHBOARD_CFG_PATH, JSON.stringify(clean, null, 2), 'utf8');
+    res.json({ ok: true, pages: clean.pages.length, tiles: clean.tiles.length });
+  } catch (err) {
+    console.error('Dashboard konnte nicht gespeichert werden:', err.message);
     res.status(500).json({ ok: false, error: 'write_failed' });
   }
 });
