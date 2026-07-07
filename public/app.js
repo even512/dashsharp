@@ -831,7 +831,9 @@ function renderDocker(d) {
 
   const list = $('dockerList');
   if (!list) return;
-  diffList(list, d.containers || [], (c) => c.name, createDockerRow, updateDockerRow);
+  let containers = d.containers || [];
+  if (_cfgVal('docker', 'hideStopped')) containers = containers.filter((c) => c.state !== 'stopped');
+  diffList(list, _cfgLimit('docker', 'maxRows', containers), (c) => c.name, createDockerRow, updateDockerRow);
 }
 async function pollDocker() {
   if (!state.liveOn) return;
@@ -932,7 +934,7 @@ function createVmRow(vm) {
   const rdp = makeVmBtn('RDP', '', () => openVmRdp(row._vm));
   rdp.style.display = 'none'; // nur fuer Windows-VMs
   const vnc = makeVmBtn('VNC', '', () => openVmConsole(row._vm));
-  const details = makeVmBtn('⋯', '', () => openVmDetails(row._vm));
+  const details = makeVmBtn('⋯', 'vm-more', () => openVmDetails(row._vm)); // bleibt bei „Aktions-Buttons aus" sichtbar
   actions.append(primary, rdp, vnc, details);
   row.appendChild(actions);
   row._dot = row.querySelector('.vm-dot');
@@ -972,7 +974,7 @@ function renderVms(d) {
   if (sum) sum.innerHTML = 'VMs · ' + parts.join(' · ');
 
   const list = $('vmList');
-  if (list) diffList(list, d.vms || [], (v) => v.id, createVmRow, updateVmRow);
+  if (list) diffList(list, _cfgLimit('unraid-vms', 'maxRows', d.vms || []), (v) => v.id, createVmRow, updateVmRow);
   if (_vmModalVm) refreshVmModal(); // offenes Modal aktualisieren
 }
 async function pollVms() {
@@ -1261,7 +1263,7 @@ function renderAdGuard(d) {
       list._diffMap = null; // reset diff state clobbered by the placeholder markup
       list.innerHTML = `<div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">–</div>`;
     } else {
-      diffList(list, top, (item) => item.domain, createAdguardDomainRow, updateAdguardDomainRow);
+      diffList(list, _cfgLimit('adguard', 'topN', top), (item) => item.domain, createAdguardDomainRow, updateAdguardDomainRow);
     }
   }
 }
@@ -1406,6 +1408,7 @@ function createPlexCard(s) {
   card.style.cssText = 'display:flex;gap:14px;align-items:flex-start';
 
   const poster = document.createElement('div');
+  poster.className = 'plex-poster'; // per Kachel-Config ausblendbar (cfg-hide-posters)
   poster.style.cssText = 'flex-shrink:0;display:flex';
   card.appendChild(poster);
 
@@ -1418,7 +1421,7 @@ function createPlexCard(s) {
   titleRow.style.cssText = 'display:flex;align-items:baseline;justify-content:space-between;gap:8px';
 
   const titleEl = document.createElement('div');
-  titleEl.style.cssText = "font:600 14px/1.25 'Space Grotesk',sans-serif;color:#eef3fa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0";
+  titleEl.style.cssText = "font:600 14px/1.25 'Space Grotesk',sans-serif;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0";
   titleRow.appendChild(titleEl);
 
   const userChip = document.createElement('span');
@@ -1585,7 +1588,7 @@ function renderPlex(d) {
     container._emptyShown = false;
     container._diffMap = null; // diffList clears the empty-state markup on re-init
   }
-  diffList(container, d.sessions, (s) => s.key, createPlexCard, updatePlexCard);
+  diffList(container, _cfgLimit('plex', 'maxSessions', d.sessions), (s) => s.key, createPlexCard, updatePlexCard);
 }
 
 async function pollPlex() {
@@ -1661,7 +1664,7 @@ function renderServiceStatus(d) {
       em.textContent = 'No services configured';
       list.appendChild(em);
     } else {
-      diffList(list, d.services, (s) => s.name, createServiceRow, updateServiceRow);
+      diffList(list, _cfgLimit('service-status', 'maxRows', d.services), (s) => s.name, createServiceRow, updateServiceRow);
     }
   }
 
@@ -2072,7 +2075,7 @@ function renderUnifi(d) {
 function renderUnifiAps(devices) {
   const wrap = $('unifiAps');
   if (!wrap) return;
-  const aps = devices.filter(d => d.type === 'uap');
+  const aps = _cfgLimit('unifi-aps', 'maxAps', devices.filter(d => d.type === 'uap'));
   if (!aps.length) {
     setHtmlIfChanged(wrap, '<div style="font:500 11px \'JetBrains Mono\',monospace;color:var(--text-3)">No access points found</div>');
     return;
@@ -2568,19 +2571,74 @@ async function saveQlItems() {
    aktiven Seite verschoben — kein renderX() muss angefasst werden.
    ============================================================================ */
 const DASHBOARD_WIDGETS = [
-  { id: 'system-load',        section: 'system',          label: 'System Load',           defaultSize: { w: 5,  h: 6 } },
-  { id: 'network-throughput', section: 'system',          label: 'Network Throughput',    defaultSize: { w: 7,  h: 3 } },
-  { id: 'disk-storage',       section: 'system',          label: 'Storage · Unraid Array', defaultSize: { w: 7, h: 4 } },
-  { id: 'service-status',     section: 'dienste',         label: 'Service Status',        defaultSize: { w: 4,  h: 5 } },
-  { id: 'docker',             section: 'dienste',         label: 'Docker',                defaultSize: { w: 4,  h: 5 } },
-  { id: 'adguard',            section: 'dienste',         label: 'AdGuard Home',          defaultSize: { w: 4,  h: 5 } },
-  { id: 'unraid-vms',         section: 'dienste',         label: 'Unraid VMs',            defaultSize: { w: 4,  h: 5 } },
-  { id: 'plex',               section: 'media',           label: 'Plex',                  defaultSize: { w: 7,  h: 5 } },
-  { id: 'nextcloud',          section: 'media',           label: 'Nextcloud',             defaultSize: { w: 5,  h: 5 } },
-  { id: 'unifi-network',      section: 'netzwerk',        label: 'UniFi · Network',       defaultSize: { w: 12, h: 3 } },
-  { id: 'unifi-aps',          section: 'netzwerk-detail', label: 'WiFi · Access Points',  defaultSize: { w: 7,  h: 4 } },
-  { id: 'unifi-cameras',      section: 'netzwerk-detail', label: 'UniFi Protect',         defaultSize: { w: 5,  h: 5 } },
+  { id: 'system-load',        section: 'system',          label: 'System Load',           defaultSize: { w: 5,  h: 6 }, minSize: { w: 3, h: 4 } },
+  { id: 'network-throughput', section: 'system',          label: 'Network Throughput',    defaultSize: { w: 7,  h: 3 }, minSize: { w: 4, h: 3 } },
+  { id: 'disk-storage',       section: 'system',          label: 'Storage · Unraid Array', defaultSize: { w: 7, h: 4 }, minSize: { w: 4, h: 3 } },
+  { id: 'service-status',     section: 'dienste',         label: 'Service Status',        defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
+  { id: 'docker',             section: 'dienste',         label: 'Docker',                defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
+  { id: 'adguard',            section: 'dienste',         label: 'AdGuard Home',          defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 4 } },
+  { id: 'unraid-vms',         section: 'dienste',         label: 'Unraid VMs',            defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
+  { id: 'plex',               section: 'media',           label: 'Plex',                  defaultSize: { w: 7,  h: 5 }, minSize: { w: 4, h: 3 } },
+  { id: 'nextcloud',          section: 'media',           label: 'Nextcloud',             defaultSize: { w: 5,  h: 5 }, minSize: { w: 3, h: 4 } },
+  { id: 'unifi-network',      section: 'netzwerk',        label: 'UniFi · Network',       defaultSize: { w: 12, h: 3 }, minSize: { w: 4, h: 3 } },
+  { id: 'unifi-aps',          section: 'netzwerk-detail', label: 'WiFi · Access Points',  defaultSize: { w: 7,  h: 4 }, minSize: { w: 4, h: 3 } },
+  { id: 'unifi-cameras',      section: 'netzwerk-detail', label: 'UniFi Protect',         defaultSize: { w: 5,  h: 5 }, minSize: { w: 3, h: 4 } },
 ];
+
+/* Anpassbare Optionen je Widget (Kachel-Einstellungen, gespeichert in
+   tile.config). „title" gibt es implizit für jede Kachel.
+   type 'toggle' → blendet [data-cfg="key"]-Blöcke der Shell aus/ein
+                   (bzw. setzt via `cls` eine Shell-Klasse für JS-Inhalte,
+                   via `filter` nur einen Render-Filter).
+   type 'count'  → Zahl, 0 = unbegrenzt (Zeilenlimit im Renderer). */
+const WIDGET_OPTIONS = {
+  'system-load': [
+    { key: 'rings', label: 'CPU/RAM-Ringe',                 type: 'toggle', default: true },
+    { key: 'stats', label: 'Kennzahlen (Temp/Threads/RAM)', type: 'toggle', default: true },
+    { key: 'chart', label: 'Verlaufs-Chart',                type: 'toggle', default: true },
+  ],
+  'network-throughput': [
+    { key: 'chart', label: 'Verlaufs-Chart', type: 'toggle', default: true },
+  ],
+  'service-status': [
+    { key: 'maxRows', label: 'Max. Einträge', type: 'count', default: 0 },
+  ],
+  'docker': [
+    { key: 'summary',     label: 'Zusammenfassung (Anzahl)', type: 'toggle', default: true },
+    { key: 'hideStopped', label: 'Gestoppte ausblenden',     type: 'toggle', default: false, filter: true },
+    { key: 'maxRows',     label: 'Max. Container',           type: 'count',  default: 0 },
+  ],
+  'adguard': [
+    { key: 'toplist', label: 'Top-Blocked-Liste', type: 'toggle', default: true },
+    { key: 'topN',    label: 'Top-Einträge',      type: 'count',  default: 0 },
+  ],
+  'unraid-vms': [
+    { key: 'summary', label: 'Zusammenfassung (Anzahl)', type: 'toggle', default: true },
+    { key: 'actions', label: 'Aktions-Buttons',          type: 'toggle', default: true, cls: 'cfg-hide-actions' },
+    { key: 'maxRows', label: 'Max. VMs',                 type: 'count',  default: 0 },
+  ],
+  'plex': [
+    { key: 'posters',     label: 'Poster',        type: 'toggle', default: true, cls: 'cfg-hide-posters' },
+    { key: 'maxSessions', label: 'Max. Sessions', type: 'count',  default: 0 },
+  ],
+  'nextcloud': [
+    { key: 'users',   label: 'Nutzerliste',       type: 'toggle', default: true },
+    { key: 'upload',  label: 'ToLeech-Upload',    type: 'toggle', default: true },
+    { key: 'version', label: 'Versions-Fußzeile', type: 'toggle', default: true },
+  ],
+  'unifi-network': [
+    { key: 'wan',        label: 'Spalte WAN',        type: 'toggle', default: true },
+    { key: 'clients',    label: 'Spalte Clients',    type: 'toggle', default: true },
+    { key: 'connection', label: 'Spalte Verbindung', type: 'toggle', default: true },
+    { key: 'devices',    label: 'Spalte Geräte',     type: 'toggle', default: true },
+  ],
+  'unifi-aps': [
+    { key: 'maxAps', label: 'Max. Access Points', type: 'count', default: 0 },
+  ],
+  'unifi-cameras': [
+    { key: 'timestamp', label: 'Zeitstempel', type: 'toggle', default: true },
+  ],
+};
 const WIDGET_BY_ID = new Map(DASHBOARD_WIDGETS.map((w) => [w.id, w]));
 const GRID_COLUMNS = 12;
 const GRID_CELL_HEIGHT = 66;
@@ -2735,6 +2793,77 @@ function _bottomY(pageId, exceptId) {
     .reduce((m, t) => Math.max(m, (t.y || 0) + (t.h || 1)), 0);
 }
 
+/* ---------- Per-tile config (Kachel-Einstellungen) ---------- */
+// Liefert den konfigurierten Wert einer Kachel-Option, sonst den Schema-Default.
+function _cfgVal(widgetId, key) {
+  const t = _tileById(widgetId);
+  const v = t && t.config ? t.config[key] : undefined;
+  if (v !== undefined && v !== null) return v;
+  if (key === 'title') return '';
+  const opt = (WIDGET_OPTIONS[widgetId] || []).find((o) => o.key === key);
+  return opt ? opt.default : undefined;
+}
+// Zeilenlimit-Helfer für die Renderer: 0/ungültig = unbegrenzt.
+function _cfgLimit(widgetId, key, items) {
+  const n = Math.floor(+_cfgVal(widgetId, key)) || 0;
+  return n > 0 ? items.slice(0, n) : items;
+}
+
+// Wendet die Kachel-Config auf die Shell an: Titel-Override + Ein-/Ausblenden
+// der [data-cfg]-Blöcke (bzw. Shell-Klassen für JS-generierte Inhalte).
+// Der ursprüngliche display-Wert wird beim ersten Ausblenden gemerkt, damit
+// inline display:block/flex/grid korrekt wiederhergestellt wird.
+function applyTileConfig(widgetId) {
+  const shell = _shellFor(widgetId);
+  const wd = WIDGET_BY_ID.get(widgetId);
+  if (!shell || !wd) return;
+  const titleEl = shell.querySelector('[data-tile-title]');
+  if (titleEl) {
+    const custom = String(_cfgVal(widgetId, 'title') || '').trim();
+    titleEl.textContent = custom || wd.label;
+  }
+  for (const opt of (WIDGET_OPTIONS[widgetId] || [])) {
+    if (opt.type !== 'toggle' || opt.filter) continue;
+    const on = !!_cfgVal(widgetId, opt.key);
+    if (opt.cls) { shell.classList.toggle(opt.cls, !on); continue; }
+    shell.querySelectorAll(`[data-cfg="${opt.key}"]`).forEach((el) => {
+      if (el.dataset.cfgDisplay === undefined) el.dataset.cfgDisplay = el.style.display || '';
+      el.style.display = on ? el.dataset.cfgDisplay : 'none';
+    });
+  }
+}
+function applyAllTileConfigs() { DASHBOARD_WIDGETS.forEach((w) => applyTileConfig(w.id)); }
+
+// Nach einer Config-Änderung die Live-Daten der Kachel einmal neu rendern
+// (nur nötig für Optionen, die im Renderer greifen: Limits/Filter).
+const WIDGET_REFRESH = {
+  'service-status': () => pollServiceStatus(),
+  'docker':         () => pollDocker(),
+  'adguard':        () => pollAdGuard(),
+  'unraid-vms':     () => pollVms(),
+  'plex':           () => pollPlex(),
+  'unifi-aps':      () => pollUnifi(),
+};
+
+// Setzt eine Option, wendet sie sofort an und speichert (außerhalb des
+// Design-Modus) verzögert; im Design-Modus greift die Snapshot-Logik und
+// gespeichert wird erst über „✓ Fertig".
+let _cfgSaveTimer = null;
+function _setTileCfg(widgetId, key, value) {
+  const t = _tileById(widgetId);
+  if (!t) return;
+  if (!t.config || typeof t.config !== 'object') t.config = {};
+  const dflt = key === 'title' ? '' : ((WIDGET_OPTIONS[widgetId] || []).find((o) => o.key === key) || {}).default;
+  if (value === dflt) delete t.config[key];
+  else t.config[key] = value;
+  applyTileConfig(widgetId);
+  try { WIDGET_REFRESH[widgetId]?.(); } catch { /* ignore */ }
+  if (!_designOn) {
+    clearTimeout(_cfgSaveTimer);
+    _cfgSaveTimer = setTimeout(() => saveDashboard({ silent: true }), 600);
+  }
+}
+
 /* ---------- DOM builders ---------- */
 function _makeHeadingEl(t) {
   const el = document.createElement('div');
@@ -2761,6 +2890,8 @@ function _makeGridItem(t) {
   item.setAttribute('gs-x', t.x); item.setAttribute('gs-y', t.y);
   item.setAttribute('gs-w', t.w); item.setAttribute('gs-h', t.h);
   if (t.type === 'heading') { item.setAttribute('gs-no-resize', 'true'); }
+  const min = t.type === 'widget' && WIDGET_BY_ID.get(t.id)?.minSize;
+  if (min) { item.setAttribute('gs-min-w', min.w); item.setAttribute('gs-min-h', min.h); }
   const content = document.createElement('div');
   content.className = 'grid-stack-item-content';
   content.appendChild(_makeTileControls(t));
@@ -2799,6 +2930,9 @@ function buildGridForPage(pageId) {
 function _syncGridToModel(pageId) {
   const grid = _grids.get(pageId);
   if (!grid) return;
+  // Im responsiven 1-Spalten-Modus (schmales Fenster) nie zurückschreiben —
+  // sonst überschreibt die Mobil-Geometrie das gespeicherte 12-Spalten-Layout.
+  if (typeof grid.getColumn === 'function' && grid.getColumn() !== GRID_COLUMNS) return;
   grid.save(false).forEach((n) => {
     const t = _tileById(n.id, pageId);
     if (t) { t.x = n.x; t.y = n.y; t.w = n.w; t.h = n.h; }
@@ -2867,7 +3001,7 @@ function showPage(pageId) {
   renderPageTabs();
 }
 
-async function saveDashboard() {
+async function saveDashboard(opts) {
   _builtPages.forEach((pid) => _syncGridToModel(pid));
   try {
     const r = await fetch('/api/dashboard', {
@@ -2876,7 +3010,7 @@ async function saveDashboard() {
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     _designSnapshot = _clone(_dashboard);
-    toast('Layout gespeichert');
+    if (!opts || !opts.silent) toast('Layout gespeichert');
   } catch (err) {
     console.error('Failed to save dashboard:', err.message);
     toast('Speichern fehlgeschlagen', { type: 'error' });
@@ -2973,6 +3107,9 @@ function enterDesignMode() {
   _grids.forEach((g) => g.setStatic(false));
   renderPageTabs();
   renderDesignBar();
+  if (window.innerWidth < 760) {
+    toast('Schmales Fenster: Kacheln sind auf 1 Spalte umgebrochen — Positionsänderungen werden erst in voller Breite gespeichert.', { ttl: 6000 });
+  }
 }
 
 function exitDesignMode(save) {
@@ -2984,6 +3121,7 @@ function exitDesignMode(save) {
     _designSnapshot = null;
     if (!_dashboard.pages.some((p) => p.id === _activePage)) _activePage = _dashboard.pages[0].id;
     _rebuildAllGrids();
+    applyAllTileConfigs(); // verworfene Kachel-Einstellungen zurücknehmen
     renderPageTabs();
   }
   _designOn = false;
@@ -3002,9 +3140,11 @@ function addWidgetToActivePage(widgetId) {
   const t = _tileById(widgetId);
   if (!wd || !t) return;
   _syncGridToModel(_activePage);
+  const restore = t._wasPlaced && t.page === _activePage; // „Rückgängig" nach Ausblenden
   t.hidden = false; t.page = _activePage;
-  t.w = wd.defaultSize.w; t.h = wd.defaultSize.h;
-  t.x = 0; t.y = _bottomY(_activePage, widgetId);
+  if (!(+t.w > 0) || !(+t.h > 0)) { t.w = wd.defaultSize.w; t.h = wd.defaultSize.h; }
+  if (!restore) { t.x = 0; t.y = _bottomY(_activePage, widgetId); }
+  delete t._wasPlaced;
   _rebuildActivePage();
   renderCatalogIfOpen();
   toast(`${wd.label} hinzugefügt`);
@@ -3016,6 +3156,7 @@ function hideTile(tileId) {
   if (t.type === 'heading') { removeHeading(tileId); return; }
   _syncGridToModel(_activePage);
   t.hidden = true;
+  t._wasPlaced = true; // Geometrie merken → „Rückgängig" stellt die Position wieder her
   _rebuildActivePage();
   renderCatalogIfOpen();
   toast(`${WIDGET_BY_ID.get(tileId)?.label || 'Kachel'} ausgeblendet`, {
@@ -3065,6 +3206,8 @@ function startHeadingEdit(textEl, id) {
 }
 
 function setTileSize(tileId, w, h) {
+  const min = WIDGET_BY_ID.get(tileId)?.minSize;
+  if (min) { w = Math.max(w, min.w); h = Math.max(h, min.h); }
   const grid = _grids.get(_activePage);
   const item = grid && grid.el.querySelector(`.grid-stack-item[gs-id="${tileId}"]`);
   if (grid && item) grid.update(item, { w, h });
@@ -3073,7 +3216,12 @@ function setTileSize(tileId, w, h) {
 }
 
 /* ---------- Tile options menu (popup) ---------- */
-function closeTileMenu() { const m = $('tileMenu'); if (m) m.remove(); }
+function closeTileMenu() {
+  const m = $('tileMenu');
+  if (m) m.remove();
+  document.querySelectorAll('.gs-tile-controls.menu-open').forEach((c) => c.classList.remove('menu-open'));
+  document.removeEventListener('mousedown', _tileMenuOutside);
+}
 
 function openTileMenu(t, anchor) {
   closeTileMenu();
@@ -3094,25 +3242,31 @@ function openTileMenu(t, anchor) {
     });
     add('Entfernen', 'danger', () => removeHeading(t.id));
   } else {
-    const lbl = document.createElement('div');
-    lbl.className = 'tile-menu-label';
-    lbl.textContent = 'Größe';
-    menu.appendChild(lbl);
-    const sizeRow = document.createElement('div');
-    sizeRow.className = 'tile-menu-sizes';
-    SIZE_PRESETS.forEach((p) => {
-      const b = document.createElement('button');
-      b.className = 'tile-menu-size';
-      b.textContent = p.label;
-      b.title = `${p.w}×${p.h}`;
-      b.addEventListener('click', (e) => { e.stopPropagation(); setTileSize(t.id, p.w, p.h); });
-      sizeRow.appendChild(b);
-    });
-    menu.appendChild(sizeRow);
-    const sep = document.createElement('div'); sep.className = 'tile-menu-sep'; menu.appendChild(sep);
-    add('Ausblenden', 'danger', () => hideTile(t.id));
+    add('⚙ Einstellungen', '', () => openTileSettings(t));
+    // Größe & Ausblenden sind Layout-Aktionen → nur im Design-Modus.
+    if (_designOn) {
+      const sep0 = document.createElement('div'); sep0.className = 'tile-menu-sep'; menu.appendChild(sep0);
+      const lbl = document.createElement('div');
+      lbl.className = 'tile-menu-label';
+      lbl.textContent = 'Größe';
+      menu.appendChild(lbl);
+      const sizeRow = document.createElement('div');
+      sizeRow.className = 'tile-menu-sizes';
+      SIZE_PRESETS.forEach((p) => {
+        const b = document.createElement('button');
+        b.className = 'tile-menu-size' + (t.w === p.w && t.h === p.h ? ' active' : '');
+        b.textContent = p.label;
+        b.title = `${p.w}×${p.h}`;
+        b.addEventListener('click', (e) => { e.stopPropagation(); closeTileMenu(); setTileSize(t.id, p.w, p.h); });
+        sizeRow.appendChild(b);
+      });
+      menu.appendChild(sizeRow);
+      const sep = document.createElement('div'); sep.className = 'tile-menu-sep'; menu.appendChild(sep);
+      add('Ausblenden', 'danger', () => hideTile(t.id));
+    }
   }
   document.body.appendChild(menu);
+  anchor.closest('.gs-tile-controls')?.classList.add('menu-open');
   const r = anchor.getBoundingClientRect();
   menu.style.top = (r.bottom + 6) + 'px';
   menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
@@ -3120,7 +3274,119 @@ function openTileMenu(t, anchor) {
 }
 function _tileMenuOutside(e) {
   const m = $('tileMenu');
-  if (m && !m.contains(e.target)) { closeTileMenu(); document.removeEventListener('mousedown', _tileMenuOutside); }
+  if (m && !m.contains(e.target)) closeTileMenu();
+}
+
+/* ---------- Tile settings modal (Kachel-Einstellungen) ---------- */
+function _buildTileSettingsModal() {
+  const modal = document.createElement('div');
+  modal.id = 'tileSettings';
+  modal.className = 'picker-modal';
+  modal.innerHTML =
+    '<div class="picker-panel" style="width:min(480px,100%)">' +
+      '<div class="picker-head"><span class="picker-title" id="tileSettingsTitle">Kachel-Einstellungen</span>' +
+      '<button class="picker-close" title="Schließen">✕</button></div>' +
+      '<div class="tile-settings-body" id="tileSettingsBody"></div>' +
+    '</div>';
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeTileSettings(); });
+  modal.querySelector('.picker-close').addEventListener('click', closeTileSettings);
+  document.body.appendChild(modal);
+  return modal;
+}
+
+function openTileSettings(t) {
+  const wd = WIDGET_BY_ID.get(t.id);
+  if (!wd) return;
+  let modal = $('tileSettings');
+  if (!modal) modal = _buildTileSettingsModal();
+  _renderTileSettings(t.id);
+  modal.style.display = 'flex';
+  requestAnimationFrame(() => modal.classList.add('open'));
+}
+function closeTileSettings() {
+  const modal = $('tileSettings');
+  if (!modal) return;
+  modal.classList.remove('open');
+  setTimeout(() => { modal.style.display = 'none'; }, 180);
+}
+
+function _renderTileSettings(widgetId) {
+  const wd = WIDGET_BY_ID.get(widgetId);
+  const body = $('tileSettingsBody');
+  if (!wd || !body) return;
+  setText('tileSettingsTitle', wd.label + ' · Einstellungen');
+  body.innerHTML = '';
+  const row = (labelText, control, hint) => {
+    const r = document.createElement('div');
+    r.className = 'tile-settings-row';
+    const left = document.createElement('div');
+    const key = document.createElement('div');
+    key.className = 'tile-settings-key';
+    key.textContent = labelText;
+    left.appendChild(key);
+    if (hint) {
+      const h = document.createElement('div');
+      h.className = 'tile-settings-hint';
+      h.textContent = hint;
+      left.appendChild(h);
+    }
+    r.append(left, control);
+    body.appendChild(r);
+  };
+
+  // Titel-Override (implizit für jede Kachel)
+  const titleInput = document.createElement('input');
+  titleInput.className = 'cfg-input';
+  titleInput.placeholder = wd.label;
+  titleInput.value = String(_cfgVal(widgetId, 'title') || '');
+  titleInput.addEventListener('input', () => _setTileCfg(widgetId, 'title', titleInput.value.trim().slice(0, 60)));
+  row('Titel', titleInput, 'Leer lassen für den Standardnamen');
+
+  for (const opt of (WIDGET_OPTIONS[widgetId] || [])) {
+    if (opt.type === 'toggle') {
+      const sw = document.createElement('div');
+      sw.className = 'switch' + (_cfgVal(widgetId, opt.key) ? ' on' : '');
+      sw.appendChild(document.createElement('span'));
+      sw.addEventListener('click', () => {
+        const on = !sw.classList.contains('on');
+        sw.classList.toggle('on', on);
+        _setTileCfg(widgetId, opt.key, on);
+      });
+      row(opt.label, sw);
+    } else if (opt.type === 'count') {
+      const inp = document.createElement('input');
+      inp.className = 'cfg-input ts-count';
+      inp.type = 'number';
+      inp.min = '0';
+      inp.placeholder = '0';
+      const cur = Math.floor(+_cfgVal(widgetId, opt.key)) || 0;
+      inp.value = cur > 0 ? String(cur) : '';
+      inp.addEventListener('input', () => {
+        const n = Math.max(0, Math.floor(+inp.value) || 0);
+        _setTileCfg(widgetId, opt.key, n);
+      });
+      row(opt.label, inp, '0 oder leer = alle anzeigen');
+    }
+  }
+
+  // Fußzeile: alles zurücksetzen
+  const reset = document.createElement('button');
+  reset.className = 'cfg-btn cfg-btn-del';
+  reset.textContent = 'Zurücksetzen';
+  reset.style.marginTop = '12px';
+  reset.style.alignSelf = 'flex-end';
+  reset.addEventListener('click', () => {
+    const t = _tileById(widgetId);
+    if (t) t.config = {};
+    applyTileConfig(widgetId);
+    try { WIDGET_REFRESH[widgetId]?.(); } catch { /* ignore */ }
+    if (!_designOn) {
+      clearTimeout(_cfgSaveTimer);
+      _cfgSaveTimer = setTimeout(() => saveDashboard({ silent: true }), 600);
+    }
+    _renderTileSettings(widgetId);
+  });
+  body.appendChild(reset);
 }
 
 /* ---------- Widget catalog / picker ---------- */
@@ -3206,6 +3472,7 @@ function renderDesignBar() {
     btn('+ Kachel', 'design-primary', openWidgetPicker, 'Kachel aus dem Katalog hinzufügen'),
     btn('+ Überschrift', '', addHeading, 'Abschnitts-Überschrift hinzufügen'),
     btn('+ Seite', '', addPage, 'Neue Seite anlegen'),
+    btn('Seite löschen', 'cfg-btn-del', () => deletePage(_activePage), 'Aktive Seite mit allen Kacheln löschen'),
   ]));
   bar.appendChild(group([
     btn('Zurücksetzen', 'cfg-btn-del', resetDashboardLayout, 'Layout auf Standard zurücksetzen'),
@@ -3262,6 +3529,7 @@ function resetDashboardLayout() {
   _dashboard = reconcileDashboard(buildDefaultDashboard());
   _activePage = _dashboard.pages[0].id;
   _rebuildAllGrids();
+  applyAllTileConfigs();
   renderPageTabs();
   toast('Layout zurückgesetzt');
 }
@@ -3745,6 +4013,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadUiPrefs();
   await loadDashboard();
   injectTileDecor();
+  applyAllTileConfigs();
   tickClock();
   clockTimer = setInterval(tickClock, 1000);
   renderData();

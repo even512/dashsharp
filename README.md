@@ -36,6 +36,7 @@ small, normalized JSON. So there's no CORS, your tokens never reach the browser,
 and no build step.
 
 - 🧩 **Design mode** — freely place & resize tiles on a grid, add/hide them from a catalog, rename section headings, and spread widgets across multiple pages; the layout is saved server-side
+- 🎛️ **Per-tile settings** — hover a tile, open ⋯ → Einstellungen: rename the tile, toggle its building blocks (rings, charts, summaries, posters, columns …) and cap list lengths; stored with the dashboard layout
 - ⚡ **Live widgets** — System (via [Glances](https://nicolargo.github.io/glances/)), Docker, AdGuard Home, Plex, UniFi Network & Protect, Nextcloud, Unraid VMs, weather
 - 🖥️ **Unraid VM control** — list VMs with live status, start/stop/pause/reboot right from the dashboard, and jump into the built-in VNC console
 - ⚙️ **Configure in the browser** — everything under `/settings`, no config files to hand-edit
