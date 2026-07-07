@@ -104,12 +104,33 @@ const SECRETS_PATH       = path.join(__dirname, 'config', 'secrets.json');
 const QUICKLINKS_PATH    = path.join(__dirname, 'config', 'quicklinks.json');
 const DISKS_CFG_PATH     = path.join(__dirname, 'config', 'disks.json');
 const LAYOUT_CFG_PATH    = path.join(__dirname, 'config', 'dashboard-layout.json');
+const VM_CFG_PATH        = path.join(__dirname, 'config', 'vms.json');
 
 function readDiskCfg() {
   try {
     const d = JSON.parse(fs.readFileSync(DISKS_CFG_PATH, 'utf8'));
     return { labels: (d && d.labels && typeof d.labels === 'object') ? d.labels : {} };
   } catch { return { labels: {} }; }
+}
+
+// Per-VM-Einstellungen (Windows-Flag, erkanntes OS, RDP-Host/-User).
+// { [vmId]: { win?: bool (manuelle Uebersteuerung), osAuto?: str, rdpHost?, rdpUser? } }
+function readVmCfg() {
+  try {
+    const d = JSON.parse(fs.readFileSync(VM_CFG_PATH, 'utf8'));
+    return (d && typeof d === 'object') ? d : {};
+  } catch { return {}; }
+}
+function writeVmCfg(obj) {
+  fs.mkdirSync(path.dirname(VM_CFG_PATH), { recursive: true });
+  fs.writeFileSync(VM_CFG_PATH, JSON.stringify(obj, null, 2), 'utf8');
+}
+// Effektives Windows-Flag: manuelle Uebersteuerung schlaegt Auto-Erkennung.
+function vmIsWindows(entry) {
+  if (!entry) return null;
+  if (typeof entry.win === 'boolean') return entry.win;
+  if (entry.osAuto) return /windows/i.test(entry.osAuto);
+  return null;
 }
 
 function readQuicklinks() {
@@ -1404,13 +1425,25 @@ const VM_ACTIONS = {
   reset:     'reset',
 };
 
+// Roh-VM-Liste pro VM mit vms.json anreichern (isWindows, rdpHost) – guenstiger
+// lokaler JSON-Read, unabhaengig vom GraphQL-Cache.
+function enrichVmsResult(result) {
+  if (!result || !Array.isArray(result.vms)) return result;
+  const vmcfg = readVmCfg();
+  const vms = result.vms.map((v) => {
+    const c = vmcfg[v.id] || {};
+    return { ...v, isWindows: vmIsWindows(c), rdpHost: c.rdpHost || null };
+  });
+  return { ...result, vms };
+}
+
 app.get('/api/vms', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   const cfg = unraidCfg();
   if (!cfg) return res.json({ ok: false, error: 'not_configured' });
 
   if (cache.unraid.data && Date.now() - cache.unraid.ts < VM_TTL) {
-    return res.json(cache.unraid.data);
+    return res.json(enrichVmsResult(cache.unraid.data));
   }
 
   try {
@@ -1437,11 +1470,69 @@ app.get('/api/vms', async (req, res) => {
       vms,
     };
     cache.unraid = { ts: Date.now(), data: result };
-    res.json(result);
+    res.json(enrichVmsResult(result));
   } catch (err) {
     console.error('Unraid-VM-Abruf fehlgeschlagen:', err.message);
-    if (cache.unraid.data) return res.json({ ...cache.unraid.data, _stale: true });
+    if (cache.unraid.data) return res.json(enrichVmsResult({ ...cache.unraid.data, _stale: true }));
     res.json({ ok: false, error: 'fetch_failed', message: err.message });
+  }
+});
+
+app.get('/api/vms/config', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ ok: true, config: readVmCfg() });
+});
+
+app.post('/api/vms/config', (req, res) => {
+  const body  = (req.body && typeof req.body === 'object') ? req.body : {};
+  const inCfg = (body.config && typeof body.config === 'object') ? body.config : {};
+  const cur = readVmCfg();
+  const out = {};
+  for (const [id, v] of Object.entries(inCfg)) {
+    if (!id || !v || typeof v !== 'object') continue;
+    const key = String(id).slice(0, 200);
+    const entry = { ...(cur[key] || {}) }; // bewahrt osAuto
+    if (v.win === true || v.win === false) entry.win = v.win; else delete entry.win;
+    const host = String(v.rdpHost || '').trim().slice(0, 255);
+    if (host) entry.rdpHost = host; else delete entry.rdpHost;
+    const user = String(v.rdpUser || '').trim().slice(0, 120);
+    if (user) entry.rdpUser = user; else delete entry.rdpUser;
+    out[key] = entry;
+  }
+  // Nicht im Body enthaltene VMs unveraendert behalten.
+  for (const [id, v] of Object.entries(cur)) { if (!(id in out)) out[id] = v; }
+  try { writeVmCfg(out); res.json({ ok: true }); }
+  catch (err) {
+    console.error('VM-Config konnte nicht gespeichert werden:', err.message);
+    res.status(500).json({ ok: false, error: 'write_failed' });
+  }
+});
+
+// OS pro VM per SSH erkennen (Unraid-Metadaten) und in vms.json speichern.
+app.post('/api/vms/detect', async (req, res) => {
+  const sshCfg = unraidSshCfg();
+  const gcfg   = unraidCfg();
+  if (!sshCfg || !gcfg) return res.status(400).json({ ok: false, error: 'not_configured' });
+  try {
+    const domains = await fetchVmDomains(gcfg);
+    const conn = await sshConnect(sshCfg);
+    const cfg = readVmCfg();
+    try {
+      for (const v of domains) {
+        const ref = (v.uuid && /^[0-9a-fA-F-]{8,}$/.test(v.uuid)) ? v.uuid : v.name;
+        if (!ref) continue;
+        try {
+          const xml = await sshExec(conn, `virsh dumpxml ${shq(ref)}`);
+          const { os } = parseVmOs(xml);
+          if (os) cfg[v.id] = { ...(cfg[v.id] || {}), osAuto: os };
+        } catch (_) { /* einzelne VM ueberspringen */ }
+      }
+    } finally { try { conn.end(); } catch (_) {} }
+    writeVmCfg(cfg);
+    res.json({ ok: true, config: cfg });
+  } catch (err) {
+    console.error('OS-Erkennung fehlgeschlagen:', err.message);
+    res.status(502).json({ ok: false, error: 'detect_failed', message: err.message });
   }
 });
 
@@ -1537,6 +1628,29 @@ function parseVncGraphics(xml) {
   return { vncPort: p, password: passwd };
 }
 
+// Gast-OS aus Unraids <vmtemplate ... os='...' icon='...'>-Metadaten lesen.
+function parseVmOs(xml) {
+  const m = String(xml).match(/<vmtemplate\b[^>]*>/i);
+  const tag = m ? m[0] : '';
+  const os   = (tag.match(/\bos=['"]([^'"]*)['"]/)   || [])[1] || '';
+  const icon = (tag.match(/\bicon=['"]([^'"]*)['"]/) || [])[1] || '';
+  return { os, icon, isWindows: /windows/i.test(os) || /windows/i.test(icon) };
+}
+
+// Erkanntes OS opportunistisch in vms.json merken (manuelle Uebersteuerung bleibt unberuehrt).
+function learnVmOs(id, xml) {
+  try {
+    const { os } = parseVmOs(xml);
+    if (!os) return;
+    const cfg = readVmCfg();
+    const cur = cfg[id] || {};
+    if (typeof cur.win === 'boolean') return;
+    if (cur.osAuto === os) return;
+    cfg[id] = { ...cur, osAuto: os };
+    writeVmCfg(cfg);
+  } catch (_) { /* nicht kritisch */ }
+}
+
 // id (PrefixedID) -> Domain-Referenz fuer virsh (bevorzugt uuid, sonst Name).
 async function resolveVmRef(id) {
   const pick = (list) => {
@@ -1571,6 +1685,7 @@ async function getVncGraphics(id) {
   const conn = await sshConnect(cfg);
   try {
     const xml = await sshExec(conn, `virsh dumpxml --security-info ${shq(ref)}`);
+    learnVmOs(id, xml); // OS beim Konsolen-Oeffnen mitlernen
     const g = parseVncGraphics(xml);
     if (!g) throw new Error('no_vnc_or_not_running');
     _vncCache.set(id, { ts: Date.now(), data: g });
@@ -1595,8 +1710,60 @@ app.get('/api/vm/vnc-info', async (req, res) => {
   }
 });
 
+// Erste "echte" IPv4 aus virsh-domifaddr-Output (Loopback/Link-Local ueberspringen).
+function parseGuestIpv4(text) {
+  const ips = String(text).match(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g) || [];
+  return ips.find((ip) => !/^127\./.test(ip) && !/^169\.254\./.test(ip) && ip !== '0.0.0.0') || null;
+}
+function isValidRdpHost(h) { return /^[a-zA-Z0-9.\-]{1,255}$/.test(h); }
+
+// RDP: erzeugt eine .rdp-Datei fuer eine (Windows-)VM. Host = manuelle
+// Uebersteuerung, sonst per SSH (virsh domifaddr) ermittelt.
+app.get('/api/vm/rdp', async (req, res) => {
+  const id = String(req.query.id || '');
+  if (!id) return res.status(400).json({ ok: false, error: 'missing_id' });
+
+  const vmcfg = readVmCfg()[id] || {};
+  let host = String(vmcfg.rdpHost || '').trim();
+
+  let name = 'vm';
+  const vmEntry = ((cache.unraid.data && cache.unraid.data.vms) || []).find((v) => v.id === id);
+  if (vmEntry && vmEntry.name) name = vmEntry.name;
+
+  if (!host) {
+    const sshCfg = unraidSshCfg();
+    const ref = await resolveVmRef(id);
+    if (sshCfg && ref) {
+      try {
+        const conn = await sshConnect(sshCfg);
+        try {
+          let out = '';
+          try { out = await sshExec(conn, `virsh domifaddr ${shq(ref)} --source agent`); } catch (_) {}
+          host = parseGuestIpv4(out) || '';
+          if (!host) {
+            try { out = await sshExec(conn, `virsh domifaddr ${shq(ref)} --source lease`); } catch (_) {}
+            host = parseGuestIpv4(out) || '';
+          }
+        } finally { try { conn.end(); } catch (_) {} }
+      } catch (_) { /* faellt unten auf needs_host */ }
+    }
+  }
+
+  if (!host || !isValidRdpHost(host)) return res.json({ ok: false, error: 'needs_host' });
+
+  const lines = ['full address:s:' + host + ':3389'];
+  if (vmcfg.rdpUser) lines.push('username:s:' + String(vmcfg.rdpUser).replace(/[\r\n]/g, ''));
+  lines.push('prompt for credentials:i:1', 'screen mode id:i:2', 'use multimon:i:0', 'authentication level:i:2');
+  const rdp = lines.join('\r\n') + '\r\n';
+
+  const safeName = (name.replace(/[^a-zA-Z0-9 _.\-]/g, '_').slice(0, 40) || 'vm');
+  res.set('Content-Type', 'application/x-rdp');
+  res.set('Content-Disposition', `attachment; filename="${safeName}.rdp"`);
+  res.send(rdp);
+});
+
 // Websockify: Browser-WebSocket <-> SSH-Tunnel zum QEMU-VNC-Port (roher RFB).
-const vncWss = new WebSocketServer({ noServer: true });
+const vncWss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 async function handleVncWs(ws, id) {
   const cfg = unraidSshCfg();
   if (!cfg) { try { ws.close(1011, 'not_configured'); } catch (_) {} return; }
@@ -1645,6 +1812,7 @@ server.on('upgrade', (req, socket, head) => {
   let url;
   try { url = new URL(req.url, 'http://localhost'); } catch (_) { socket.destroy(); return; }
   if (url.pathname === '/api/vm/vnc-ws') {
+    try { socket.setNoDelay(true); } catch (_) {} // Eingabe-Latenz senken (kein Nagle)
     const id = url.searchParams.get('id') || '';
     vncWss.handleUpgrade(req, socket, head, (ws) => handleVncWs(ws, id));
   } else {

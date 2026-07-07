@@ -929,14 +929,17 @@ function createVmRow(vm) {
     const a = VM_PRIMARY[row._vm.state];
     if (a) vmAction(row._vm.id, a, btn);
   });
+  const rdp = makeVmBtn('RDP', '', () => openVmRdp(row._vm));
+  rdp.style.display = 'none'; // nur fuer Windows-VMs
   const vnc = makeVmBtn('VNC', '', () => openVmConsole(row._vm));
   const details = makeVmBtn('⋯', '', () => openVmDetails(row._vm));
-  actions.append(primary, vnc, details);
+  actions.append(primary, rdp, vnc, details);
   row.appendChild(actions);
   row._dot = row.querySelector('.vm-dot');
   row._name = row.querySelector('.vm-name');
   row._stateEl = row.querySelector('.vm-state');
   row._primary = primary;
+  row._rdp = rdp;
   return row;
 }
 function updateVmRow(row, vm, prev) {
@@ -952,6 +955,7 @@ function updateVmRow(row, vm, prev) {
     row._primary.className = 'vm-btn' + (meta && meta.cls ? ' ' + meta.cls : '');
     row._primary.disabled = !meta;
   }
+  if (!prev || prev.isWindows !== vm.isWindows) row._rdp.style.display = vm.isWindows ? '' : 'none';
 }
 function renderVms(d) {
   _vmManageUrl = d.manageUrl || null;
@@ -1043,6 +1047,36 @@ function closeVmConsole() {
   if (frame) frame.src = 'about:blank'; // WS-Sitzung beenden
   _vmConsoleUrl = null;
 }
+
+// RDP: laedt die .rdp-Datei vom Server (Gast-IP wird dort ermittelt) und startet
+// den nativen RDP-Client. Fehlt der Host, Hinweis auf die Einstellungen.
+async function openVmRdp(vm) {
+  try {
+    const r = await fetch('/api/vm/rdp?id=' + encodeURIComponent(vm.id), { cache: 'no-store' });
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('rdp')) {
+      const d = await r.json().catch(() => ({}));
+      if (d.error === 'needs_host') {
+        alert('Keine IP-Adresse der VM gefunden.\n\nHinterlege den RDP-Host in den Einstellungen unter „Unraid VMs → VMs & RDP", oder installiere den QEMU-Gastagent in der VM.');
+      } else {
+        alert('RDP konnte nicht gestartet werden: ' + (d.error || r.status));
+      }
+      return;
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (vm.name || 'vm').replace(/[^a-zA-Z0-9 _.\-]/g, '_') + '.rdp';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  } catch (err) {
+    console.warn('RDP-Fehler:', err.message);
+    alert('RDP-Datei konnte nicht geladen werden.');
+  }
+}
 function setupVmConsoleModal() {
   const m = $('vmConsoleModal');
   if (m) m.addEventListener('click', closeVmConsole);
@@ -1092,6 +1126,8 @@ function refreshVmModal() {
       wrap.appendChild(makeVmBtn(meta.label, meta.cls, (btn) => vmAction(vm.id, a, btn)));
     });
   }
+  const rdpBtn = $('vmModalRdp');
+  if (rdpBtn) rdpBtn.style.display = vm.isWindows ? '' : 'none';
   const meta = $('vmModalMeta');
   if (meta) {
     const row = (k, v) => `<div style="display:flex;justify-content:space-between;gap:12px"><span style="color:var(--text-3)">${k}</span><span style="color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%" title="${v}">${v}</span></div>`;
@@ -1107,7 +1143,69 @@ function setupVmModal() {
   if (close) close.addEventListener('click', closeVmModal);
   const vnc = $('vmModalVnc');
   if (vnc) vnc.addEventListener('click', () => { if (_vmModalVm) openVmConsole(_vmModalVm); });
+  const rdp = $('vmModalRdp');
+  if (rdp) rdp.addEventListener('click', () => { if (_vmModalVm) openVmRdp(_vmModalVm); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && _vmModalVm) closeVmModal(); });
+}
+
+/* ---------- Settings: VM-Config (Windows-Flag & RDP) ---------- */
+let _vmCfgRows = [];
+async function loadVmCfg() {
+  const list = $('vmCfgList');
+  if (!list) return;
+  list.innerHTML = `<div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-dim)">Lade…</div>`;
+  let vms = [], cfg = {};
+  try {
+    const [vd, cd] = await Promise.all([
+      fetch('/api/vms', { cache: 'no-store' }).then(r => r.json()),
+      fetch('/api/vms/config', { cache: 'no-store' }).then(r => r.json()),
+    ]);
+    vms = (vd && vd.vms) || [];
+    cfg = (cd && cd.config) || {};
+  } catch (_) { /* ignore */ }
+  if (!vms.length) {
+    list.innerHTML = `<div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-dim)">Keine VMs gefunden (Unraid-URL & API-Key gesetzt?).</div>`;
+    _vmCfgRows = [];
+    return;
+  }
+  list.innerHTML = '';
+  _vmCfgRows = vms.map((vm) => {
+    const c = cfg[vm.id] || {};
+    const winVal = (typeof c.win === 'boolean') ? (c.win ? 'yes' : 'no') : 'auto';
+    const row = document.createElement('div');
+    row.style.cssText = 'display:grid;grid-template-columns:1.3fr auto 1fr 0.9fr;gap:6px;align-items:center';
+    row.innerHTML =
+      `<span style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${vm.name}">${vm.name}${c.osAuto ? ` <span style="color:var(--text-dim)">· ${c.osAuto}</span>` : ''}</span>` +
+      `<select class="cfg-input" style="width:92px"><option value="auto">Auto</option><option value="yes">Windows</option><option value="no">Kein Win</option></select>` +
+      `<input class="cfg-input vm-rdphost" placeholder="RDP-Host (auto)" />` +
+      `<input class="cfg-input vm-rdpuser" placeholder="RDP-User" />`;
+    const sel = row.querySelector('select'); sel.value = winVal;
+    const host = row.querySelector('.vm-rdphost'); host.value = c.rdpHost || '';
+    const user = row.querySelector('.vm-rdpuser'); user.value = c.rdpUser || '';
+    list.appendChild(row);
+    return { id: vm.id, sel, host, user };
+  });
+}
+async function saveVmCfg() {
+  const config = {};
+  _vmCfgRows.forEach((r) => {
+    const win = r.sel.value === 'yes' ? true : r.sel.value === 'no' ? false : null;
+    config[r.id] = { win, rdpHost: r.host.value.trim(), rdpUser: r.user.value.trim() };
+  });
+  try {
+    const res = await fetch('/api/vms/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    startVms(); // Kacheln sofort mit neuen Flags aktualisieren
+  } catch (err) { console.warn('VM-Config speichern fehlgeschlagen:', err.message); }
+}
+async function detectVmOs() {
+  const btn = $('vmDetectBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '⟳ …'; }
+  try { await fetch('/api/vms/detect', { method: 'POST' }); await loadVmCfg(); startVms(); }
+  catch (err) { console.warn('OS-Erkennung fehlgeschlagen:', err.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = '⟳ OS erkennen'; } }
 }
 
 /* ---------- AdGuard Home ---------- */
@@ -2727,6 +2825,7 @@ const SETTINGS_TAB_LOADERS = {
   schnellzugriff: () => loadQlEditor(),
   layout:         () => renderLayoutEditor(),
   disks:          () => loadDiskSettings(),
+  unraid:         () => loadVmCfg(),
 };
 function runTabLoader(tab) {
   const fn = SETTINGS_TAB_LOADERS[tab];
