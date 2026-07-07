@@ -2558,167 +2558,712 @@ async function saveQlItems() {
   }
 }
 
-/* ---------- Dashboard layout (tile order & visibility) ---------- */
+/* ============================================================================
+   Dashboard: Seiten, freies Raster (GridStack) & Design-Mode
+   ----------------------------------------------------------------------------
+   Modell (siehe server.js): { version, pages:[{id,name,icon}],
+   tiles:[{id,type:'widget'|'heading',page,x,y,w,h,hidden,text?,config?}] }.
+   Die Kachel-"Shells" (data-widget-id) werden statisch in index.html
+   ausgeliefert und beim Aufbau aus #tilePool in die GridStack-Items der
+   aktiven Seite verschoben — kein renderX() muss angefasst werden.
+   ============================================================================ */
 const DASHBOARD_WIDGETS = [
-  { id: 'system-load',        section: 'system',          label: 'System Load' },
-  { id: 'network-throughput', section: 'system',          label: 'Network Throughput' },
-  { id: 'disk-storage',       section: 'system',          label: 'Storage · Unraid Array' },
-  { id: 'service-status',     section: 'dienste',         label: 'Service Status' },
-  { id: 'docker',             section: 'dienste',         label: 'Docker' },
-  { id: 'adguard',            section: 'dienste',         label: 'AdGuard Home' },
-  { id: 'unraid-vms',         section: 'dienste',         label: 'Unraid VMs' },
-  { id: 'plex',               section: 'media',           label: 'Plex' },
-  { id: 'nextcloud',          section: 'media',           label: 'Nextcloud' },
-  { id: 'unifi-network',      section: 'netzwerk',        label: 'UniFi · Network' },
-  { id: 'unifi-aps',          section: 'netzwerk-detail', label: 'WiFi · Access Points' },
-  { id: 'unifi-cameras',      section: 'netzwerk-detail', label: 'UniFi Protect' },
+  { id: 'system-load',        section: 'system',          label: 'System Load',           defaultSize: { w: 5,  h: 6 } },
+  { id: 'network-throughput', section: 'system',          label: 'Network Throughput',    defaultSize: { w: 7,  h: 3 } },
+  { id: 'disk-storage',       section: 'system',          label: 'Storage · Unraid Array', defaultSize: { w: 7, h: 4 } },
+  { id: 'service-status',     section: 'dienste',         label: 'Service Status',        defaultSize: { w: 4,  h: 5 } },
+  { id: 'docker',             section: 'dienste',         label: 'Docker',                defaultSize: { w: 4,  h: 5 } },
+  { id: 'adguard',            section: 'dienste',         label: 'AdGuard Home',          defaultSize: { w: 4,  h: 5 } },
+  { id: 'unraid-vms',         section: 'dienste',         label: 'Unraid VMs',            defaultSize: { w: 4,  h: 5 } },
+  { id: 'plex',               section: 'media',           label: 'Plex',                  defaultSize: { w: 7,  h: 5 } },
+  { id: 'nextcloud',          section: 'media',           label: 'Nextcloud',             defaultSize: { w: 5,  h: 5 } },
+  { id: 'unifi-network',      section: 'netzwerk',        label: 'UniFi · Network',       defaultSize: { w: 12, h: 3 } },
+  { id: 'unifi-aps',          section: 'netzwerk-detail', label: 'WiFi · Access Points',  defaultSize: { w: 7,  h: 4 } },
+  { id: 'unifi-cameras',      section: 'netzwerk-detail', label: 'UniFi Protect',         defaultSize: { w: 5,  h: 5 } },
+];
+const WIDGET_BY_ID = new Map(DASHBOARD_WIDGETS.map((w) => [w.id, w]));
+const GRID_COLUMNS = 12;
+const GRID_CELL_HEIGHT = 66;
+const LEGACY_SECTION_ORDER = ['system', 'dienste', 'media', 'netzwerk', 'netzwerk-detail'];
+const LEGACY_SECTION_NAMES = {
+  system: 'System & Resources', dienste: 'Services & Containers',
+  media: 'Media & Cloud', netzwerk: 'Network', 'netzwerk-detail': 'Network',
+};
+const SIZE_PRESETS = [
+  { key: 's',    label: 'Klein',  w: 3, h: 4 },
+  { key: 'm',    label: 'Mittel', w: 4, h: 5 },
+  { key: 'l',    label: 'Groß',   w: 6, h: 6 },
+  { key: 'wide', label: 'Breit',  w: 8, h: 4 },
+  { key: 'full', label: 'Voll',   w: 12, h: 4 },
+  { key: 'tall', label: 'Hoch',   w: 4, h: 8 },
 ];
 
-let _layoutState = [];
-let _sortableInstances = [];
+let _dashboard = { version: 2, pages: [], tiles: [] };
+const _grids = new Map();     // pageId -> GridStack instance
+const _builtPages = new Set();
+let _activePage = null;
+let _designOn = false;
+let _designSnapshot = null;    // deep copy of _dashboard when entering design mode (for discard)
+let _tabSortable = null;
 
-function _layoutSectionContainers() {
-  return Array.from(document.querySelectorAll('[data-section-id]'));
-}
+function _uid(prefix) { return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+function _clone(o) { return JSON.parse(JSON.stringify(o)); }
+function _tilePool() { return $('tilePool'); }
+function _shellFor(id) { return document.querySelector(`[data-widget-id="${id}"]`); }
 
-function _collectLayoutFromDom() {
+/* ---------- Model builders / migration ---------- */
+
+// Verteilt Kacheln zeilenweise (links→rechts) im 12-Spalten-Raster.
+// Überschriften erzwingen eine neue, volle Zeile (wie eine Kategorie-Trennung).
+function _packTiles(items) {
+  let x = 0, y = 0, rowH = 0;
   const out = [];
-  _layoutSectionContainers().forEach((container) => {
-    const sectionId = container.dataset.sectionId;
-    container.querySelectorAll(':scope > [data-widget-id]').forEach((el) => {
-      out.push({ id: el.dataset.widgetId, section: sectionId, hidden: el.style.display === 'none' });
-    });
-  });
+  for (const it of items) {
+    if (it.type === 'heading') {
+      if (rowH > 0) { y += rowH; }
+      out.push({ ...it, x: 0, y, w: GRID_COLUMNS, h: it.h || 1 });
+      y += (it.h || 1); x = 0; rowH = 0;
+    } else {
+      const w = Math.min(GRID_COLUMNS, it.w || 4);
+      const h = it.h || 3;
+      if (x + w > GRID_COLUMNS) { y += rowH; x = 0; rowH = 0; }
+      out.push({ ...it, x, y, w, h });
+      x += w; rowH = Math.max(rowH, h);
+    }
+  }
   return out;
 }
 
-function _applyLayoutToDom(layout) {
-  const bySection = {};
-  layout.forEach((entry) => { (bySection[entry.section] = bySection[entry.section] || []).push(entry); });
-  _layoutSectionContainers().forEach((container) => {
-    const sectionId = container.dataset.sectionId;
-    (bySection[sectionId] || []).forEach((entry) => {
-      const el = document.querySelector(`[data-widget-id="${entry.id}"]`);
-      if (el) {
-        container.appendChild(el);
-        el.style.display = entry.hidden ? 'none' : '';
-      }
-    });
+// Frische Installation: eine Seite, Überschrift je Kategorie + alle Widgets.
+function buildDefaultDashboard() {
+  const page = 'home';
+  const items = [];
+  for (const sec of LEGACY_SECTION_ORDER) {
+    const widgets = DASHBOARD_WIDGETS.filter((w) => w.section === sec);
+    if (!widgets.length) continue;
+    if (sec !== 'netzwerk-detail') { // netzwerk-detail teilt sich die "Network"-Überschrift
+      items.push({ id: _uid('heading:'), type: 'heading', page, text: LEGACY_SECTION_NAMES[sec], h: 1, hidden: false });
+    }
+    for (const w of widgets) items.push({ id: w.id, type: 'widget', page, w: w.defaultSize.w, h: w.defaultSize.h, hidden: false, config: {} });
+  }
+  return { version: 2, pages: [{ id: page, name: 'Dashboard', icon: 'grid' }], tiles: _packTiles(items).map((t) => ({ ...t, page })) };
+}
+
+// Migration vom alten Modell [{id,section,hidden}] auf das neue Seiten-Modell.
+function migrateLegacy(arr) {
+  const page = 'home';
+  const bySection = new Map();
+  const order = [];
+  for (const e of arr) {
+    if (!e || !WIDGET_BY_ID.has(e.id)) continue;
+    const sec = e.section || WIDGET_BY_ID.get(e.id).section;
+    if (!bySection.has(sec)) { bySection.set(sec, []); order.push(sec); }
+    bySection.get(sec).push(e);
+  }
+  const secOrder = LEGACY_SECTION_ORDER.filter((s) => bySection.has(s))
+    .concat(order.filter((s) => !LEGACY_SECTION_ORDER.includes(s)));
+  const items = [];
+  let lastHeading = null;
+  for (const sec of secOrder) {
+    const entries = bySection.get(sec);
+    const name = LEGACY_SECTION_NAMES[sec] || sec;
+    if (entries.some((e) => !e.hidden) && name !== lastHeading) {
+      items.push({ id: _uid('heading:'), type: 'heading', page, text: name, h: 1, hidden: false });
+      lastHeading = name;
+    }
+    for (const e of entries) {
+      const w = WIDGET_BY_ID.get(e.id);
+      items.push({ id: e.id, type: 'widget', page, w: w.defaultSize.w, h: w.defaultSize.h, hidden: !!e.hidden, config: {} });
+    }
+  }
+  const visible = _packTiles(items.filter((t) => !t.hidden)).map((t) => ({ ...t, page }));
+  const hidden = items.filter((t) => t.hidden).map((t) => ({ ...t, page, x: 0, y: 0 }));
+  return { version: 2, pages: [{ id: page, name: 'Dashboard', icon: 'grid' }], tiles: visible.concat(hidden) };
+}
+
+// Selbstheilung: unbekannte Widgets droppen, Duplikate entfernen, Seiten prüfen,
+// neue Registry-Widgets als (ausgeblendeter) Katalog-Eintrag ergänzen.
+function reconcileDashboard(model) {
+  const m = (model && typeof model === 'object' && Array.isArray(model.tiles)) ? model : buildDefaultDashboard();
+  let pages = (Array.isArray(m.pages) && m.pages.length) ? m.pages : [{ id: 'home', name: 'Dashboard', icon: 'grid' }];
+  const seenP = new Set();
+  pages = pages.map((p) => ({
+    id: (String(p.id || '').trim()) || _uid('page:'),
+    name: (String(p.name || '').trim().slice(0, 60)) || 'Seite',
+    icon: String(p.icon || '').trim().slice(0, 40),
+  })).filter((p) => !seenP.has(p.id) && seenP.add(p.id));
+  if (!pages.length) pages = [{ id: 'home', name: 'Dashboard', icon: 'grid' }];
+  const pageIds = new Set(pages.map((p) => p.id));
+  const tiles = [];
+  const seenWidget = new Set();
+  for (const t of m.tiles) {
+    if (!t) continue;
+    const type = t.type === 'heading' ? 'heading' : 'widget';
+    const id = String(t.id || '').trim();
+    if (!id) continue;
+    if (type === 'widget') {
+      if (!WIDGET_BY_ID.has(id) || seenWidget.has(id)) continue;
+      seenWidget.add(id);
+    }
+    const wd = WIDGET_BY_ID.get(id);
+    let page = String(t.page || '').trim();
+    if (!pageIds.has(page)) page = pages[0].id;
+    const entry = {
+      id, type, page,
+      x: Number.isFinite(+t.x) ? +t.x : 0,
+      y: Number.isFinite(+t.y) ? +t.y : 0,
+      w: +t.w || (wd ? wd.defaultSize.w : 4),
+      h: +t.h || (wd ? wd.defaultSize.h : 2),
+      hidden: !!t.hidden,
+    };
+    if (type === 'heading') entry.text = String(t.text || '').slice(0, 80);
+    else entry.config = (t.config && typeof t.config === 'object') ? t.config : {};
+    tiles.push(entry);
+  }
+  for (const wd of DASHBOARD_WIDGETS) {
+    if (!seenWidget.has(wd.id)) tiles.push({ id: wd.id, type: 'widget', page: pages[0].id, x: 0, y: 0, w: wd.defaultSize.w, h: wd.defaultSize.h, hidden: true, config: {} });
+  }
+  return { version: 2, pages, tiles };
+}
+
+/* ---------- Model queries ---------- */
+function _pageTiles(pageId) { return _dashboard.tiles.filter((t) => t.page === pageId && !t.hidden); }
+function _catalogTiles() { return _dashboard.tiles.filter((t) => t.type === 'widget' && t.hidden); }
+function _tileById(id, pageId) { return _dashboard.tiles.find((t) => t.id === id && (pageId == null || t.page === pageId)); }
+function _bottomY(pageId, exceptId) {
+  return _dashboard.tiles.filter((t) => t.page === pageId && !t.hidden && t.id !== exceptId)
+    .reduce((m, t) => Math.max(m, (t.y || 0) + (t.h || 1)), 0);
+}
+
+/* ---------- DOM builders ---------- */
+function _makeHeadingEl(t) {
+  const el = document.createElement('div');
+  el.className = 'gs-heading';
+  el.innerHTML = '<span class="gs-heading-slash">//</span><span class="gs-heading-text"></span><span class="gs-heading-rule"></span>';
+  el.querySelector('.gs-heading-text').textContent = t.text || 'Abschnitt';
+  return el;
+}
+
+function _makeTileControls(t) {
+  const c = document.createElement('div');
+  c.className = 'gs-tile-controls';
+  c.innerHTML = '<button class="gs-tile-btn gs-tile-menu-btn" title="Optionen" aria-label="Optionen">⋯</button>';
+  // Interaktion mit den Controls darf keinen Drag der Kachel auslösen.
+  ['mousedown', 'pointerdown', 'touchstart'].forEach((ev) => c.addEventListener(ev, (e) => e.stopPropagation()));
+  c.querySelector('.gs-tile-menu-btn').addEventListener('click', (e) => { e.stopPropagation(); openTileMenu(t, e.currentTarget); });
+  return c;
+}
+
+function _makeGridItem(t) {
+  const item = document.createElement('div');
+  item.className = 'grid-stack-item' + (t.type === 'heading' ? ' gs-item-heading' : '');
+  item.setAttribute('gs-id', t.id);
+  item.setAttribute('gs-x', t.x); item.setAttribute('gs-y', t.y);
+  item.setAttribute('gs-w', t.w); item.setAttribute('gs-h', t.h);
+  if (t.type === 'heading') { item.setAttribute('gs-no-resize', 'true'); }
+  const content = document.createElement('div');
+  content.className = 'grid-stack-item-content';
+  content.appendChild(_makeTileControls(t));
+  if (t.type === 'heading') content.appendChild(_makeHeadingEl(t));
+  else { const shell = _shellFor(t.id); if (shell) content.appendChild(shell); }
+  item.appendChild(content);
+  return item;
+}
+
+/* ---------- Grid lifecycle ---------- */
+function buildGridForPage(pageId) {
+  if (_builtPages.has(pageId)) return _grids.get(pageId);
+  const host = $('dashGrids');
+  if (!host) return null;
+  const gridEl = document.createElement('div');
+  gridEl.className = 'grid-stack';
+  gridEl.dataset.page = pageId;
+  host.appendChild(gridEl);
+  _pageTiles(pageId).slice().sort((a, b) => (a.y - b.y) || (a.x - b.x))
+    .forEach((t) => gridEl.appendChild(_makeGridItem(t)));
+  const grid = GridStack.init({
+    column: GRID_COLUMNS,
+    cellHeight: GRID_CELL_HEIGHT,
+    margin: 8,
+    float: true,
+    staticGrid: !_designOn,
+    resizable: { handles: 'e, se, s, sw, w' },
+    columnOpts: { breakpointForWindow: true, breakpoints: [{ w: 760, c: 1 }], layout: 'moveScale' },
+  }, gridEl);
+  grid.on('change', () => { if (_designOn) _syncGridToModel(pageId); });
+  _grids.set(pageId, grid);
+  _builtPages.add(pageId);
+  return grid;
+}
+
+function _syncGridToModel(pageId) {
+  const grid = _grids.get(pageId);
+  if (!grid) return;
+  grid.save(false).forEach((n) => {
+    const t = _tileById(n.id, pageId);
+    if (t) { t.x = n.x; t.y = n.y; t.w = n.w; t.h = n.h; }
   });
-  applySectionAutoHide();
 }
 
-function applySectionAutoHide() {
-  const hasVisible = (sectionId) => {
-    const c = document.querySelector(`[data-section-id="${sectionId}"]`);
-    if (!c) return false;
-    return Array.from(c.querySelectorAll('[data-widget-id]')).some((el) => el.style.display !== 'none');
-  };
-  const setLabelVisible = (sectionId, visible) => {
-    const c = document.querySelector(`[data-section-id="${sectionId}"]`);
-    const label = c && c.previousElementSibling;
-    if (label) label.style.display = visible ? '' : 'none';
-  };
-  setLabelVisible('system', hasVisible('system'));
-  setLabelVisible('dienste', hasVisible('dienste'));
-  setLabelVisible('media', hasVisible('media'));
-  setLabelVisible('netzwerk', hasVisible('netzwerk') || hasVisible('netzwerk-detail'));
+// Baut nur die aktive Seite neu (Shells zurück in den Pool, Grid verwerfen,
+// aus dem Modell neu aufbauen). Robuster als Live-Manipulation bei add/hide.
+function _rebuildActivePage() {
+  const pid = _activePage;
+  const gridEl = $('dashGrids').querySelector(`.grid-stack[data-page="${pid}"]`);
+  if (gridEl) {
+    gridEl.querySelectorAll('[data-widget-id]').forEach((el) => _tilePool().appendChild(el));
+    const g = _grids.get(pid);
+    if (g) { try { g.destroy(false); } catch { /* ignore */ } }
+    _grids.delete(pid); _builtPages.delete(pid);
+    gridEl.remove();
+  }
+  buildGridForPage(pid);
+  _applyGridVisibility();
 }
 
-function _reconcileLayout(saved) {
-  const knownIds = new Set(DASHBOARD_WIDGETS.map((w) => w.id));
-  const out = saved.filter((e) => e && knownIds.has(e.id)).map((e) => ({ id: e.id, section: e.section, hidden: !!e.hidden }));
-  const seen = new Set(out.map((e) => e.id));
-  DASHBOARD_WIDGETS.forEach((w) => { if (!seen.has(w.id)) out.push({ id: w.id, section: w.section, hidden: false }); });
-  return out;
+function _rebuildAllGrids() {
+  document.querySelectorAll('#dashGrids [data-widget-id]').forEach((el) => _tilePool().appendChild(el));
+  _grids.forEach((g) => { try { g.destroy(false); } catch { /* ignore */ } });
+  _grids.clear(); _builtPages.clear();
+  $('dashGrids').innerHTML = '';
+  buildGridForPage(_activePage);
+  _applyGridVisibility();
 }
 
-function initLayoutSortable() {
-  if (typeof Sortable === 'undefined' || _sortableInstances.length) return;
-  _layoutSectionContainers().forEach((container) => {
-    _sortableInstances.push(Sortable.create(container, {
-      group: 'dashboard-tiles',
-      handle: '.tile-drag-handle',
-      animation: 150,
-      disabled: true,
-      onEnd: () => applySectionAutoHide(),
-    }));
-  });
+function _applyGridVisibility() {
+  $('dashGrids').querySelectorAll('.grid-stack').forEach((g) => { g.style.display = (g.dataset.page === _activePage) ? '' : 'none'; });
+  if (_designOn) _grids.get(_activePage)?.setStatic(false);
 }
 
-async function loadDashboardLayout() {
-  let saved = [];
-  try { saved = await fetch('/api/dashboard/layout', { cache: 'no-store' }).then((r) => r.json()); }
-  catch { saved = []; }
-  if (!Array.isArray(saved)) saved = [];
-  _layoutState = _reconcileLayout(saved);
-  _applyLayoutToDom(_layoutState);
-  initLayoutSortable();
+/* ---------- Load / save / page switching ---------- */
+async function loadDashboard() {
+  let model = null;
+  try { model = await fetch('/api/dashboard', { cache: 'no-store' }).then((r) => r.json()); }
+  catch { model = null; }
+  if (!model || !Array.isArray(model.tiles) || !Array.isArray(model.pages) || !model.pages.length) {
+    let legacy = [];
+    try { legacy = await fetch('/api/dashboard/layout', { cache: 'no-store' }).then((r) => r.json()); }
+    catch { legacy = []; }
+    model = (Array.isArray(legacy) && legacy.length) ? migrateLegacy(legacy) : buildDefaultDashboard();
+  }
+  _dashboard = reconcileDashboard(model);
+  _activePage = _restoreActivePage();
+  renderPageTabs();
+  showPage(_activePage);
 }
 
-async function saveDashboardLayout() {
-  _layoutState = _collectLayoutFromDom();
+function _restoreActivePage() {
+  const saved = localStorage.getItem('dash.activePage');
+  if (saved && _dashboard.pages.some((p) => p.id === saved)) return saved;
+  return _dashboard.pages[0].id;
+}
+
+function showPage(pageId) {
+  if (!_dashboard.pages.some((p) => p.id === pageId)) pageId = _dashboard.pages[0].id;
+  _activePage = pageId;
+  try { localStorage.setItem('dash.activePage', pageId); } catch { /* ignore */ }
+  buildGridForPage(pageId);
+  _applyGridVisibility();
+  renderPageTabs();
+}
+
+async function saveDashboard() {
+  _builtPages.forEach((pid) => _syncGridToModel(pid));
   try {
-    const r = await fetch('/api/dashboard/layout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(_layoutState),
+    const r = await fetch('/api/dashboard', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(_dashboard),
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    renderLayoutEditor();
+    _designSnapshot = _clone(_dashboard);
+    toast('Layout gespeichert');
   } catch (err) {
-    console.error('Failed to save dashboard layout:', err.message);
+    console.error('Failed to save dashboard:', err.message);
+    toast('Speichern fehlgeschlagen', { type: 'error' });
   }
 }
 
-function toggleLayoutEditMode() {
-  state.layoutEditOn = !state.layoutEditOn;
-  document.body.classList.toggle('layout-edit-mode', state.layoutEditOn);
-  const btn = $('layoutEditBtn');
-  if (btn) btn.classList.toggle('active', state.layoutEditOn);
-  _sortableInstances.forEach((s) => s.option('disabled', !state.layoutEditOn));
+/* ---------- Page tabs ---------- */
+function renderPageTabs() {
+  const bar = $('dashPages');
+  if (!bar) return;
+  bar.style.display = (_dashboard.pages.length > 1 || _designOn) ? 'flex' : 'none';
+  bar.innerHTML = '';
+  _dashboard.pages.forEach((p) => {
+    const tab = document.createElement('button');
+    tab.className = 'dash-tab' + (p.id === _activePage ? ' active' : '');
+    tab.dataset.page = p.id;
+    tab.textContent = p.name;
+    tab.title = _designOn ? 'Klicken zum Wechseln · Doppelklick zum Umbenennen' : p.name;
+    tab.addEventListener('click', () => showPage(p.id));
+    tab.addEventListener('dblclick', () => { if (_designOn) renamePage(p.id); });
+    bar.appendChild(tab);
+  });
+  if (_designOn) {
+    const add = document.createElement('button');
+    add.className = 'dash-tab dash-tab-add';
+    add.textContent = '+ Seite';
+    add.title = 'Neue Seite anlegen';
+    add.addEventListener('click', addPage);
+    bar.appendChild(add);
+    _initTabSortable();
+  } else if (_tabSortable) {
+    try { _tabSortable.destroy(); } catch { /* ignore */ }
+    _tabSortable = null;
+  }
 }
 
-function hideTileNow(widgetId) {
-  const el = document.querySelector(`[data-widget-id="${widgetId}"]`);
-  if (!el) return;
-  el.style.display = 'none';
-  applySectionAutoHide();
-}
-
-function renderLayoutEditor() {
-  const list = $('layoutEditList');
-  if (!list) return;
-  const byId = new Map(_collectLayoutFromDom().map((e) => [e.id, e]));
-  list.innerHTML = '';
-  DASHBOARD_WIDGETS.forEach((w) => {
-    const entry = byId.get(w.id) || { hidden: false };
-    const row = document.createElement('div');
-    row.className = 'cfg-row';
-    const key = document.createElement('span');
-    key.className = 'cfg-key';
-    key.textContent = w.label;
-    const sw = document.createElement('div');
-    sw.className = 'switch' + (entry.hidden ? '' : ' on');
-    sw.innerHTML = '<span></span>';
-    sw.addEventListener('click', () => {
-      const el = document.querySelector(`[data-widget-id="${w.id}"]`);
-      if (!el) return;
-      const nowHidden = el.style.display !== 'none';
-      el.style.display = nowHidden ? 'none' : '';
-      sw.classList.toggle('on', !nowHidden);
-      applySectionAutoHide();
-    });
-    row.appendChild(key);
-    row.appendChild(sw);
-    list.appendChild(row);
+function _initTabSortable() {
+  if (typeof Sortable === 'undefined' || _tabSortable) return;
+  _tabSortable = Sortable.create($('dashPages'), {
+    animation: 150,
+    filter: '.dash-tab-add',
+    draggable: '.dash-tab:not(.dash-tab-add)',
+    onEnd: () => {
+      const ids = Array.from($('dashPages').querySelectorAll('.dash-tab:not(.dash-tab-add)')).map((el) => el.dataset.page);
+      _dashboard.pages.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+    },
   });
 }
 
+function addPage() {
+  const name = (prompt('Name der neuen Seite:', 'Neue Seite') || '').trim();
+  if (!name) return;
+  const id = _uid('page:');
+  _dashboard.pages.push({ id, name: name.slice(0, 60), icon: '' });
+  showPage(id);
+  toast(`Seite „${name}" angelegt`);
+}
+
+function renamePage(pageId) {
+  const p = _dashboard.pages.find((x) => x.id === pageId);
+  if (!p) return;
+  const name = (prompt('Seite umbenennen:', p.name) || '').trim();
+  if (!name) return;
+  p.name = name.slice(0, 60);
+  renderPageTabs();
+}
+
+function deletePage(pageId) {
+  if (_dashboard.pages.length <= 1) { toast('Die letzte Seite kann nicht gelöscht werden', { type: 'error' }); return; }
+  const p = _dashboard.pages.find((x) => x.id === pageId);
+  if (!p || !confirm(`Seite „${p.name}" mit allen Kacheln löschen?`)) return;
+  // Shells dieser Seite zurück in den Pool + zugehörige Widget-Kacheln ausblenden.
+  const gridEl = $('dashGrids').querySelector(`.grid-stack[data-page="${pageId}"]`);
+  if (gridEl) gridEl.querySelectorAll('[data-widget-id]').forEach((el) => _tilePool().appendChild(el));
+  const g = _grids.get(pageId);
+  if (g) { try { g.destroy(false); } catch { /* ignore */ } }
+  _grids.delete(pageId); _builtPages.delete(pageId);
+  if (gridEl) gridEl.remove();
+  _dashboard.tiles.forEach((t) => { if (t.page === pageId && t.type === 'widget') t.hidden = true; });
+  _dashboard.tiles = _dashboard.tiles.filter((t) => !(t.page === pageId && t.type === 'heading'));
+  _dashboard.pages = _dashboard.pages.filter((x) => x.id !== pageId);
+  _activePage = _dashboard.pages[0].id;
+  showPage(_activePage);
+  toast(`Seite „${p.name}" gelöscht`);
+}
+
+/* ---------- Design mode ---------- */
+function enterDesignMode() {
+  if (_designOn) return;
+  _designOn = true;
+  _designSnapshot = _clone(_dashboard);
+  document.body.classList.add('design-mode');
+  $('layoutEditBtn')?.classList.add('active');
+  _grids.forEach((g) => g.setStatic(false));
+  renderPageTabs();
+  renderDesignBar();
+}
+
+function exitDesignMode(save) {
+  if (!_designOn) return;
+  if (save) {
+    saveDashboard();
+  } else if (_designSnapshot) {
+    _dashboard = _designSnapshot;
+    _designSnapshot = null;
+    if (!_dashboard.pages.some((p) => p.id === _activePage)) _activePage = _dashboard.pages[0].id;
+    _rebuildAllGrids();
+    renderPageTabs();
+  }
+  _designOn = false;
+  document.body.classList.remove('design-mode');
+  $('layoutEditBtn')?.classList.remove('active');
+  _grids.forEach((g) => g.setStatic(true));
+  closeTileMenu();
+  renderPageTabs();
+}
+
+function toggleDesignMode() { _designOn ? exitDesignMode(true) : enterDesignMode(); }
+
+/* ---------- Tile add / hide / headings / size ---------- */
+function addWidgetToActivePage(widgetId) {
+  const wd = WIDGET_BY_ID.get(widgetId);
+  const t = _tileById(widgetId);
+  if (!wd || !t) return;
+  _syncGridToModel(_activePage);
+  t.hidden = false; t.page = _activePage;
+  t.w = wd.defaultSize.w; t.h = wd.defaultSize.h;
+  t.x = 0; t.y = _bottomY(_activePage, widgetId);
+  _rebuildActivePage();
+  renderCatalogIfOpen();
+  toast(`${wd.label} hinzugefügt`);
+}
+
+function hideTile(tileId) {
+  const t = _tileById(tileId, _activePage) || _tileById(tileId);
+  if (!t) return;
+  if (t.type === 'heading') { removeHeading(tileId); return; }
+  _syncGridToModel(_activePage);
+  t.hidden = true;
+  _rebuildActivePage();
+  renderCatalogIfOpen();
+  toast(`${WIDGET_BY_ID.get(tileId)?.label || 'Kachel'} ausgeblendet`, {
+    actionLabel: 'Rückgängig', action: () => addWidgetToActivePage(tileId),
+  });
+}
+// Rückwärtskompatibel: alte Inline-onclicks der Shell-Controls.
+function hideTileNow(tileId) { hideTile(tileId); }
+
+function addHeading() {
+  _syncGridToModel(_activePage);
+  const id = _uid('heading:');
+  _dashboard.tiles.push({ id, type: 'heading', page: _activePage, x: 0, y: _bottomY(_activePage), w: GRID_COLUMNS, h: 1, text: 'Neuer Abschnitt' });
+  _rebuildActivePage();
+  // Neue Überschrift direkt zum Bearbeiten öffnen.
+  const el = $('dashGrids').querySelector(`.grid-stack-item[gs-id="${id}"] .gs-heading-text`);
+  if (el) startHeadingEdit(el, id);
+  toast('Überschrift hinzugefügt');
+}
+
+function removeHeading(id) {
+  _syncGridToModel(_activePage);
+  _dashboard.tiles = _dashboard.tiles.filter((t) => t.id !== id);
+  _rebuildActivePage();
+  toast('Überschrift entfernt');
+}
+
+function startHeadingEdit(textEl, id) {
+  if (!textEl) return;
+  textEl.setAttribute('contenteditable', 'true');
+  textEl.classList.add('editing');
+  ['mousedown', 'pointerdown', 'touchstart'].forEach((ev) => textEl.addEventListener(ev, (e) => e.stopPropagation()));
+  textEl.focus();
+  const range = document.createRange(); range.selectNodeContents(textEl);
+  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  const commit = () => {
+    textEl.removeAttribute('contenteditable');
+    textEl.classList.remove('editing');
+    const t = _tileById(id);
+    if (t) { t.text = (textEl.textContent || '').trim().slice(0, 80) || 'Abschnitt'; textEl.textContent = t.text; }
+  };
+  textEl.addEventListener('blur', commit, { once: true });
+  textEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); textEl.blur(); }
+    if (e.key === 'Escape') { const t = _tileById(id); if (t) textEl.textContent = t.text; textEl.blur(); }
+  });
+}
+
+function setTileSize(tileId, w, h) {
+  const grid = _grids.get(_activePage);
+  const item = grid && grid.el.querySelector(`.grid-stack-item[gs-id="${tileId}"]`);
+  if (grid && item) grid.update(item, { w, h });
+  const t = _tileById(tileId, _activePage);
+  if (t) { t.w = w; t.h = h; }
+}
+
+/* ---------- Tile options menu (popup) ---------- */
+function closeTileMenu() { const m = $('tileMenu'); if (m) m.remove(); }
+
+function openTileMenu(t, anchor) {
+  closeTileMenu();
+  const menu = document.createElement('div');
+  menu.id = 'tileMenu';
+  menu.className = 'tile-menu';
+  const add = (label, cls, fn) => {
+    const b = document.createElement('button');
+    b.className = 'tile-menu-item' + (cls ? ' ' + cls : '');
+    b.textContent = label;
+    b.addEventListener('click', (e) => { e.stopPropagation(); closeTileMenu(); fn(); });
+    menu.appendChild(b);
+  };
+  if (t.type === 'heading') {
+    add('Umbenennen', '', () => {
+      const el = $('dashGrids').querySelector(`.grid-stack-item[gs-id="${t.id}"] .gs-heading-text`);
+      startHeadingEdit(el, t.id);
+    });
+    add('Entfernen', 'danger', () => removeHeading(t.id));
+  } else {
+    const lbl = document.createElement('div');
+    lbl.className = 'tile-menu-label';
+    lbl.textContent = 'Größe';
+    menu.appendChild(lbl);
+    const sizeRow = document.createElement('div');
+    sizeRow.className = 'tile-menu-sizes';
+    SIZE_PRESETS.forEach((p) => {
+      const b = document.createElement('button');
+      b.className = 'tile-menu-size';
+      b.textContent = p.label;
+      b.title = `${p.w}×${p.h}`;
+      b.addEventListener('click', (e) => { e.stopPropagation(); setTileSize(t.id, p.w, p.h); });
+      sizeRow.appendChild(b);
+    });
+    menu.appendChild(sizeRow);
+    const sep = document.createElement('div'); sep.className = 'tile-menu-sep'; menu.appendChild(sep);
+    add('Ausblenden', 'danger', () => hideTile(t.id));
+  }
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = (r.bottom + 6) + 'px';
+  menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+  setTimeout(() => document.addEventListener('mousedown', _tileMenuOutside), 0);
+}
+function _tileMenuOutside(e) {
+  const m = $('tileMenu');
+  if (m && !m.contains(e.target)) { closeTileMenu(); document.removeEventListener('mousedown', _tileMenuOutside); }
+}
+
+/* ---------- Widget catalog / picker ---------- */
+function _widgetBadge(label) {
+  return (label.replace(/[^A-Za-z0-9]/g, '').slice(0, 2) || '··').toUpperCase();
+}
+
+function openWidgetPicker() {
+  let modal = $('widgetPicker');
+  if (!modal) modal = _buildWidgetPicker();
+  _renderCatalogGrid();
+  modal.style.display = 'flex';
+  requestAnimationFrame(() => modal.classList.add('open'));
+}
+function closeWidgetPicker() {
+  const modal = $('widgetPicker');
+  if (!modal) return;
+  modal.classList.remove('open');
+  setTimeout(() => { modal.style.display = 'none'; }, 180);
+}
+function renderCatalogIfOpen() {
+  const modal = $('widgetPicker');
+  if (modal && modal.style.display !== 'none') _renderCatalogGrid();
+}
+
+function _buildWidgetPicker() {
+  const modal = document.createElement('div');
+  modal.id = 'widgetPicker';
+  modal.className = 'picker-modal';
+  modal.innerHTML =
+    '<div class="picker-panel">' +
+      '<div class="picker-head"><span class="picker-title">Kachel hinzufügen</span>' +
+      '<button class="picker-close" title="Schließen">✕</button></div>' +
+      '<div class="picker-grid" id="widgetPickerGrid"></div>' +
+    '</div>';
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeWidgetPicker(); });
+  modal.querySelector('.picker-close').addEventListener('click', closeWidgetPicker);
+  document.body.appendChild(modal);
+  return modal;
+}
+
+function _renderCatalogGrid() {
+  const grid = $('widgetPickerGrid');
+  if (!grid) return;
+  const available = _catalogTiles();
+  grid.innerHTML = '';
+  if (!available.length) {
+    grid.innerHTML = '<div class="picker-empty">Alle Kacheln sind bereits platziert.</div>';
+    return;
+  }
+  available.forEach((t) => {
+    const wd = WIDGET_BY_ID.get(t.id);
+    const card = document.createElement('button');
+    card.className = 'picker-card';
+    card.innerHTML =
+      `<span class="picker-badge">${_widgetBadge(wd.label)}</span>` +
+      `<span class="picker-name">${wd.label}</span>` +
+      '<span class="picker-add">+ Hinzufügen</span>';
+    card.addEventListener('click', () => addWidgetToActivePage(t.id));
+    grid.appendChild(card);
+  });
+}
+
+/* ---------- Design toolbar ---------- */
+function renderDesignBar() {
+  const bar = $('layoutEditBar');
+  if (!bar) return;
+  bar.innerHTML = '';
+  const group = (nodes) => { const g = document.createElement('div'); g.className = 'design-bar-group'; nodes.forEach((n) => g.appendChild(n)); return g; };
+  const btn = (label, cls, fn, title) => {
+    const b = document.createElement('button');
+    b.className = 'cfg-btn' + (cls ? ' ' + cls : '');
+    b.textContent = label;
+    if (title) b.title = title;
+    b.addEventListener('click', fn);
+    return b;
+  };
+  const hint = document.createElement('span');
+  hint.className = 'design-bar-hint';
+  hint.textContent = 'Design-Modus · Kacheln ziehen & an den Rändern skalieren';
+  bar.appendChild(hint);
+  bar.appendChild(group([
+    btn('+ Kachel', 'design-primary', openWidgetPicker, 'Kachel aus dem Katalog hinzufügen'),
+    btn('+ Überschrift', '', addHeading, 'Abschnitts-Überschrift hinzufügen'),
+    btn('+ Seite', '', addPage, 'Neue Seite anlegen'),
+  ]));
+  bar.appendChild(group([
+    btn('Zurücksetzen', 'cfg-btn-del', resetDashboardLayout, 'Layout auf Standard zurücksetzen'),
+    btn('Verwerfen', '', () => exitDesignMode(false), 'Änderungen verwerfen'),
+    btn('✓ Fertig', 'design-primary', () => exitDesignMode(true), 'Speichern & Design-Modus verlassen'),
+  ]));
+}
+
+/* ---------- Toast / snackbar ---------- */
+function toast(msg, opts) {
+  opts = opts || {};
+  let host = $('toastHost');
+  if (!host) { host = document.createElement('div'); host.id = 'toastHost'; host.className = 'toast-host'; document.body.appendChild(host); }
+  const el = document.createElement('div');
+  el.className = 'toast' + (opts.type === 'error' ? ' toast-error' : '');
+  const span = document.createElement('span'); span.className = 'toast-msg'; span.textContent = msg; el.appendChild(span);
+  if (opts.action && opts.actionLabel) {
+    const b = document.createElement('button');
+    b.className = 'toast-action'; b.textContent = opts.actionLabel;
+    b.addEventListener('click', () => { try { opts.action(); } finally { el.remove(); } });
+    el.appendChild(b);
+  }
+  host.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  const ttl = opts.ttl || (opts.action ? 6000 : 3000);
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, ttl);
+}
+
+/* ---------- Settings "Layout" tab + compatibility aliases ---------- */
+function renderLayoutEditor() {
+  const list = $('layoutEditList');
+  if (!list) return;
+  list.innerHTML = '';
+  const intro = document.createElement('div');
+  intro.className = 'cfg-hint';
+  intro.textContent = 'Kacheln frei anordnen, skalieren, ein-/ausblenden und Seiten anlegen — direkt auf dem Dashboard.';
+  list.appendChild(intro);
+  const open = document.createElement('button');
+  open.className = 'cfg-btn design-primary';
+  open.textContent = '✎ Design-Modus öffnen';
+  open.style.marginTop = '10px';
+  open.addEventListener('click', () => {
+    if ($('settingsModal')) closeSettings();
+    enterDesignMode();
+  });
+  list.appendChild(open);
+}
+
+// Alte Inline-onclicks aus index.html: auf die neuen Funktionen mappen.
+function toggleLayoutEditMode() { toggleDesignMode(); }
+function saveDashboardLayout() { saveDashboard(); }
 function resetDashboardLayout() {
-  _layoutState = DASHBOARD_WIDGETS.map((w) => ({ id: w.id, section: w.section, hidden: false }));
-  _applyLayoutToDom(_layoutState);
-  renderLayoutEditor();
+  if (!confirm('Layout auf Standard zurücksetzen? Alle Anpassungen gehen verloren.')) return;
+  _dashboard = reconcileDashboard(buildDefaultDashboard());
+  _activePage = _dashboard.pages[0].id;
+  _rebuildAllGrids();
+  renderPageTabs();
+  toast('Layout zurückgesetzt');
 }
 
 /* ---------- Secrets (credentials) ---------- */
@@ -3014,7 +3559,7 @@ function applyUiPrefs() {
   document.body.classList.toggle('no-anim', !state.animOn);
   document.body.classList.toggle('no-glass', !state.glassOn);
   applySearchVisible();
-  document.documentElement.style.setProperty('--accent', state.accent);
+  _applyAccent(state.accent);
   renderAccents();
   const range = $('updateRange');
   if (range) range.value = state.updateMs;
@@ -3033,9 +3578,17 @@ function renderAccents() {
     row.appendChild(d);
   });
 }
+// Setzt Akzentfarbe + die davon abgeleiteten Töne, damit der Accent-Picker
+// die gesamte (neue) Oberfläche konsistent umfärbt, nicht nur reine --accent-Stellen.
+function _applyAccent(c) {
+  const root = document.documentElement.style;
+  root.setProperty('--accent', c);
+  root.setProperty('--accent-subtle', `color-mix(in srgb, ${c} 9%, transparent)`);
+  root.setProperty('--accent-border', `color-mix(in srgb, ${c} 22%, transparent)`);
+}
 function setAccent(c) {
   state.accent = c;
-  document.documentElement.style.setProperty('--accent', c);
+  _applyAccent(c);
   renderAccents();
   saveUiPrefs();
 }
@@ -3190,7 +3743,7 @@ function injectTileDecor() {
 document.addEventListener('DOMContentLoaded', async () => {
   _applyTheme(localStorage.getItem('theme') || 'dark');
   loadUiPrefs();
-  await loadDashboardLayout();
+  await loadDashboard();
   injectTileDecor();
   tickClock();
   clockTimer = setInterval(tickClock, 1000);

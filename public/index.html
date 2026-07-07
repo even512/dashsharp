@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="vendor/gridstack/gridstack.min.css">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -21,16 +22,16 @@
     <div class="dash-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap;margin-bottom:30px">
       <div class="dash-header-time" style="min-width:240px">
         <div style="font:600 12px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase;display:flex;align-items:center;gap:6px">
-          <span style="color:#5b9dff">~/<span id="brandName">homelab</span></span><span style="color:#3f4a5c">$</span>
+          <span style="color:var(--accent)">~/<span id="brandName">homelab</span></span><span style="color:#3f4a5c">$</span>
           <span id="greeting" style="color:var(--text-4)">good afternoon</span>
-          <span style="color:#5b9dff;animation:blink 1.1s step-end infinite">▋</span>
+          <span style="color:var(--accent);animation:blink 1.1s step-end infinite">▋</span>
         </div>
         <div id="time" style="font:600 64px/0.95 'Space Grotesk',sans-serif;color:var(--text-1);letter-spacing:-0.02em;margin-top:10px;font-variant-numeric:tabular-nums">--:--</div>
         <div id="date" style="font:500 13px/1 'JetBrains Mono',monospace;color:var(--text-3);margin-top:8px;text-transform:capitalize"></div>
       </div>
 
       <div id="searchBar" class="glassy" style="flex:1;min-width:240px;max-width:420px;display:flex;align-items:center;gap:10px;background:var(--bg-glass);border:1px solid var(--border-1);border-radius:12px;padding:13px 16px;backdrop-filter:blur(6px)">
-        <span style="color:#5b9dff;font-weight:700">›</span>
+        <span style="color:var(--accent);font-weight:700">›</span>
         <input id="search" placeholder="Search or run a command…" style="flex:1;background:transparent;border:none;outline:none;color:var(--text-2);font:500 14px 'JetBrains Mono',monospace" />
         <kbd style="font:600 11px 'JetBrains Mono',monospace;color:var(--text-3);border:1px solid rgba(120,150,200,0.2);border-radius:6px;padding:3px 7px">⌘K</kbd>
       </div>
@@ -55,7 +56,7 @@
         <button id="themeToggle" class="icon-btn" title="Light Mode" onclick="toggleTheme()" style="width:46px;height:46px;border-radius:12px;background:var(--bg-glass);border:1px solid var(--border-1);color:var(--text-4);cursor:pointer;display:flex;align-items:center;justify-content:center">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
         </button>
-        <button id="layoutEditBtn" class="icon-btn" title="Edit layout" onclick="toggleLayoutEditMode()" style="width:46px;height:46px;border-radius:12px;background:var(--bg-glass);border:1px solid var(--border-1);color:var(--text-4);cursor:pointer;display:flex;align-items:center;justify-content:center">
+        <button id="layoutEditBtn" class="icon-btn" title="Design-Modus (Dashboard anpassen)" onclick="toggleLayoutEditMode()" style="width:46px;height:46px;border-radius:12px;background:var(--bg-glass);border:1px solid var(--border-1);color:var(--text-4);cursor:pointer;display:flex;align-items:center;justify-content:center">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
         </button>
         <button id="settingsBtn" class="icon-btn" style="width:46px;height:46px;border-radius:12px;background:var(--bg-glass);border:1px solid var(--border-1);color:var(--text-4);cursor:pointer;display:flex;align-items:center;justify-content:center">
@@ -64,8 +65,18 @@
       </div>
     </div>
 
-    <div style="font:600 12px/1 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5b9dff;text-transform:uppercase;display:flex;align-items:center;gap:11px;margin:8px 2px 14px"><span style="opacity:.45">//</span> Quick Access <span style="flex:1;height:1px;background:linear-gradient(90deg,rgba(91,157,255,0.25),transparent)"></span></div>
+    <div style="font:600 12px/1 'JetBrains Mono',monospace;letter-spacing:0.16em;color:var(--accent);text-transform:uppercase;display:flex;align-items:center;gap:11px;margin:8px 2px 14px"><span style="opacity:.45">//</span> Quick Access <span style="flex:1;height:1px;background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 28%,transparent),transparent)"></span></div>
     <div id="quicklinks" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:8px"></div>
+
+    <!-- Seiten-Tabs + Design-Mode-Einstieg (per app.js aufgebaut) -->
+    <div id="dashPages" class="dash-pages"></div>
+    <!-- Dashboard-Raster: pro Seite ein GridStack-Grid (per app.js aufgebaut) -->
+    <div id="dashGrids"></div>
+
+    <!-- Kachel-Vorrat: die statisch ausgelieferten Kachel-Shells. app.js zieht
+         sie beim Laden in die GridStack-Items der aktiven Seite. Bleibt
+         versteckt; nicht platzierte Kacheln warten hier auf den Katalog. -->
+    <div id="tilePool" style="display:none">
 
     <div style="font:600 12px/1 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5b9dff;text-transform:uppercase;display:flex;align-items:center;gap:11px;margin:30px 2px 14px"><span style="opacity:.45">//</span> System &amp; Resources <span style="flex:1;height:1px;background:linear-gradient(90deg,rgba(91,157,255,0.25),transparent)"></span></div>
     <div data-section-id="system" style="display:grid;grid-template-columns:repeat(12,1fr);gap:16px">
@@ -382,6 +393,8 @@
 
     </div>
 
+    </div><!-- /#tilePool -->
+
   </div>
 
   <div id="settingsModal" style="display:none;position:fixed;inset:0;z-index:200;background:var(--overlay);align-items:center;justify-content:center;padding:24px;font-family:'JetBrains Mono',monospace">
@@ -469,12 +482,8 @@
 
           <!-- TAB: LAYOUT -->
           <div class="tab" data-tab="layout">
-            <div class="cfg-section">Tile Visibility</div>
+            <div class="cfg-section">Layout &amp; Design</div>
             <div id="layoutEditList"></div>
-            <div style="display:flex;justify-content:space-between;margin-top:12px">
-              <button class="cfg-btn cfg-btn-del" onclick="resetDashboardLayout()">↺ Reset</button>
-              <button class="cfg-btn" onclick="saveDashboardLayout()">↵ Save</button>
-            </div>
           </div>
 
           <!-- TAB: GLANCES (+ Docker status) -->
@@ -811,6 +820,7 @@
   </div>
 </div>
 
+<script src="vendor/gridstack/gridstack-all.js" defer></script>
 <script src="vendor/sortable.min.js" defer></script>
 <script src="app.js" defer></script>
 </body>

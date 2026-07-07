@@ -4,6 +4,18 @@ All notable changes to Dash# are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/), and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- **Design mode** — a dedicated layout editor for the dashboard. Toggle it from the header (grid icon) or Settings → Layout. Tiles can be freely placed and resized on a 12-column grid (powered by a vendored, offline copy of GridStack), added from a tile catalog, hidden (with an undo snackbar), and arranged per page.
+- **Pages / subpages** — group tiles onto multiple pages with a tab bar. Add, rename (double-click a tab), reorder (drag), and delete pages entirely from design mode. The active page is remembered per browser.
+- **Renamable section headings** — categories are now free-floating heading tiles you can place anywhere and rename inline, replacing the previously hard-coded category labels.
+- **Toast/snackbar** notifications (e.g. layout saved, tile hidden · undo), replacing silent `console`/`alert` feedback for layout actions.
+
+### Changed
+- Dashboard layout is now stored as a richer model (`config/dashboard.json`: pages + per-tile position, size, visibility) instead of the flat order/visibility list. Existing `config/dashboard-layout.json` layouts are migrated automatically on first load (nothing is written until you save, so read-only config volumes are safe).
+- The accent-colour picker now recolours the whole interface consistently: the derived accent tints follow the chosen colour, and remaining hard-coded accent literals in the header were moved onto the accent token.
+
 ## [0.2.7] - 2026-07-02
 
 ### Fixed

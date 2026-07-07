@@ -8,6 +8,7 @@ npm-debug.log*
 # Laufzeit-Daten (werden im /config-Volume erzeugt, nicht versionieren)
 config/secrets.json
 config/dashboard-layout.json
+config/dashboard.json
 config/disks.json
 config/quicklinks.json
 config/status.json
