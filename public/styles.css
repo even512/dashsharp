@@ -184,9 +184,16 @@ select { -webkit-appearance: none; appearance: none; }
   inset: 0;
 }
 .grid-stack-item-content > [data-widget-id] {
-  position: absolute; inset: 0;
+  /* !important: die Shells bringen inline position:relative mit — ohne
+     Override füllt die Kachel ihr Grid-Item nie aus und der Inhalt läuft
+     beim Skalieren unter/über den Kachelrand (abgeschnittene Daten). */
+  position: absolute !important; inset: 0 !important;
   width: auto !important; height: auto !important; margin: 0 !important;
-  box-sizing: border-box; overflow: auto;
+  box-sizing: border-box;
+  /* Die Kachel-Shell scrollt nie selbst — nur die inneren Listen (flex:1 +
+     overflow-y:auto). Sonst entstehen beim Skalieren Kachel-weite
+     Doppel-Scrollbalken. */
+  overflow: hidden !important;
 }
 .grid-stack-item-content > .gs-heading {
   position: absolute; inset: 0;
@@ -214,9 +221,18 @@ body.design-mode .grid-stack-item { cursor: grab; }
 body.design-mode .grid-stack-item.ui-draggable-dragging,
 body.design-mode .grid-stack-item.grid-stack-item.ui-resizable-resizing { cursor: grabbing; }
 
-/* Per-Kachel Options-Button (⋯), nur im Design-Mode sichtbar */
-.gs-tile-controls { display: none; position: absolute; top: 10px; right: 10px; z-index: 6; }
-body.design-mode .gs-tile-controls { display: block; }
+/* Per-Kachel Options-Button (⋯): immer vorhanden, erscheint beim Hover der
+   Kachel (auch außerhalb des Design-Modus → Zugang zu den Kachel-
+   Einstellungen). Bei Überschriften nur im Design-Mode relevant. */
+.gs-tile-controls {
+  display: block; position: absolute; top: 10px; right: 10px; z-index: 6;
+  opacity: 0; pointer-events: none; transition: opacity .15s;
+}
+.grid-stack-item:hover .gs-tile-controls,
+.gs-tile-controls.menu-open,
+body.design-mode .gs-tile-controls { opacity: 1; pointer-events: auto; }
+.gs-item-heading .gs-tile-controls { display: none; }
+body.design-mode .gs-item-heading .gs-tile-controls { display: block; }
 .gs-tile-btn {
   width: 26px; height: 26px; border-radius: 7px;
   background: var(--bg-modal); border: 1px solid var(--border-2); color: var(--text-3);
@@ -235,6 +251,7 @@ body.design-mode .gs-tile-controls { display: block; }
 .tile-menu-sizes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 6px; }
 .tile-menu-size { padding: 7px 4px; border-radius: 7px; background: var(--bg-glass); border: 1px solid var(--border-2); color: var(--text-2); cursor: pointer; font: 500 11px 'JetBrains Mono', monospace; }
 .tile-menu-size:hover { border-color: var(--accent-border); color: var(--accent); }
+.tile-menu-size.active { background: var(--accent-subtle); border-color: var(--accent-border); color: var(--accent); }
 .tile-menu-sep { height: 1px; background: var(--sep); margin: 6px 2px; }
 .tile-menu-item { display: block; width: 100%; text-align: left; padding: 8px; border-radius: 7px; background: transparent; border: 0; color: var(--text-2); cursor: pointer; font: 500 12px 'JetBrains Mono', monospace; }
 .tile-menu-item:hover { background: var(--accent-subtle); color: var(--accent); }
@@ -273,6 +290,22 @@ body.design-mode #layoutEditBar { display: flex; flex-wrap: wrap; gap: 12px; }
 .picker-badge { width: 34px; height: 34px; border-radius: 9px; display: flex; align-items: center; justify-content: center; background: var(--accent-subtle); color: var(--accent); font: 700 12px 'JetBrains Mono', monospace; border: 1px solid var(--accent-border); }
 .picker-name { font: 600 12px 'Space Grotesk', sans-serif; color: var(--text-1); }
 .picker-add { font: 600 10px 'JetBrains Mono', monospace; color: var(--text-4); text-transform: uppercase; letter-spacing: .08em; }
+
+/* Kachel-Einstellungen (Modal, nutzt die Picker-Optik) */
+.tile-settings-body { padding: 14px 20px 18px; overflow-y: auto; display: flex; flex-direction: column; }
+.tile-settings-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 10px 2px; min-height: 40px; border-bottom: 1px solid var(--border-4);
+}
+.tile-settings-row:last-child { border-bottom: none; }
+.tile-settings-key { font: 500 12px 'JetBrains Mono', monospace; color: var(--text-2); }
+.tile-settings-hint { font: 500 10px 'JetBrains Mono', monospace; color: var(--text-dim); margin-top: 3px; }
+.tile-settings-row .cfg-input { width: 190px; }
+.tile-settings-row .cfg-input.ts-count { width: 76px; text-align: center; }
+
+/* Per-Kachel-Config: JS-generierte Inhalte via Shell-Klasse ausblenden */
+[data-widget-id="plex"].cfg-hide-posters .plex-poster { display: none !important; }
+[data-widget-id="unraid-vms"].cfg-hide-actions .vm-btn:not(.vm-more) { display: none !important; }
 
 /* Toast / Snackbar */
 .toast-host { position: fixed; left: 24px; bottom: 24px; z-index: 500; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; pointer-events: none; }

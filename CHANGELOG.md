@@ -7,8 +7,17 @@ This project adheres to [Semantic Versioning](https://semver.org/), and the form
 ## [Unreleased]
 
 ### Added
+- **Per-tile settings** — every widget tile now has a ⋯ menu (appears on hover, no design mode required) with a settings dialog: override the tile title and toggle the tile's building blocks (e.g. System Load rings/stats/chart, Docker summary, Plex posters, Nextcloud user list/upload/footer, UniFi columns) or cap list lengths (services, containers, VMs, Plex sessions, AdGuard top list, access points). Settings are stored in the dashboard model (`tile.config`) and saved automatically; inside design mode they participate in save/discard.
 - **Design mode** — a dedicated layout editor for the dashboard. Toggle it from the header (grid icon) or Settings → Layout. Tiles can be freely placed and resized on a 12-column grid (powered by a vendored, offline copy of GridStack), added from a tile catalog, hidden (with an undo snackbar), and arranged per page.
 - **Pages / subpages** — group tiles onto multiple pages with a tab bar. Add, rename (double-click a tab), reorder (drag), and delete pages entirely from design mode. The active page is remembered per browser.
+
+### Fixed
+- Tiles no longer clip, overlap, or grow stray scrollbars when resized: tile bodies are now flex layouts whose lists stretch/shrink with the tile (instead of hard-coded `max-height`s), fixed-height blocks no longer squash into each other, and the tile shell itself never scrolls — only the inner lists do (the WiFi/Protect tiles previously scrolled the whole card).
+- Widgets now have sensible minimum sizes, so they can't be shrunk below what their content needs.
+- The per-tile ⋯ button no longer covers the tile header's status text — it only appears while hovering the tile.
+- Editing the layout in a narrow window (responsive 1-column mode) no longer corrupts the saved 12-column layout: geometry is only written back while the full grid is active.
+- "Undo" after hiding a tile now restores its previous position and size instead of re-adding it at the bottom with default dimensions.
+- Pages can now actually be deleted from the design bar ("Seite löschen" — the function existed but was never reachable).
 - **Renamable section headings** — categories are now free-floating heading tiles you can place anywhere and rename inline, replacing the previously hard-coded category labels.
 - **Toast/snackbar** notifications (e.g. layout saved, tile hidden · undo), replacing silent `console`/`alert` feedback for layout actions.
 
