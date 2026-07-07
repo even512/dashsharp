@@ -34,6 +34,11 @@
     <div id="status"><span id="dot"></span><span id="statusText">Verbinde…</span></div>
     <span id="vmname"></span>
     <span id="spacer"></span>
+    <select class="b" id="quality" title="Bildqualität – niedriger = flüssiger">
+      <option value="fluid">Flüssig</option>
+      <option value="balanced">Ausgewogen</option>
+      <option value="sharp">Scharf</option>
+    </select>
     <button class="b" id="ctrlAltDel" title="Strg+Alt+Entf senden">C-A-D</button>
     <button class="b" id="reconnect">Neu verbinden</button>
     <button class="b" id="fullscreen">Vollbild</button>
@@ -54,6 +59,20 @@ $('vmname').textContent = nameFromUrl;
 
 let rfb = null;
 let password = '';
+
+// Qualitaets-Presets: niedrigere JPEG-Qualitaet -> weniger Daten/CPU -> fluessiger.
+const QUALITY = {
+  fluid:    { quality: 4, compression: 2 },
+  balanced: { quality: 6, compression: 2 },
+  sharp:    { quality: 9, compression: 1 },
+};
+let qualityKey = localStorage.getItem('vnc.quality') || 'fluid';
+if (!QUALITY[qualityKey]) qualityKey = 'fluid';
+function applyQuality() {
+  if (!rfb) return;
+  const q = QUALITY[qualityKey] || QUALITY.fluid;
+  try { rfb.qualityLevel = q.quality; rfb.compressionLevel = q.compression; } catch (_) {}
+}
 
 function setStatus(text, color) { statusText.textContent = text; dot.style.background = color || '#6b7689'; }
 function showMsg(title, bodyHtml) {
@@ -101,10 +120,12 @@ async function connect() {
     return showMsg('noVNC-Fehler', String(e && e.message || e));
   }
   rfb.scaleViewport = true;
+  rfb.resizeSession = true;   // Server passt Aufloesung ans Fenster an (weniger Pixel = fluessiger)
   rfb.clipViewport = false;
   rfb.focusOnClick = true;
+  applyQuality();
 
-  rfb.addEventListener('connect', () => { setStatus('Verbunden', '#3ddc97'); hideMsg(); screen.focus(); });
+  rfb.addEventListener('connect', () => { setStatus('Verbunden', '#3ddc97'); hideMsg(); screen.focus(); applyQuality(); });
   rfb.addEventListener('disconnect', (e) => {
     setStatus('Getrennt', '#f43f5e');
     if (!(e.detail && e.detail.clean)) {
@@ -118,6 +139,14 @@ async function connect() {
       'Das VNC-Passwort der VM wurde nicht akzeptiert.' + (e.detail && e.detail.reason ? '<br>' + e.detail.reason : ''));
   });
 }
+
+const qualitySel = $('quality');
+qualitySel.value = qualityKey;
+qualitySel.addEventListener('change', () => {
+  qualityKey = qualitySel.value;
+  localStorage.setItem('vnc.quality', qualityKey);
+  applyQuality();
+});
 
 $('reconnect').addEventListener('click', connect);
 $('ctrlAltDel').addEventListener('click', () => { if (rfb) rfb.sendCtrlAltDel(); });

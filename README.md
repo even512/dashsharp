@@ -124,6 +124,24 @@ QEMU VNC port, bypassing Unraid's login entirely. The console modal also has **o
 > over HTTP on your LAN for the embedded console. Per-VM CPU/RAM graphs are not exposed by the
 > GraphQL API and are therefore not shown.
 
+#### Making the console feel smooth
+
+VNC is inherently choppy for interactive desktops (it re-encodes the screen on the host), so the same
+lag shows up in Unraid's own noVNC too. Options, from quick to best:
+
+- **Tune noVNC** — the console toolbar has a **quality** selector (*Fluid / Balanced / Sharp*); *Fluid*
+  sends less data and feels smoother. Dash# also requests a server-side resize to your window and
+  disables Nagle on the socket to cut input latency.
+- **Windows guests → RDP.** Windows VMs get an extra **RDP** button that downloads a ready-made `.rdp`
+  file for the native client — dramatically smoother than VNC. The guest IP is found automatically over
+  SSH (`virsh domifaddr`; install the VirtIO guest tools / QEMU guest agent), or set it per-VM under
+  **Settings → Unraid VMs → VMs & RDP**. Enable Remote Desktop inside Windows first. The Windows type is
+  auto-detected from the Unraid VM template and can be overridden there.
+- **Linux guests** — switch the VM's graphics from QXL to **VirtIO (3D / VirGL)** and install the guest
+  drivers; give it more video RAM.
+- **Near-native (gaming / GPU)** — run **Sunshine** in the VM and connect with **Moonlight** for
+  hardware-encoded H.264/HEVC streaming, ideal with GPU passthrough.
+
 Any value can also be set as an environment variable (see [`.env.example`](.env.example)); env vars take
 precedence over the UI values.
 
