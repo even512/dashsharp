@@ -406,6 +406,12 @@ const cache = {
   unifi:    { ts: 0, data: null },
   nextcloud:{ ts: 0, data: null },
   unraid:   { ts: 0, data: null },
+  unraidDocker: { ts: 0, data: null },
+  unraidArray:  { ts: 0, data: null },
+  unraidShares: { ts: 0, data: null },
+  unraidNotif:  { ts: 0, data: null },
+  unraidSystem: { ts: 0, data: null },
+  unraidUps:    { ts: 0, data: null },
 };
 const GLANCES_TTL   = 500;    // ms – Glances-Metriken hoechstens 2x/s abrufen; muss unter dem
                               // kleinsten Client-Poll-Intervall (400 ms Slider-Minimum) liegen,
@@ -1019,7 +1025,7 @@ app.post('/api/quicklinks', (req, res) => {
   }
 });
 
-const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH', 'UNRAID_URL', 'UNRAID_API_KEY', 'UNRAID_SSH_HOST', 'UNRAID_SSH_PORT', 'UNRAID_SSH_USER', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY'];
+const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH', 'UNRAID_URL', 'UNRAID_API_KEY', 'UNRAID_SSH_HOST', 'UNRAID_SSH_PORT', 'UNRAID_SSH_USER', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'UNRAID_DANGER_ACTIONS'];
 const SECRETS_MASKED = new Set(['ADGUARD_PASS', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'NEXTCLOUD_PASS', 'UNRAID_API_KEY', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY']);
 
 app.get('/api/secrets', (req, res) => {
@@ -1648,6 +1654,434 @@ app.post('/api/vm/action', async (req, res) => {
     res.status(502).json({ ok: false, error: 'action_failed', message: err.message });
   }
 });
+
+/* ============================================================
+   Unraid-Suite (weitere Kacheln ueber die GraphQL-API)
+   Docker-Container, Array/Parity, Disks, Shares, Meldungen,
+   System-Info und USV – gleiche API wie die VM-Kachel. Optionale
+   Schema-Felder (abhaengig von der unraid-api-Version) werden per
+   Fallback-Query abgefangen. Riskante Aktionen (Array-Stop/Start,
+   Parity-Steuerung, Neustart/Shutdown) sind serverseitig hinter
+   dem Opt-in UNRAID_DANGER_ACTIONS gesperrt.
+   ============================================================ */
+
+const UNRAID_DOCKER_TTL = 8000;   // ms – Container-Status
+const UNRAID_ARRAY_TTL  = 15000;  // ms – Array/Disks (eine Query bedient beide Kacheln)
+const UNRAID_SHARES_TTL = 60000;  // ms – Share-Fuellstaende aendern sich langsam
+const UNRAID_NOTIF_TTL  = 20000;  // ms – Unraid-Meldungen
+const UNRAID_SYSTEM_TTL = 5000;   // ms – Live-CPU/RAM
+const UNRAID_UPS_TTL    = 15000;  // ms – USV-Status
+
+function unraidDangerEnabled() { return getSecret('UNRAID_DANGER_ACTIONS') === 'true'; }
+
+// BigInt-/String-Zahlenfelder der API robust in Number wandeln.
+function unraidNum(v) { const n = parseFloat(v); return Number.isFinite(n) ? n : null; }
+
+// Gemeinsames GET-Boilerplate der Unraid-Endpoints:
+// cfg-Check -> Cache-Hit -> Fetch -> bei Fehler letzte Daten als _stale.
+async function serveUnraid(res, slot, ttl, fetchFn) {
+  res.set('Cache-Control', 'no-store');
+  const cfg = unraidCfg();
+  if (!cfg) return res.json({ ok: false, error: 'not_configured' });
+  if (cache[slot].data && Date.now() - cache[slot].ts < ttl) return res.json(cache[slot].data);
+  try {
+    const result = await fetchFn(cfg);
+    cache[slot] = { ts: Date.now(), data: result };
+    res.json(result);
+  } catch (err) {
+    console.error(`Unraid-Abruf (${slot}) fehlgeschlagen:`, err.message);
+    if (cache[slot].data) return res.json({ ...cache[slot].data, _stale: true });
+    res.json({ ok: false, error: 'fetch_failed', message: err.message });
+  }
+}
+
+/* ---------- Docker-Container ---------- */
+
+async function fetchUnraidDocker(cfg) {
+  const fields = 'id names image state status autoStart';
+  let list;
+  try {
+    // isUpdateAvailable gibt es erst in neueren unraid-api-Versionen
+    const d = await unraidGraphQL(cfg, `query { docker { containers { ${fields} isUpdateAvailable } } }`);
+    list = (d.docker && d.docker.containers) || [];
+  } catch (e) {
+    const d = await unraidGraphQL(cfg, `query { docker { containers { ${fields} } } }`);
+    list = (d.docker && d.docker.containers) || [];
+  }
+  const stateOf = (s) => {
+    const u = String(s || '').toUpperCase();
+    if (u === 'RUNNING') return 'running';
+    if (u === 'PAUSED')  return 'paused';
+    return 'exited';
+  };
+  const containers = list.map((c) => ({
+    id:        c.id,
+    name:      String((c.names && c.names[0]) || '?').replace(/^\//, ''),
+    image:     c.image || '',
+    state:     stateOf(c.state),
+    rawState:  c.state || null,
+    status:    c.status || '',
+    autoStart: !!c.autoStart,
+    updateAvailable: c.isUpdateAvailable === true,
+  }));
+  const order = { running: 0, paused: 1, exited: 2 };
+  containers.sort((a, b) => (order[a.state] - order[b.state]) || a.name.localeCompare(b.name));
+  return {
+    ok:      true,
+    total:   containers.length,
+    running: containers.filter(c => c.state === 'running').length,
+    paused:  containers.filter(c => c.state === 'paused').length,
+    exited:  containers.filter(c => c.state === 'exited').length,
+    updates: containers.filter(c => c.updateAvailable).length,
+    containers,
+  };
+}
+
+app.get('/api/unraid/docker', (req, res) => serveUnraid(res, 'unraidDocker', UNRAID_DOCKER_TTL, fetchUnraidDocker));
+
+// Erlaubte Container-Aktionen (Allowlist wie VM_ACTIONS).
+const UNRAID_DOCKER_ACTIONS = { start: 'start', stop: 'stop', restart: 'restart', pause: 'pause', unpause: 'unpause' };
+
+app.post('/api/unraid/docker/action', async (req, res) => {
+  const cfg = unraidCfg();
+  if (!cfg) return res.status(400).json({ ok: false, error: 'not_configured' });
+  const id     = String((req.body && req.body.id)     || '').trim();
+  const action = String((req.body && req.body.action) || '').trim();
+  if (!id) return res.status(400).json({ ok: false, error: 'missing_id' });
+  const mutation = UNRAID_DOCKER_ACTIONS[action];
+  if (!mutation) return res.status(400).json({ ok: false, error: 'bad_action' });
+  try {
+    // DockerMutations liefern DockerContainer -> Selection-Set noetig
+    const data = await unraidGraphQL(
+      cfg,
+      `mutation($id: PrefixedID!) { docker { ${mutation}(id: $id) { id state } } }`,
+      { id },
+      20000
+    );
+    const ok = !!(data.docker && data.docker[mutation]);
+    cache.unraidDocker.ts = 0;
+    res.json({ ok });
+  } catch (err) {
+    console.error(`Unraid-Docker-Aktion '${action}' fehlgeschlagen:`, err.message);
+    res.status(502).json({ ok: false, error: 'action_failed', message: err.message });
+  }
+});
+
+/* ---------- Array, Parity & Disks ---------- */
+
+function mapUnraidDisk(d) {
+  const fsSize = unraidNum(d.fsSize), fsUsed = unraidNum(d.fsUsed), fsFree = unraidNum(d.fsFree);
+  return {
+    id:     d.id,
+    idx:    Number.isFinite(+d.idx) ? +d.idx : null,
+    name:   d.name || d.device || '?',
+    device: d.device || null,
+    sizeKb: unraidNum(d.size),
+    status: d.status || null,
+    ok:     d.status === 'DISK_OK',
+    present: !/^DISK_NP/.test(String(d.status || '')),
+    temp:   Number.isFinite(+d.temp) ? +d.temp : null,
+    errors: unraidNum(d.numErrors) || 0,
+    type:   d.type || null,
+    rotational: d.rotational !== false,
+    fsSizeKb: fsSize, fsUsedKb: fsUsed, fsFreeKb: fsFree,
+    pctUsed: (fsSize && fsUsed != null) ? Math.round(fsUsed / fsSize * 100) : null,
+  };
+}
+
+function mapUnraidParity(p) {
+  if (!p) return null;
+  return {
+    status:     p.status || null,
+    running:    !!p.running,
+    paused:     !!p.paused,
+    correcting: !!p.correcting,
+    progress:   Number.isFinite(+p.progress) ? +p.progress : null,
+    speed:      p.speed || null,
+    errors:     Number.isFinite(+p.errors) ? +p.errors : null,
+    date:       p.date || null,
+    duration:   Number.isFinite(+p.duration) ? +p.duration : null,
+  };
+}
+
+async function fetchUnraidArray(cfg) {
+  const diskFields = 'id idx name device size status temp numErrors type rotational';
+  const fsFields   = 'fsSize fsFree fsUsed';
+  const arrayCore  = `state
+    capacity { kilobytes { free used total } disks { free used total } }
+    parities { ${diskFields} }
+    disks    { ${diskFields} ${fsFields} }
+    caches   { ${diskFields} ${fsFields} }`;
+  let arr, parity = null;
+  try {
+    // parityCheckStatus gibt es erst ab unraid-api 4.16
+    const d = await unraidGraphQL(cfg, `query { array { ${arrayCore}
+      parityCheckStatus { status progress speed errors correcting paused running date duration } } }`, null, 10000);
+    arr = d.array;
+    parity = mapUnraidParity(arr && arr.parityCheckStatus);
+  } catch (e) {
+    const d = await unraidGraphQL(cfg, `query { array { ${arrayCore} } }`, null, 10000);
+    arr = d.array;
+    // Fallback: laufenden Parity-Check aus den md-Variablen ableiten (aeltere API)
+    try {
+      const v = (await unraidGraphQL(cfg, `query { vars { mdResync mdResyncPos mdResyncSize mdResyncAction sbSyncErrs } }`)).vars || {};
+      const size = unraidNum(v.mdResyncSize), pos = unraidNum(v.mdResyncPos);
+      const running = (unraidNum(v.mdResync) || 0) > 0;
+      parity = {
+        status:     running ? 'RUNNING' : null,
+        running,
+        paused:     false,
+        correcting: /correct/i.test(String(v.mdResyncAction || '')),
+        progress:   (running && size) ? Math.round((pos || 0) / size * 100) : null,
+        speed: null, errors: unraidNum(v.sbSyncErrs), date: null, duration: null,
+      };
+    } catch (_) { /* Parity-Status dann unbekannt */ }
+  }
+  if (!arr) throw new Error('array_missing');
+  const kb    = (arr.capacity && arr.capacity.kilobytes) || {};
+  const slots = (arr.capacity && arr.capacity.disks) || {};
+  const totalKb = unraidNum(kb.total) || 0, usedKb = unraidNum(kb.used) || 0, freeKb = unraidNum(kb.free) || 0;
+  return {
+    ok: true,
+    dangerEnabled: unraidDangerEnabled(),
+    state:   arr.state || null,
+    started: arr.state === 'STARTED',
+    capacity: {
+      totalKb, usedKb, freeKb,
+      pctUsed:    totalKb ? Math.round(usedKb / totalKb * 100) : null,
+      slotsUsed:  unraidNum(slots.used),
+      slotsTotal: unraidNum(slots.total),
+    },
+    parity,
+    parities: (arr.parities || []).map(mapUnraidDisk),
+    disks:    (arr.disks    || []).map(mapUnraidDisk),
+    caches:   (arr.caches   || []).map(mapUnraidDisk),
+  };
+}
+
+app.get('/api/unraid/array', (req, res) => serveUnraid(res, 'unraidArray', UNRAID_ARRAY_TTL, fetchUnraidArray));
+
+// Array-/Parity-Aktionen sind allesamt riskant -> Danger-Gate (403 wenn aus).
+const UNRAID_ARRAY_ACTIONS = {
+  start:        { kind: 'state',  state: 'START' },
+  stop:         { kind: 'state',  state: 'STOP' },
+  parityStart:  { kind: 'parity', field: 'start' },
+  parityPause:  { kind: 'parity', field: 'pause' },
+  parityResume: { kind: 'parity', field: 'resume' },
+  parityCancel: { kind: 'parity', field: 'cancel' },
+};
+
+app.post('/api/unraid/array/action', async (req, res) => {
+  const cfg = unraidCfg();
+  if (!cfg) return res.status(400).json({ ok: false, error: 'not_configured' });
+  const action = String((req.body && req.body.action) || '').trim();
+  const spec = UNRAID_ARRAY_ACTIONS[action];
+  if (!spec) return res.status(400).json({ ok: false, error: 'bad_action' });
+  if (!unraidDangerEnabled()) return res.status(403).json({ ok: false, error: 'danger_disabled' });
+  try {
+    if (spec.kind === 'state') {
+      await unraidGraphQL(
+        cfg,
+        'mutation($input: ArrayStateInput!) { array { setState(input: $input) { state } } }',
+        { input: { desiredState: spec.state } },
+        30000 // Array-Start/-Stop kann dauern
+      );
+    } else if (spec.field === 'start') {
+      const correct = !!(req.body && req.body.correct);
+      await unraidGraphQL(cfg, 'mutation($correct: Boolean!) { parityCheck { start(correct: $correct) } }', { correct }, 15000);
+    } else {
+      await unraidGraphQL(cfg, `mutation { parityCheck { ${spec.field} } }`, null, 15000);
+    }
+    cache.unraidArray.ts = 0;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`Unraid-Array-Aktion '${action}' fehlgeschlagen:`, err.message);
+    res.status(502).json({ ok: false, error: 'action_failed', message: err.message });
+  }
+});
+
+/* ---------- Shares ---------- */
+
+async function fetchUnraidShares(cfg) {
+  const d = await unraidGraphQL(cfg, 'query { shares { id name comment free used size cache } }');
+  const shares = (d.shares || []).map((s) => {
+    const freeKb = unraidNum(s.free), usedKb = unraidNum(s.used);
+    let sizeKb = unraidNum(s.size);
+    // `size` ist bei User-Shares oft 0 -> aus used+free ableiten
+    if (!sizeKb && usedKb != null && freeKb != null) sizeKb = usedKb + freeKb;
+    return {
+      id: s.id || s.name, name: s.name || '?', comment: s.comment || '',
+      freeKb, usedKb, sizeKb,
+      pctUsed: (sizeKb && usedKb != null) ? Math.round(usedKb / sizeKb * 100) : null,
+      cached: s.cache === true,
+    };
+  }).sort((a, b) => (b.usedKb || 0) - (a.usedKb || 0));
+  return { ok: true, total: shares.length, shares };
+}
+
+app.get('/api/unraid/shares', (req, res) => serveUnraid(res, 'unraidShares', UNRAID_SHARES_TTL, fetchUnraidShares));
+
+/* ---------- Meldungen (Notifications) ---------- */
+
+async function fetchUnraidNotifications(cfg) {
+  const d = await unraidGraphQL(cfg, `query {
+    notifications {
+      overview { unread { info warning alert total } archive { total } }
+      list(filter: { type: UNREAD, offset: 0, limit: 30 }) {
+        id title subject description importance link timestamp
+      }
+    }
+  }`);
+  const n = d.notifications || {};
+  const unread = (n.overview && n.overview.unread) || {};
+  const notifications = (n.list || []).map((x) => ({
+    id: x.id, title: x.title || '', subject: x.subject || '',
+    description: x.description || '', importance: x.importance || 'INFO',
+    link: x.link || null, timestamp: x.timestamp || null,
+  }));
+  return {
+    ok: true,
+    unread: {
+      info: unread.info | 0, warning: unread.warning | 0,
+      alert: unread.alert | 0, total: unread.total | 0,
+    },
+    archived: ((n.overview && n.overview.archive) || {}).total | 0,
+    notifications,
+  };
+}
+
+app.get('/api/unraid/notifications', (req, res) => serveUnraid(res, 'unraidNotif', UNRAID_NOTIF_TTL, fetchUnraidNotifications));
+
+app.post('/api/unraid/notifications/action', async (req, res) => {
+  const cfg = unraidCfg();
+  if (!cfg) return res.status(400).json({ ok: false, error: 'not_configured' });
+  const action = String((req.body && req.body.action) || '').trim();
+  const id     = String((req.body && req.body.id)     || '').trim();
+  try {
+    if (action === 'archive') {
+      if (!id) return res.status(400).json({ ok: false, error: 'missing_id' });
+      await unraidGraphQL(cfg, 'mutation($id: PrefixedID!) { archiveNotification(id: $id) { id } }', { id });
+    } else if (action === 'archiveAll') {
+      await unraidGraphQL(cfg, 'mutation { archiveAll { unread { total } } }');
+    } else {
+      return res.status(400).json({ ok: false, error: 'bad_action' });
+    }
+    cache.unraidNotif.ts = 0;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`Unraid-Meldungs-Aktion '${action}' fehlgeschlagen:`, err.message);
+    res.status(502).json({ ok: false, error: 'action_failed', message: err.message });
+  }
+});
+
+/* ---------- System-Info ---------- */
+
+async function fetchUnraidSystem(cfg) {
+  const d = await unraidGraphQL(cfg, `query {
+    info {
+      os { hostname distro release kernel uptime }
+      cpu { brand cores threads }
+      versions { core { unraid api } }
+    }
+    online
+  }`);
+  const info = d.info || {};
+  const os = info.os || {}, cpuInfo = info.cpu || {};
+  const core = (info.versions && info.versions.core) || {};
+  // os.uptime ist der Boot-Zeitpunkt als ISO-String
+  let uptimeSec = null;
+  if (os.uptime) {
+    const t = Date.parse(os.uptime);
+    if (Number.isFinite(t)) uptimeSec = Math.max(0, Math.round((Date.now() - t) / 1000));
+  }
+  const result = {
+    ok: true,
+    dangerEnabled: unraidDangerEnabled(),
+    sshEnabled: !!unraidSshCfg(),
+    online: d.online !== false,
+    hostname: os.hostname || null, distro: os.distro || null,
+    release: os.release || null, kernel: os.kernel || null,
+    unraidVersion: core.unraid || null, apiVersion: core.api || null,
+    bootTime: os.uptime || null, uptimeSec,
+    cpuBrand: cpuInfo.brand || null,
+    cores: cpuInfo.cores || null, threads: cpuInfo.threads || null,
+    cpuPct: null, ramPct: null, ramUsed: null, ramTotal: null,
+  };
+  try {
+    // metrics gibt es erst in neueren unraid-api-Versionen
+    const m = (await unraidGraphQL(cfg, 'query { metrics { cpu { percentTotal } memory { percentTotal total used } } }')).metrics || {};
+    if (m.cpu && Number.isFinite(+m.cpu.percentTotal)) result.cpuPct = Math.round(+m.cpu.percentTotal * 10) / 10;
+    if (m.memory) {
+      if (Number.isFinite(+m.memory.percentTotal)) result.ramPct = Math.round(+m.memory.percentTotal * 10) / 10;
+      result.ramUsed  = unraidNum(m.memory.used);
+      result.ramTotal = unraidNum(m.memory.total);
+    }
+  } catch (_) { /* aeltere API ohne metrics */ }
+  return result;
+}
+
+app.get('/api/unraid/system', (req, res) => serveUnraid(res, 'unraidSystem', UNRAID_SYSTEM_TTL, fetchUnraidSystem));
+
+// Neustart/Shutdown: die GraphQL-API v4 hat keine solchen Mutationen mehr
+// (nur VmMutations.reboot), deshalb ueber den vorhandenen SSH-Kanal.
+// Doppelt gesperrt: Danger-Flag UND SSH-Zugang muessen konfiguriert sein.
+const UNRAID_SYSTEM_ACTIONS = { reboot: 'reboot', shutdown: 'poweroff' };
+
+app.post('/api/unraid/system/action', async (req, res) => {
+  const action = String((req.body && req.body.action) || '').trim();
+  const cmd = UNRAID_SYSTEM_ACTIONS[action];
+  if (!cmd) return res.status(400).json({ ok: false, error: 'bad_action' });
+  if (!unraidDangerEnabled()) return res.status(403).json({ ok: false, error: 'danger_disabled' });
+  const sshCfg = unraidSshCfg();
+  if (!sshCfg) return res.status(400).json({ ok: false, error: 'needs_ssh' });
+  try {
+    const conn = await sshConnect(sshCfg);
+    // Fire-and-forget: die SSH-Session stirbt mit dem Host, daher nohup + &
+    try { await sshExec(conn, `nohup ${cmd} >/dev/null 2>&1 &`); }
+    finally { try { conn.end(); } catch (_) {} }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`Unraid-System-Aktion '${action}' fehlgeschlagen:`, err.message);
+    res.status(502).json({ ok: false, error: 'action_failed', message: err.message });
+  }
+});
+
+/* ---------- USV (UPS) ---------- */
+
+async function fetchUnraidUps(cfg) {
+  const fields = 'id name model status battery { chargeLevel estimatedRuntime health }';
+  let list;
+  try {
+    // power-Block gibt es erst ab unraid-api 4.30
+    const d = await unraidGraphQL(cfg, `query { upsDevices { ${fields} power { inputVoltage outputVoltage loadPercentage nominalPower currentPower } } }`);
+    list = d.upsDevices || [];
+  } catch (e) {
+    try {
+      const d = await unraidGraphQL(cfg, `query { upsDevices { ${fields} } }`);
+      list = d.upsDevices || [];
+    } catch (e2) {
+      // upsDevices gibt es erst ab unraid-api 4.12
+      return { ok: false, error: 'unsupported' };
+    }
+  }
+  const devices = list.map((u) => {
+    const b = u.battery || {}, p = u.power || {};
+    return {
+      id: u.id, name: u.name || u.model || 'USV', model: u.model || '',
+      status: u.status || '', online: /online/i.test(String(u.status || '')),
+      chargePct: Number.isFinite(+b.chargeLevel) ? +b.chargeLevel : null,
+      // Hinweis: vor unraid-api 4.28 lieferte estimatedRuntime Minuten statt Sekunden
+      runtimeSec: Number.isFinite(+b.estimatedRuntime) ? +b.estimatedRuntime : null,
+      health: b.health || null,
+      loadPct: Number.isFinite(+p.loadPercentage) ? +p.loadPercentage : null,
+      watts: Number.isFinite(+p.currentPower) ? +p.currentPower : null,
+      inputVoltage: Number.isFinite(+p.inputVoltage) ? +p.inputVoltage : null,
+    };
+  });
+  return { ok: true, total: devices.length, devices };
+}
+
+app.get('/api/unraid/ups', (req, res) => serveUnraid(res, 'unraidUps', UNRAID_UPS_TTL, fetchUnraidUps));
 
 /* ============================================================
    Direkter VNC-Zugriff (ohne Unraid-Login)

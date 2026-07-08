@@ -258,6 +258,122 @@
         </div>
         <div id="vmList" style="display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;overflow-y:auto;padding-right:6px;margin-right:-6px"></div>
       </div>
+
+      <div data-widget-id="unraid-docker" style="grid-column:span 4;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden;display:flex;flex-direction:column">
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('unraid-docker')">✕</button></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-shrink:0">
+          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase"><span data-tile-title>Unraid Docker</span></div>
+          <div id="udkBadge" style="display:flex;align-items:center;gap:6px;font:500 11px 'JetBrains Mono',monospace;color:#ff7a30"><span style="width:6px;height:6px;border-radius:2px;background:#ff7a30"></span>–</div>
+        </div>
+        <div data-cfg="summary" style="display:flex;align-items:baseline;gap:8px;margin-bottom:16px;flex-shrink:0">
+          <span id="udkCount" style="font:600 44px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</span>
+          <span id="udkSummary" style="font:500 12px 'JetBrains Mono',monospace;color:var(--text-3)">Container</span>
+        </div>
+        <div id="udkList" style="display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;overflow-y:auto;padding-right:6px;margin-right:-6px"></div>
+      </div>
+
+      <div data-widget-id="unraid-array" style="grid-column:span 4;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden;display:flex;flex-direction:column">
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('unraid-array')">✕</button></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-shrink:0">
+          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase"><span data-tile-title>Unraid Array</span></div>
+          <div id="uarBadge" style="display:flex;align-items:center;gap:6px;font:500 11px 'JetBrains Mono',monospace;color:#ff7a30"><span style="width:6px;height:6px;border-radius:2px;background:#ff7a30"></span>–</div>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:14px;flex-shrink:0">
+          <span id="uarState" style="font:600 28px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</span>
+          <span id="uarSlots" style="font:500 12px 'JetBrains Mono',monospace;color:var(--text-3)"></span>
+        </div>
+        <div data-cfg="capacity" style="margin-bottom:14px;flex-shrink:0">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+            <span style="font:600 9px/1 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase">Belegung</span>
+            <span id="uarCapText" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-2)">–</span>
+          </div>
+          <div style="height:8px;border-radius:4px;background:rgba(120,150,200,0.12);overflow:hidden">
+            <div id="uarCapBar" style="height:100%;width:0%;border-radius:4px;background:linear-gradient(90deg,#ff7a30,#ffb454);transition:width 0.8s cubic-bezier(.4,0,.2,1)"></div>
+          </div>
+        </div>
+        <div data-cfg="parity" style="margin-bottom:12px;flex-shrink:0">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+            <span style="font:600 9px/1 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase">Parity</span>
+            <span id="uarParity" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-2)">–</span>
+          </div>
+          <div id="uarParityBarWrap" style="height:6px;border-radius:3px;background:rgba(120,150,200,0.12);overflow:hidden;display:none">
+            <div id="uarParityBar" style="height:100%;width:0%;border-radius:3px;background:#8b6dff;transition:width 0.8s cubic-bezier(.4,0,.2,1)"></div>
+          </div>
+        </div>
+        <div style="flex:1;min-height:0"></div>
+        <div id="uarActions" class="unraid-actions" style="display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0"></div>
+      </div>
+
+      <div data-widget-id="unraid-disks" style="grid-column:span 4;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden;display:flex;flex-direction:column">
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('unraid-disks')">✕</button></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-shrink:0">
+          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase"><span data-tile-title>Unraid Disks</span></div>
+          <div id="udiBadge" style="display:flex;align-items:center;gap:6px;font:500 11px 'JetBrains Mono',monospace;color:#ff7a30"><span style="width:6px;height:6px;border-radius:2px;background:#ff7a30"></span>–</div>
+        </div>
+        <div id="udiList" style="display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;overflow-y:auto;padding-right:6px;margin-right:-6px"></div>
+      </div>
+
+      <div data-widget-id="unraid-shares" style="grid-column:span 4;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden;display:flex;flex-direction:column">
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('unraid-shares')">✕</button></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-shrink:0">
+          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase"><span data-tile-title>Unraid Shares</span></div>
+          <div id="ushBadge" style="display:flex;align-items:center;gap:6px;font:500 11px 'JetBrains Mono',monospace;color:#ff7a30"><span style="width:6px;height:6px;border-radius:2px;background:#ff7a30"></span>–</div>
+        </div>
+        <div id="ushList" style="display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;overflow-y:auto;padding-right:6px;margin-right:-6px"></div>
+      </div>
+
+      <div data-widget-id="unraid-notifications" style="grid-column:span 4;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden;display:flex;flex-direction:column">
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('unraid-notifications')">✕</button></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-shrink:0">
+          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase"><span data-tile-title>Unraid Meldungen</span></div>
+          <div id="unoBadge" style="display:flex;align-items:center;gap:6px;font:500 11px 'JetBrains Mono',monospace;color:#ff7a30"><span style="width:6px;height:6px;border-radius:2px;background:#ff7a30"></span>–</div>
+        </div>
+        <div data-cfg="summary" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px;flex-shrink:0">
+          <span id="unoCounts" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">–</span>
+          <button id="unoArchiveAll" class="vm-btn" onclick="unraidNotifAction(null,'archiveAll',this)" style="display:none">Alle archivieren</button>
+        </div>
+        <div id="unoList" style="display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;overflow-y:auto;padding-right:6px;margin-right:-6px"></div>
+      </div>
+
+      <div data-widget-id="unraid-system" style="grid-column:span 4;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden;display:flex;flex-direction:column">
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('unraid-system')">✕</button></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-shrink:0">
+          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase"><span data-tile-title>Unraid System</span></div>
+          <div id="usyBadge" style="display:flex;align-items:center;gap:6px;font:500 11px 'JetBrains Mono',monospace;color:#ff7a30"><span style="width:6px;height:6px;border-radius:2px;background:#ff7a30"></span>–</div>
+        </div>
+        <div data-cfg="live" style="display:flex;gap:26px;margin-bottom:12px;flex-shrink:0">
+          <div>
+            <div style="font:600 30px/1 'Space Grotesk',sans-serif;color:var(--text-1);font-variant-numeric:tabular-nums"><span id="usyCpu">–</span><span style="font-size:14px;color:var(--text-3)">%</span></div>
+            <div style="font:600 9px 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);margin-top:4px">CPU</div>
+          </div>
+          <div>
+            <div style="font:600 30px/1 'Space Grotesk',sans-serif;color:var(--text-1);font-variant-numeric:tabular-nums"><span id="usyRam">–</span><span style="font-size:14px;color:var(--text-3)">%</span></div>
+            <div style="font:600 9px 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);margin-top:4px">RAM</div>
+          </div>
+        </div>
+        <div id="usyUptime" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3);margin-bottom:10px;flex-shrink:0">–</div>
+        <div data-cfg="meta" id="usyMeta" style="display:flex;flex-direction:column;gap:5px;flex:1;min-height:0;overflow-y:auto;padding-right:4px;margin-right:-4px"></div>
+        <div id="usyActions" class="unraid-actions" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;flex-shrink:0"></div>
+      </div>
+
+      <div data-widget-id="unraid-ups" style="grid-column:span 3;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden;display:flex;flex-direction:column">
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('unraid-ups')">✕</button></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-shrink:0">
+          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase"><span data-tile-title>Unraid USV</span></div>
+          <div id="uupBadge" style="display:flex;align-items:center;gap:6px;font:500 11px 'JetBrains Mono',monospace;color:#ff7a30"><span style="width:6px;height:6px;border-radius:2px;background:#ff7a30"></span>–</div>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:10px;flex-shrink:0">
+          <span id="uupCharge" style="font:600 44px/1 'Space Grotesk',sans-serif;color:var(--text-1);font-variant-numeric:tabular-nums">–</span>
+          <span style="font:500 12px 'JetBrains Mono',monospace;color:var(--text-3)">% Akku</span>
+        </div>
+        <div style="height:8px;border-radius:4px;background:rgba(120,150,200,0.12);overflow:hidden;flex-shrink:0">
+          <div id="uupChargeBar" style="height:100%;width:0%;border-radius:4px;background:linear-gradient(90deg,#3ddc97,#7be3b8);transition:width 0.8s cubic-bezier(.4,0,.2,1)"></div>
+        </div>
+        <div id="uupRuntime" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-2);margin-top:10px;flex-shrink:0">–</div>
+        <div data-cfg="power" id="uupPower" style="display:flex;flex-direction:column;gap:5px;margin-top:8px;flex-shrink:0"></div>
+        <div style="flex:1;min-height:0"></div>
+        <div id="uupModel" style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:10px;flex-shrink:0">–</div>
+      </div>
     </div>
 
     <div style="font:600 12px/1 'JetBrains Mono',monospace;letter-spacing:0.16em;color:#5b9dff;text-transform:uppercase;display:flex;align-items:center;gap:11px;margin:30px 2px 14px"><span style="opacity:.45">//</span> Media &amp; Cloud <span style="flex:1;height:1px;background:linear-gradient(90deg,rgba(91,157,255,0.25),transparent)"></span></div>
@@ -655,16 +771,16 @@
             </div>
           </div>
 
-          <!-- TAB: UNRAID VMs -->
+          <!-- TAB: UNRAID -->
           <div class="tab" data-tab="unraid">
-            <div class="cfg-section">Unraid VMs</div>
+            <div class="cfg-section">Unraid</div>
             <div style="padding:4px 0 12px">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                 <div style="display:flex;align-items:center;gap:10px">
-                  <span style="font:700 11px 'JetBrains Mono',monospace;color:#ff7a30;min-width:22px;background:rgba(255,122,48,0.12);border-radius:4px;padding:2px 5px;text-align:center">VM</span>
+                  <span style="font:700 11px 'JetBrains Mono',monospace;color:#ff7a30;min-width:22px;background:rgba(255,122,48,0.12);border-radius:4px;padding:2px 5px;text-align:center">UN</span>
                   <div>
                     <div class="cfg-key">Unraid GraphQL API</div>
-                    <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">VM-Status &amp; Steuerung · ab Unraid 7.2 · API-Key</div>
+                    <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">VMs, Docker, Array, Disks, Shares, Meldungen, System, USV · ab Unraid 7.2 · API-Key</div>
                   </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px">
@@ -676,7 +792,17 @@
                 <input id="secretUnraidUrl" placeholder="http://tower.local (Unraid-URL)" class="cfg-input" />
                 <input id="secretUnraidApiKey" type="password" placeholder="API-Key" class="cfg-input" />
               </div>
-              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:8px;padding-left:32px">API im Unraid aktivieren, dann Key erzeugen: <span style="color:var(--text-2)">unraid-api apikey --create</span> (oder via Unraid-UI).</div>
+              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:8px;padding-left:32px">API im Unraid aktivieren, dann Key erzeugen: <span style="color:var(--text-2)">unraid-api apikey --create</span> (oder via Unraid-UI). Der Key braucht Leserechte für die gewünschten Bereiche (VMs, Docker, Array, Shares, Meldungen, Info); Steuerung erfordert entsprechende Schreibrechte.</div>
+
+              <div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px;padding-left:32px">
+                <span style="font:600 10px 'JetBrains Mono',monospace;letter-spacing:0.1em;color:#ff5c5c;text-transform:uppercase">Gefahrenzone: Steuer-Aktionen</span>
+                <span style="flex:1;height:1px;background:rgba(255,92,92,0.25)"></span>
+              </div>
+              <label style="display:flex;align-items:flex-start;gap:10px;padding-left:32px;cursor:pointer">
+                <input id="unraidDangerToggle" type="checkbox" style="margin-top:2px;accent-color:#ff5c5c" />
+                <span style="font:500 11px/1.6 'JetBrains Mono',monospace;color:var(--text-2)">Riskante Aktionen im Dashboard freischalten: Array stoppen/starten, Parity-Check steuern, Server neu starten/herunterfahren</span>
+              </label>
+              <div style="font:500 10px/1.7 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:8px;padding-left:32px"><span style="color:#ff5c5c">Achtung:</span> Diese Aktionen können Datenzugriffe unterbrechen und laufende Dienste, VMs und Container beenden. Nur aktivieren, wenn das Dashboard nicht öffentlich erreichbar ist. Die Sperre wird serverseitig durchgesetzt (ohne Freischaltung lehnt Dash# die Aktionen ab). Neustart/Herunterfahren benötigt zusätzlich den SSH-Zugang (unten). Mit <span style="color:var(--text-2)">↵ Save</span> übernehmen.</div>
 
               <div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px;padding-left:32px">
                 <span style="font:600 10px 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase">Direkter VNC-Zugriff (SSH)</span>
@@ -691,7 +817,7 @@
                 <input id="secretUnraidSshPass" type="password" placeholder="SSH-Passwort (oder Key unten)" class="cfg-input" />
                 <textarea id="secretUnraidSshKey" placeholder="Privater SSH-Key (optional, statt Passwort)" class="cfg-input" style="min-height:60px;resize:vertical;font-size:11px"></textarea>
               </div>
-              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:8px;padding-left:32px">Optional. Ohne SSH öffnet der VNC-Button Unraids VM-Manager (mit Login). Mit SSH startet die noVNC-Konsole direkt im Dashboard. <span style="color:#ffb454">Gibt Dash# SSH-Zugriff auf Unraid</span> – nur im vertrauenswürdigen LAN nutzen.</div>
+              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:8px;padding-left:32px">Optional. Ohne SSH öffnet der VNC-Button Unraids VM-Manager (mit Login). Mit SSH startet die noVNC-Konsole direkt im Dashboard; außerdem ermöglicht SSH Neustart/Herunterfahren des Servers (nur mit freigeschalteter Gefahrenzone). <span style="color:#ffb454">Gibt Dash# SSH-Zugriff auf Unraid</span> – nur im vertrauenswürdigen LAN nutzen.</div>
 
               <div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px;padding-left:32px">
                 <span style="font:600 10px 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase">VMs &amp; RDP</span>

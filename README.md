@@ -37,8 +37,8 @@ and no build step.
 
 - 🧩 **Design mode** — freely place & resize tiles on a grid, add/hide them from a catalog, rename section headings, and spread widgets across multiple pages; the layout is saved server-side
 - 🎛️ **Per-tile settings** — hover a tile, open ⋯ → Einstellungen: rename the tile, toggle its building blocks (rings, charts, summaries, posters, columns …) and cap list lengths; stored with the dashboard layout
-- ⚡ **Live widgets** — System (via [Glances](https://nicolargo.github.io/glances/)), Docker, AdGuard Home, Plex, UniFi Network & Protect, Nextcloud, Unraid VMs, weather
-- 🖥️ **Unraid VM control** — list VMs with live status, start/stop/pause/reboot right from the dashboard, and jump into the built-in VNC console
+- ⚡ **Live widgets** — System (via [Glances](https://nicolargo.github.io/glances/)), Docker, AdGuard Home, Plex, UniFi Network & Protect, Nextcloud, Unraid, weather
+- 🖥️ **Unraid suite** — eight tiles on the official GraphQL API: VMs (incl. VNC console), Docker containers (start/stop/restart), array & parity (status, capacity, check control), per-disk health, shares, notifications (incl. archive), system info (live CPU/RAM, versions, reboot/shutdown via SSH) and UPS — risky actions locked behind a server-side opt-in
 - ⚙️ **Configure in the browser** — everything under `/settings`, no config files to hand-edit
 - 🔒 **Private by design** — no telemetry, no tracking; secrets stay in your mounted config volume
 - 🐳 **One container** — `node:20-alpine`, multi-arch (amd64/arm64), healthcheck, ~48 MB
@@ -91,23 +91,43 @@ Everything is configured from the web UI under **Settings → Integrations** and
 | Plex | URL, X-Plex-Token |
 | UniFi | Cloud API key (api.ui.com) |
 | Nextcloud | URL, user, app password |
-| Unraid VMs | Unraid URL + GraphQL API key |
+| Unraid | Unraid URL + GraphQL API key |
 | Weather | City (Open-Meteo, no key) |
 
-### Unraid VMs
+### Unraid
 
-Manage your Unraid VMs from a dashboard tile: live status, one-click **start / stop / pause / resume /
-reboot / force-stop**, and a **VNC** button that opens Unraid's built-in noVNC console in a new tab.
+Eight tiles cover the whole [Unraid GraphQL API](https://docs.unraid.net/API/) (Unraid **7.2+**) —
+add them from the tile catalog in design mode:
 
-Uses the official [Unraid GraphQL API](https://docs.unraid.net/API/) (Unraid **7.2+**) for status and
-control. Setup:
+| Tile | Shows | Controls |
+|---|---|---|
+| Unraid VMs | live VM status | start / stop / pause / resume / reboot / force-stop, VNC/RDP console |
+| Unraid Docker | containers, uptime, pending updates | start / stop / restart / pause |
+| Unraid Array | array state, capacity, parity status & progress | array start/stop, parity check start/pause/resume/cancel ⚠️ |
+| Unraid Disks | per-disk status, temperature, fill level, error counter | — |
+| Unraid Shares | per-share usage with fill bars | — |
+| Unraid Meldungen | unread notifications by severity | archive one / all |
+| Unraid System | live CPU/RAM, uptime, versions, host info | reboot / shutdown ⚠️ (needs SSH) |
+| Unraid USV | UPS charge, runtime, load/power | — |
+
+Tiles marked ⚠️ are **locked by default**: their actions must be enabled in
+**Settings → Unraid → Gefahrenzone** first. The lock is enforced server-side (the API endpoints
+reject gated actions with `403` while it's off), destructive actions additionally ask for
+confirmation in the browser, and reboot/shutdown also requires the SSH access below (the GraphQL
+API has no reboot/shutdown mutation). Only enable this if the dashboard is not publicly reachable.
+
+Setup:
 
 1. Enable the API and create a key on your Unraid box:
    ```bash
    unraid-api apikey --create
    ```
-   (or generate one from the Unraid web UI). A read/VM-control scoped key is enough.
-2. In **Settings → Unraid VMs**, enter your Unraid URL (e.g. `http://tower.local`) and the API key.
+   (or generate one from the Unraid web UI). A viewer-scoped key is enough for display; controlling
+   VMs/containers/array needs the matching write scopes.
+2. In **Settings → Unraid**, enter your Unraid URL (e.g. `http://tower.local`) and the API key.
+
+Fields that only newer `unraid-api` versions expose (live metrics, parity status, UPS power data,
+container update flags) degrade gracefully on older servers — the tiles simply omit them.
 
 #### Direct VNC console (no Unraid login)
 
@@ -136,7 +156,7 @@ lag shows up in Unraid's own noVNC too. Options, from quick to best:
 - **Windows guests → RDP.** Windows VMs get an extra **RDP** button that downloads a ready-made `.rdp`
   file for the native client — dramatically smoother than VNC. The guest IP is found automatically over
   SSH (`virsh domifaddr`; install the VirtIO guest tools / QEMU guest agent), or set it per-VM under
-  **Settings → Unraid VMs → VMs & RDP**. Enable Remote Desktop inside Windows first. The Windows type is
+  **Settings → Unraid → VMs & RDP**. Enable Remote Desktop inside Windows first. The Windows type is
   auto-detected from the Unraid VM template and can be overridden there.
 - **Linux guests** — switch the VM's graphics from QXL to **VirtIO (3D / VirGL)** and install the guest
   drivers; give it more video RAM.

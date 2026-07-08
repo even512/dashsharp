@@ -447,6 +447,12 @@ let unifiTimer = null;
 let unifiSnapTimer = null;
 let nextcloudTimer = null;
 let vmTimer = null;
+let udkTimer = null; // Unraid Docker
+let uarTimer = null; // Unraid Array/Disks
+let ushTimer = null; // Unraid Shares
+let unoTimer = null; // Unraid Meldungen
+let usyTimer = null; // Unraid System
+let uupTimer = null; // Unraid USV
 
 const UNIFI_POLL_MS = 10000;
 const UNIFI_SNAP_MS = 30000;
@@ -1208,6 +1214,514 @@ async function detectVmOs() {
   try { await fetch('/api/vms/detect', { method: 'POST' }); await loadVmCfg(); startVms(); }
   catch (err) { console.warn('OS-Erkennung fehlgeschlagen:', err.message); }
   finally { if (btn) { btn.disabled = false; btn.textContent = '⟳ OS erkennen'; } }
+}
+
+/* ---------- Unraid-Suite (Docker, Array, Disks, Shares, Meldungen, System, USV) ---------- */
+// Gleiche GraphQL-API wie die VM-Kachel; je Bereich das bewährte
+// poll/render/start-Dreigespann mit diffList.
+
+// KB-Werte der Unraid-API menschenlesbar (fmtSize erwartet Bytes).
+function fmtKb(kb) { return kb != null ? fmtSize(kb * 1024) : '–'; }
+
+function setUnraidBadge(id, text, color) {
+  const el = $(id);
+  if (!el) return;
+  el.style.color = color;
+  el.innerHTML = `<span style="width:6px;height:6px;border-radius:2px;background:${color}"></span>${text}`;
+}
+
+// Gemeinsames Poll-Boilerplate: /api/unraid-Endpoint holen, Fehlerzustände
+// in der Badge melden, sonst rendern.
+async function pollUnraid(path, badgeId, render) {
+  if (!state.liveOn) return;
+  try {
+    const d = await fetch(path, { cache: 'no-store' }).then(r => r.json());
+    if (!d || !d.ok) {
+      const unsupported = d && d.error === 'unsupported';
+      const msg = d && d.error === 'not_configured' ? 'not configured'
+                : unsupported ? 'nicht verfügbar' : 'offline';
+      setUnraidBadge(badgeId, msg, unsupported ? '#6b7689' : '#f43f5e');
+      return;
+    }
+    render(d);
+  } catch (err) {
+    setUnraidBadge(badgeId, 'offline', '#f43f5e');
+    console.warn('Unraid poll failed:', path, err.message);
+  }
+}
+
+// Aktions-POST mit optionaler Rückfrage; `btn` wird bis zum Refresh
+// deaktiviert. 403 -> Hinweis auf die Gefahrenzone in den Einstellungen.
+async function unraidAction(path, body, btn, confirmMsg, repoll) {
+  if (confirmMsg && !confirm(confirmMsg)) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(path, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 403 && d.error === 'danger_disabled') {
+      alert('Steuer-Aktionen sind gesperrt. In den Einstellungen unter „Unraid" zuerst die Gefahrenzone freischalten.');
+    } else if (d.error === 'needs_ssh') {
+      alert('Für Neustart/Herunterfahren wird der SSH-Zugang benötigt (Einstellungen → Unraid).');
+    } else if (!r.ok || !d.ok) {
+      console.warn('Unraid action failed:', path, body.action, d.error || r.status);
+    }
+  } catch (err) {
+    console.warn('Unraid action error:', err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+    if (repoll) repoll();
+  }
+}
+
+/* --- Docker-Container --- */
+const UDK_POLL_MS = 10000;
+const UDK_DOT = { running: '#3ddc97', paused: '#ffb454', exited: '#6b7689' };
+const UDK_PRIMARY = { running: 'stop', paused: 'unpause', exited: 'start' };
+const UDK_ACTION_META = {
+  start:   { label: '▶ Start',  cls: 'start', confirm: false },
+  stop:    { label: '■ Stop',   cls: 'stop',  confirm: true  },
+  restart: { label: '↻',        cls: '',      confirm: true  },
+  unpause: { label: '▶ Weiter', cls: 'start', confirm: false },
+};
+
+function unraidDockerAction(id, action, btn, name) {
+  const meta = UDK_ACTION_META[action] || {};
+  const verb = action === 'stop' ? 'stoppen' : 'neu starten';
+  const msg = meta.confirm ? `Container „${name || id}" wirklich ${verb}?` : null;
+  unraidAction('/api/unraid/docker/action', { id, action }, btn, msg, pollUnraidDocker);
+}
+
+function createUdkRow(c) {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px';
+  row.innerHTML =
+    `<div style="display:flex;align-items:center;gap:9px;min-width:0">` +
+      `<span class="udk-dot" style="width:7px;height:7px;border-radius:50%;flex-shrink:0"></span>` +
+      `<div style="min-width:0">` +
+        `<div style="display:flex;align-items:center;gap:6px;min-width:0">` +
+          `<span class="udk-name" style="color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:500 12px 'JetBrains Mono',monospace"></span>` +
+          `<span class="udk-upd" style="display:none;font:600 8px 'JetBrains Mono',monospace;letter-spacing:0.05em;color:#ffb454;background:rgba(255,180,84,0.14);border-radius:3px;padding:1px 4px;flex-shrink:0">UPDATE</span>` +
+        `</div>` +
+        `<div class="udk-status" style="font:500 9px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>` +
+      `</div>` +
+    `</div>`;
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;align-items:center;gap:4px;flex-shrink:0';
+  const primary = makeVmBtn('', '', (btn) => {
+    const a = UDK_PRIMARY[row._c.state];
+    if (a) unraidDockerAction(row._c.id, a, btn, row._c.name);
+  });
+  const restart = makeVmBtn('↻', '', (btn) => unraidDockerAction(row._c.id, 'restart', btn, row._c.name));
+  restart.title = 'Neu starten';
+  actions.append(primary, restart);
+  row.appendChild(actions);
+  row._dot = row.querySelector('.udk-dot');
+  row._name = row.querySelector('.udk-name');
+  row._upd = row.querySelector('.udk-upd');
+  row._status = row.querySelector('.udk-status');
+  row._primary = primary;
+  row._restart = restart;
+  return row;
+}
+function updateUdkRow(row, c, prev) {
+  row._c = c;
+  if (!prev || prev.state !== c.state) row._dot.style.background = UDK_DOT[c.state] || '#6b7689';
+  if (!prev || prev.name !== c.name) { row._name.textContent = c.name; row._name.title = c.image || c.name; }
+  if (!prev || prev.status !== c.status || prev.state !== c.state) row._status.textContent = c.status || c.state;
+  row._upd.style.display = (c.updateAvailable && _cfgVal('unraid-docker', 'updates') !== false) ? '' : 'none';
+  if (!prev || prev.state !== c.state) {
+    const a = UDK_PRIMARY[c.state];
+    const meta = a && UDK_ACTION_META[a];
+    row._primary.textContent = meta ? meta.label : '–';
+    row._primary.className = 'vm-btn' + (meta && meta.cls ? ' ' + meta.cls : '');
+    row._primary.disabled = !meta;
+    row._restart.style.display = c.state === 'running' ? '' : 'none';
+  }
+}
+function renderUnraidDocker(d) {
+  setUnraidBadge('udkBadge', d._stale ? 'stale' : `${d.running || 0} running`, d._stale ? '#ffb454' : '#3ddc97');
+  setText('udkCount', d.total != null ? d.total : '–');
+  const parts = [`<span style="color:#3ddc97">${d.running || 0} läuft</span>`];
+  if (d.paused) parts.push(`<span style="color:#ffb454">${d.paused} pausiert</span>`);
+  if (d.exited) parts.push(`<span style="color:#6b7689">${d.exited} gestoppt</span>`);
+  if (d.updates && _cfgVal('unraid-docker', 'updates') !== false) parts.push(`<span style="color:#ffb454">${d.updates} Update${d.updates > 1 ? 's' : ''}</span>`);
+  const sum = $('udkSummary');
+  if (sum) sum.innerHTML = 'Container · ' + parts.join(' · ');
+  let items = d.containers || [];
+  if (_cfgVal('unraid-docker', 'hideStopped') === true) items = items.filter((c) => c.state !== 'exited');
+  const list = $('udkList');
+  if (list) diffList(list, _cfgLimit('unraid-docker', 'maxRows', items), (c) => c.id, createUdkRow, updateUdkRow);
+}
+function pollUnraidDocker() { return pollUnraid('/api/unraid/docker', 'udkBadge', renderUnraidDocker); }
+function startUnraidDocker() {
+  clearInterval(udkTimer);
+  pollUnraidDocker();
+  udkTimer = setInterval(pollUnraidDocker, UDK_POLL_MS);
+}
+
+/* --- Array & Parity (eine Query bedient auch die Disks-Kachel) --- */
+const UAR_POLL_MS = 30000;
+
+function unraidArrayAction(action, btn) {
+  const msgs = {
+    stop:         'Array wirklich STOPPEN? Alle Shares, Container und VMs werden beendet.',
+    start:        'Array jetzt starten?',
+    parityStart:  'Parity-Check jetzt starten? Das kann viele Stunden dauern.',
+    parityCancel: 'Laufenden Parity-Check wirklich abbrechen?',
+  };
+  unraidAction('/api/unraid/array/action', { action }, btn, msgs[action] || null, pollUnraidArray);
+}
+
+function renderUnraidArray(d) {
+  const started = !!d.started;
+  const color = started ? '#3ddc97' : d.state === 'STOPPED' ? '#f43f5e' : '#ffb454';
+  setUnraidBadge('uarBadge', d._stale ? 'stale' : (d.state || '–'), d._stale ? '#ffb454' : color);
+  const stateEl = $('uarState');
+  if (stateEl) {
+    stateEl.textContent = started ? 'Gestartet' : d.state === 'STOPPED' ? 'Gestoppt' : (d.state || '–');
+    stateEl.style.color = color;
+  }
+  const cap = d.capacity || {};
+  setText('uarSlots', cap.slotsUsed != null && cap.slotsTotal ? `${cap.slotsUsed}/${cap.slotsTotal} Slots` : '');
+  setText('uarCapText', cap.totalKb ? `${fmtKb(cap.usedKb)} / ${fmtKb(cap.totalKb)} · ${cap.pctUsed}%` : '–');
+  const capBar = $('uarCapBar');
+  if (capBar) {
+    capBar.style.width = (cap.pctUsed || 0) + '%';
+    capBar.style.background = (cap.pctUsed || 0) >= 90
+      ? 'linear-gradient(90deg,#f43f5e,#ff8a4c)'
+      : 'linear-gradient(90deg,#ff7a30,#ffb454)';
+  }
+  const p = d.parity;
+  const pEl = $('uarParity');
+  if (pEl) {
+    if (!p) setHtmlIfChanged(pEl, '<span style="color:var(--text-3)">unbekannt</span>');
+    else if (p.running || p.paused) {
+      const bits = [p.paused ? 'pausiert' : (p.correcting ? 'korrigiert' : 'läuft')];
+      if (p.progress != null) bits.push(p.progress + '%');
+      if (p.speed) bits.push(p.speed);
+      setHtmlIfChanged(pEl, `<span style="color:${p.paused ? '#ffb454' : '#8b6dff'}">${bits.join(' · ')}</span>`);
+    } else if (p.status === 'NEVER_RUN') {
+      setHtmlIfChanged(pEl, '<span style="color:var(--text-3)">nie geprüft</span>');
+    } else {
+      const errs = p.errors || 0;
+      const when = p.date ? new Date(p.date).toLocaleDateString('de-DE') : '';
+      setHtmlIfChanged(pEl, `<span style="color:${errs ? '#f43f5e' : '#3ddc97'}">${errs ? errs + ' Fehler' : 'OK'}${when ? ' · ' + when : ''}</span>`);
+    }
+  }
+  const barWrap = $('uarParityBarWrap');
+  if (barWrap) {
+    const active = !!(p && (p.running || p.paused) && p.progress != null);
+    barWrap.style.display = active ? '' : 'none';
+    if (active) $('uarParityBar').style.width = p.progress + '%';
+  }
+  // Aktions-Buttons je Zustand; nur bei freigeschalteter Gefahrenzone.
+  const act = $('uarActions');
+  if (act) {
+    const sig = [d.dangerEnabled, started, p && p.running, p && p.paused].join('|');
+    if (act._sig !== sig) {
+      act._sig = sig;
+      act.innerHTML = '';
+      if (d.dangerEnabled) {
+        act.appendChild(started
+          ? makeVmBtn('■ Array stoppen', 'stop', (b) => unraidArrayAction('stop', b))
+          : makeVmBtn('▶ Array starten', 'start', (b) => unraidArrayAction('start', b)));
+        if (p && p.running) {
+          act.appendChild(makeVmBtn('⏸ Parity', '', (b) => unraidArrayAction('parityPause', b)));
+          act.appendChild(makeVmBtn('✕ Parity', 'stop', (b) => unraidArrayAction('parityCancel', b)));
+        } else if (p && p.paused) {
+          act.appendChild(makeVmBtn('▶ Parity', 'start', (b) => unraidArrayAction('parityResume', b)));
+          act.appendChild(makeVmBtn('✕ Parity', 'stop', (b) => unraidArrayAction('parityCancel', b)));
+        } else if (started) {
+          act.appendChild(makeVmBtn('⟲ Parity-Check', '', (b) => unraidArrayAction('parityStart', b)));
+        }
+      } else {
+        act.innerHTML = '<span style="font:500 10px \'JetBrains Mono\',monospace;color:var(--text-dim)">Steuerung gesperrt · Einstellungen → Unraid</span>';
+      }
+    }
+  }
+}
+
+/* --- Disks (aus denselben Array-Daten) --- */
+function udiDotColor(s) {
+  if (s === 'DISK_OK') return '#3ddc97';
+  if (/^DISK_NP/.test(String(s || ''))) return '#6b7689';
+  return '#f43f5e';
+}
+function createUdiRow() {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;gap:9px';
+  row.innerHTML =
+    `<span class="udi-dot" style="width:7px;height:7px;border-radius:50%;flex-shrink:0"></span>` +
+    `<div style="min-width:0;flex:1">` +
+      `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px">` +
+        `<span class="udi-name" style="color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:500 12px 'JetBrains Mono',monospace"></span>` +
+        `<span class="udi-right" style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);flex-shrink:0"></span>` +
+      `</div>` +
+      `<div class="udi-barwrap" style="height:4px;border-radius:2px;background:rgba(120,150,200,0.12);overflow:hidden;margin-top:4px">` +
+        `<div class="udi-bar" style="height:100%;width:0%;border-radius:2px;background:#5b9dff;transition:width 0.8s cubic-bezier(.4,0,.2,1)"></div>` +
+      `</div>` +
+    `</div>`;
+  row._dot = row.querySelector('.udi-dot');
+  row._name = row.querySelector('.udi-name');
+  row._right = row.querySelector('.udi-right');
+  row._barwrap = row.querySelector('.udi-barwrap');
+  row._bar = row.querySelector('.udi-bar');
+  return row;
+}
+function updateUdiRow(row, dk, prev) {
+  row._dot.style.background = udiDotColor(dk.status);
+  if (!prev || prev.name !== dk.name) {
+    row._name.textContent = dk.name;
+    row._name.title = [dk.device, dk.status].filter(Boolean).join(' · ');
+  }
+  const bits = [];
+  if (_cfgVal('unraid-disks', 'temp') !== false && dk.temp != null) bits.push(dk.temp + '°C');
+  if (dk.fsSizeKb) bits.push(`${fmtKb(dk.fsUsedKb)} / ${fmtKb(dk.fsSizeKb)}`);
+  else if (dk.sizeKb) bits.push(fmtKb(dk.sizeKb));
+  if (dk.errors) bits.push(`<span style="color:#f43f5e">${dk.errors} Fehler</span>`);
+  setHtmlIfChanged(row._right, bits.join(' · '));
+  const hasBar = dk.pctUsed != null;
+  row._barwrap.style.display = hasBar ? '' : 'none';
+  if (hasBar) {
+    row._bar.style.width = dk.pctUsed + '%';
+    row._bar.style.background = dk.pctUsed >= 90 ? '#f43f5e' : '#5b9dff';
+  }
+}
+function renderUnraidDisks(d) {
+  const all = [...(d.parities || []), ...(d.disks || []), ...(d.caches || [])];
+  const present = all.filter((x) => x.present !== false);
+  const bad = present.filter((x) => !x.ok).length;
+  const maxTemp = present.reduce((m, x) => (x.temp != null && x.temp > m ? x.temp : m), null);
+  const badge = bad ? `${bad} Problem${bad > 1 ? 'e' : ''}` : `${present.length} Disks${maxTemp != null ? ' · ' + maxTemp + '°C max' : ''}`;
+  setUnraidBadge('udiBadge', d._stale ? 'stale' : badge, d._stale ? '#ffb454' : bad ? '#f43f5e' : '#3ddc97');
+  let items = [];
+  if (_cfgVal('unraid-disks', 'showParity') !== false) items = items.concat(d.parities || []);
+  items = items.concat(d.disks || []);
+  if (_cfgVal('unraid-disks', 'showCache') !== false) items = items.concat(d.caches || []);
+  const list = $('udiList');
+  if (list) diffList(list, _cfgLimit('unraid-disks', 'maxRows', items), (x) => x.id || x.name, createUdiRow, updateUdiRow);
+}
+
+function pollUnraidArray() {
+  return pollUnraid('/api/unraid/array', 'uarBadge', (d) => { renderUnraidArray(d); renderUnraidDisks(d); });
+}
+function startUnraidArray() {
+  clearInterval(uarTimer);
+  pollUnraidArray();
+  uarTimer = setInterval(pollUnraidArray, UAR_POLL_MS);
+}
+
+/* --- Shares --- */
+const USH_POLL_MS = 120000;
+function createUshRow() {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;flex-direction:column;gap:4px';
+  row.innerHTML =
+    `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px">` +
+      `<span class="ush-name" style="color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:500 12px 'JetBrains Mono',monospace"></span>` +
+      `<span class="ush-right" style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);flex-shrink:0"></span>` +
+    `</div>` +
+    `<div class="ush-barwrap" style="height:4px;border-radius:2px;background:rgba(120,150,200,0.12);overflow:hidden">` +
+      `<div class="ush-bar" style="height:100%;width:0%;border-radius:2px;background:#ff7a30;transition:width 0.8s cubic-bezier(.4,0,.2,1)"></div>` +
+    `</div>`;
+  row._name = row.querySelector('.ush-name');
+  row._right = row.querySelector('.ush-right');
+  row._barwrap = row.querySelector('.ush-barwrap');
+  row._bar = row.querySelector('.ush-bar');
+  return row;
+}
+function updateUshRow(row, s, prev) {
+  if (!prev || prev.name !== s.name || prev.comment !== s.comment) {
+    row._name.textContent = s.name;
+    row._name.title = s.comment || s.name;
+  }
+  const right = s.usedKb != null
+    ? `${fmtKb(s.usedKb)}${s.sizeKb ? ' / ' + fmtKb(s.sizeKb) : ''}${s.freeKb != null ? ' · ' + fmtKb(s.freeKb) + ' frei' : ''}`
+    : '–';
+  if (!prev || row._right.textContent !== right) row._right.textContent = right;
+  const showBar = _cfgVal('unraid-shares', 'bars') !== false && s.pctUsed != null;
+  row._barwrap.style.display = showBar ? '' : 'none';
+  if (showBar) {
+    row._bar.style.width = s.pctUsed + '%';
+    row._bar.style.background = s.pctUsed >= 90 ? '#f43f5e' : '#ff7a30';
+  }
+}
+function renderUnraidShares(d) {
+  setUnraidBadge('ushBadge', d._stale ? 'stale' : `${d.total || 0} Shares`, d._stale ? '#ffb454' : '#3ddc97');
+  const list = $('ushList');
+  if (list) diffList(list, _cfgLimit('unraid-shares', 'maxRows', d.shares || []), (s) => s.id || s.name, createUshRow, updateUshRow);
+}
+function pollUnraidShares() { return pollUnraid('/api/unraid/shares', 'ushBadge', renderUnraidShares); }
+function startUnraidShares() {
+  clearInterval(ushTimer);
+  pollUnraidShares();
+  ushTimer = setInterval(pollUnraidShares, USH_POLL_MS);
+}
+
+/* --- Meldungen (Notifications) --- */
+const UNO_POLL_MS = 30000;
+const UNO_DOT = { ALERT: '#f43f5e', WARNING: '#ffb454', INFO: '#5b9dff' };
+
+function unraidNotifAction(id, action, btn) {
+  const msg = action === 'archiveAll' ? 'Alle ungelesenen Meldungen archivieren?' : null;
+  unraidAction('/api/unraid/notifications/action', { id, action }, btn, msg, pollUnraidNotifications);
+}
+function createUnoRow(n) {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px';
+  row.innerHTML =
+    `<div style="display:flex;align-items:flex-start;gap:9px;min-width:0">` +
+      `<span class="uno-dot" style="width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:4px"></span>` +
+      `<div style="min-width:0">` +
+        `<div class="uno-subject" style="color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:500 12px 'JetBrains Mono',monospace"></div>` +
+        `<div class="uno-desc" style="font:500 9px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>` +
+      `</div>` +
+    `</div>`;
+  const archive = makeVmBtn('✓', '', (btn) => unraidNotifAction(row._n.id, 'archive', btn));
+  archive.title = 'Archivieren';
+  row.appendChild(archive);
+  row._dot = row.querySelector('.uno-dot');
+  row._subject = row.querySelector('.uno-subject');
+  row._desc = row.querySelector('.uno-desc');
+  return row;
+}
+function updateUnoRow(row, n, prev) {
+  row._n = n;
+  if (!prev || prev.importance !== n.importance) row._dot.style.background = UNO_DOT[n.importance] || '#5b9dff';
+  const subject = n.subject || n.title || '–';
+  if (!prev || row._subject.textContent !== subject) {
+    row._subject.textContent = subject;
+    row._subject.title = [n.title, n.description].filter(Boolean).join(' — ');
+  }
+  const when = n.timestamp
+    ? new Date(n.timestamp).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : '';
+  const desc = [when, n.description].filter(Boolean).join(' · ');
+  if (!prev || row._desc.textContent !== desc) row._desc.textContent = desc;
+}
+function renderUnraidNotifications(d) {
+  const u = d.unread || {};
+  const color = u.alert ? '#f43f5e' : u.warning ? '#ffb454' : u.total ? '#5b9dff' : '#3ddc97';
+  setUnraidBadge('unoBadge', d._stale ? 'stale' : u.total ? `${u.total} ungelesen` : 'OK', d._stale ? '#ffb454' : color);
+  const counts = $('unoCounts');
+  if (counts) {
+    setHtmlIfChanged(counts,
+      `<span style="color:#f43f5e">${u.alert || 0} Alerts</span> · ` +
+      `<span style="color:#ffb454">${u.warning || 0} Warnungen</span> · ` +
+      `<span style="color:#5b9dff">${u.info || 0} Infos</span>`);
+  }
+  const archiveAll = $('unoArchiveAll');
+  if (archiveAll) archiveAll.style.display = u.total ? '' : 'none';
+  const list = $('unoList');
+  if (list) diffList(list, _cfgLimit('unraid-notifications', 'maxRows', d.notifications || []), (n) => n.id, createUnoRow, updateUnoRow);
+}
+function pollUnraidNotifications() { return pollUnraid('/api/unraid/notifications', 'unoBadge', renderUnraidNotifications); }
+function startUnraidNotifications() {
+  clearInterval(unoTimer);
+  pollUnraidNotifications();
+  unoTimer = setInterval(pollUnraidNotifications, UNO_POLL_MS);
+}
+
+/* --- System-Info --- */
+const USY_POLL_MS = 10000;
+
+function unraidSystemAction(action, btn) {
+  const verb = action === 'reboot' ? 'NEU STARTEN' : 'HERUNTERFAHREN';
+  // Bewusst doppelte Rückfrage: die Aktion beendet den ganzen Server.
+  if (!confirm(`Unraid-Server wirklich ${verb}? Alle Dienste, VMs und Container werden beendet.`)) return;
+  if (!confirm(`Letzte Rückfrage: „OK" ${action === 'reboot' ? 'startet den Server jetzt neu' : 'fährt den Server jetzt herunter'}.`)) return;
+  unraidAction('/api/unraid/system/action', { action }, btn, null, pollUnraidSystem);
+}
+function renderUnraidSystem(d) {
+  const badge = d._stale ? 'stale' : d.online ? (d.unraidVersion ? 'v' + d.unraidVersion : 'online') : 'offline';
+  setUnraidBadge('usyBadge', badge, d._stale ? '#ffb454' : d.online ? '#3ddc97' : '#f43f5e');
+  setText('usyCpu', d.cpuPct != null ? Math.round(d.cpuPct) : '–');
+  setText('usyRam', d.ramPct != null ? Math.round(d.ramPct) : '–');
+  const up = [];
+  if (d.uptimeSec != null) up.push('Uptime ' + fmtUptime(d.uptimeSec));
+  if (d.ramUsed != null && d.ramTotal) up.push(`RAM ${fmtSize(d.ramUsed)} / ${fmtSize(d.ramTotal)}`);
+  setText('usyUptime', up.join(' · ') || '–');
+  const meta = $('usyMeta');
+  if (meta) {
+    const rowHtml = (k, v) => v
+      ? `<div style="display:flex;justify-content:space-between;gap:10px;font:500 10px 'JetBrains Mono',monospace"><span style="color:var(--text-3);flex-shrink:0">${k}</span><span style="color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${v}">${v}</span></div>`
+      : '';
+    setHtmlIfChanged(meta,
+      rowHtml('Host', d.hostname) +
+      rowHtml('Unraid', d.unraidVersion) +
+      rowHtml('API', d.apiVersion) +
+      rowHtml('Kernel', d.kernel) +
+      rowHtml('CPU', d.cpuBrand ? `${d.cpuBrand}${d.cores ? ` · ${d.cores}C/${d.threads || d.cores}T` : ''}` : null));
+  }
+  const act = $('usyActions');
+  if (act) {
+    const sig = [d.dangerEnabled, d.sshEnabled].join('|');
+    if (act._sig !== sig) {
+      act._sig = sig;
+      act.innerHTML = '';
+      if (d.dangerEnabled && d.sshEnabled) {
+        act.appendChild(makeVmBtn('↻ Neustart', '', (b) => unraidSystemAction('reboot', b)));
+        act.appendChild(makeVmBtn('⏻ Herunterfahren', 'stop', (b) => unraidSystemAction('shutdown', b)));
+      } else if (d.dangerEnabled) {
+        act.innerHTML = '<span style="font:500 10px \'JetBrains Mono\',monospace;color:var(--text-dim)">Neustart/Shutdown benötigt SSH · Einstellungen → Unraid</span>';
+      } else {
+        act.innerHTML = '<span style="font:500 10px \'JetBrains Mono\',monospace;color:var(--text-dim)">Steuerung gesperrt · Einstellungen → Unraid</span>';
+      }
+    }
+  }
+}
+function pollUnraidSystem() { return pollUnraid('/api/unraid/system', 'usyBadge', renderUnraidSystem); }
+function startUnraidSystem() {
+  clearInterval(usyTimer);
+  pollUnraidSystem();
+  usyTimer = setInterval(pollUnraidSystem, USY_POLL_MS);
+}
+
+/* --- USV (UPS) --- */
+const UUP_POLL_MS = 30000;
+function renderUnraidUps(d) {
+  const u = (d.devices || [])[0];
+  if (!u) {
+    setUnraidBadge('uupBadge', 'keine USV', '#6b7689');
+    setText('uupCharge', '–');
+    setText('uupRuntime', '–');
+    setText('uupModel', '–');
+    const bar0 = $('uupChargeBar');
+    if (bar0) bar0.style.width = '0%';
+    const power0 = $('uupPower');
+    if (power0) setHtmlIfChanged(power0, '');
+    return;
+  }
+  setUnraidBadge('uupBadge', d._stale ? 'stale' : (u.status || '–'), d._stale ? '#ffb454' : u.online ? '#3ddc97' : '#f43f5e');
+  setText('uupCharge', u.chargePct != null ? u.chargePct : '–');
+  const bar = $('uupChargeBar');
+  if (bar) {
+    const pct = u.chargePct || 0;
+    bar.style.width = pct + '%';
+    bar.style.background = pct < 20
+      ? 'linear-gradient(90deg,#f43f5e,#ff8a4c)'
+      : pct < 50 ? 'linear-gradient(90deg,#ffb454,#ffd27b)' : 'linear-gradient(90deg,#3ddc97,#7be3b8)';
+  }
+  setText('uupRuntime', u.runtimeSec != null ? `Restlaufzeit ${fmtUptime(u.runtimeSec)}` : '–');
+  const power = $('uupPower');
+  if (power) {
+    const rowHtml = (k, v) => v == null ? '' :
+      `<div style="display:flex;justify-content:space-between;gap:10px;font:500 10px 'JetBrains Mono',monospace"><span style="color:var(--text-3)">${k}</span><span style="color:var(--text-2)">${v}</span></div>`;
+    setHtmlIfChanged(power,
+      rowHtml('Last', u.loadPct != null ? u.loadPct + '%' : null) +
+      rowHtml('Leistung', u.watts != null ? Math.round(u.watts) + ' W' : null) +
+      rowHtml('Eingang', u.inputVoltage != null ? u.inputVoltage + ' V' : null) +
+      rowHtml('Zustand', u.health));
+  }
+  setText('uupModel', [u.model || u.name, d.devices.length > 1 ? `+${d.devices.length - 1} weitere` : ''].filter(Boolean).join(' · '));
+}
+function pollUnraidUps() { return pollUnraid('/api/unraid/ups', 'uupBadge', renderUnraidUps); }
+function startUnraidUps() {
+  clearInterval(uupTimer);
+  pollUnraidUps();
+  uupTimer = setInterval(pollUnraidUps, UUP_POLL_MS);
 }
 
 /* ---------- AdGuard Home ---------- */
@@ -2334,6 +2848,12 @@ function startLive() {
   startUnifi();
   startNextcloud();
   startVms();
+  startUnraidDocker();
+  startUnraidArray();
+  startUnraidShares();
+  startUnraidNotifications();
+  startUnraidSystem();
+  startUnraidUps();
 }
 // Counterpart to startLive(): actually clears every live timer (not just a
 // flag-check) so a hidden tab or "Live updates" off truly stops polling.
@@ -2348,6 +2868,12 @@ function pauseLive() {
   clearInterval(unifiSnapTimer); unifiSnapTimer = null;
   clearInterval(nextcloudTimer); nextcloudTimer = null;
   clearInterval(vmTimer);        vmTimer = null;
+  clearInterval(udkTimer);       udkTimer = null;
+  clearInterval(uarTimer);       uarTimer = null;
+  clearInterval(ushTimer);       ushTimer = null;
+  clearInterval(unoTimer);       unoTimer = null;
+  clearInterval(usyTimer);       usyTimer = null;
+  clearInterval(uupTimer);       uupTimer = null;
 }
 // Pauses polling and the graph rAF loop while the tab is hidden; resumes
 // (with an immediate refresh via startLive()) when it becomes visible again.
@@ -2578,6 +3104,16 @@ const DASHBOARD_WIDGETS = [
   { id: 'docker',             section: 'dienste',         label: 'Docker',                defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
   { id: 'adguard',            section: 'dienste',         label: 'AdGuard Home',          defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 4 } },
   { id: 'unraid-vms',         section: 'dienste',         label: 'Unraid VMs',            defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
+  // Unraid-Suite: Sektion 'unraid' liegt bewusst nicht in LEGACY_SECTION_ORDER,
+  // damit die Kacheln nur im Katalog erscheinen (reconcileDashboard legt sie
+  // automatisch als versteckte Einträge an).
+  { id: 'unraid-docker',        section: 'unraid',        label: 'Unraid Docker',         defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
+  { id: 'unraid-array',         section: 'unraid',        label: 'Unraid Array',          defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 4 } },
+  { id: 'unraid-disks',         section: 'unraid',        label: 'Unraid Disks',          defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
+  { id: 'unraid-shares',        section: 'unraid',        label: 'Unraid Shares',         defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
+  { id: 'unraid-notifications', section: 'unraid',        label: 'Unraid Meldungen',      defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
+  { id: 'unraid-system',        section: 'unraid',        label: 'Unraid System',         defaultSize: { w: 4,  h: 4 }, minSize: { w: 3, h: 3 } },
+  { id: 'unraid-ups',           section: 'unraid',        label: 'Unraid USV',            defaultSize: { w: 3,  h: 4 }, minSize: { w: 3, h: 3 } },
   { id: 'plex',               section: 'media',           label: 'Plex',                  defaultSize: { w: 7,  h: 5 }, minSize: { w: 4, h: 3 } },
   { id: 'nextcloud',          section: 'media',           label: 'Nextcloud',             defaultSize: { w: 5,  h: 5 }, minSize: { w: 3, h: 4 } },
   { id: 'unifi-network',      section: 'netzwerk',        label: 'UniFi · Network',       defaultSize: { w: 12, h: 3 }, minSize: { w: 4, h: 3 } },
@@ -2616,6 +3152,41 @@ const WIDGET_OPTIONS = {
     { key: 'summary', label: 'Zusammenfassung (Anzahl)', type: 'toggle', default: true },
     { key: 'actions', label: 'Aktions-Buttons',          type: 'toggle', default: true, cls: 'cfg-hide-actions' },
     { key: 'maxRows', label: 'Max. VMs',                 type: 'count',  default: 0 },
+  ],
+  'unraid-docker': [
+    { key: 'summary',     label: 'Zusammenfassung (Anzahl)', type: 'toggle', default: true },
+    { key: 'hideStopped', label: 'Gestoppte ausblenden',     type: 'toggle', default: false, filter: true },
+    { key: 'updates',     label: 'Update-Hinweise',          type: 'toggle', default: true,  filter: true },
+    { key: 'actions',     label: 'Aktions-Buttons',          type: 'toggle', default: true,  cls: 'cfg-hide-actions' },
+    { key: 'maxRows',     label: 'Max. Container',           type: 'count',  default: 0 },
+  ],
+  'unraid-array': [
+    { key: 'capacity', label: 'Kapazitätsbalken', type: 'toggle', default: true },
+    { key: 'parity',   label: 'Parity-Status',    type: 'toggle', default: true },
+    { key: 'actions',  label: 'Aktions-Buttons',  type: 'toggle', default: true, cls: 'cfg-hide-actions' },
+  ],
+  'unraid-disks': [
+    { key: 'showParity', label: 'Parity-Disks',  type: 'toggle', default: true, filter: true },
+    { key: 'showCache',  label: 'Cache-Pools',   type: 'toggle', default: true, filter: true },
+    { key: 'temp',       label: 'Temperaturen',  type: 'toggle', default: true, filter: true },
+    { key: 'maxRows',    label: 'Max. Disks',    type: 'count',  default: 0 },
+  ],
+  'unraid-shares': [
+    { key: 'bars',    label: 'Füllstands-Balken', type: 'toggle', default: true, filter: true },
+    { key: 'maxRows', label: 'Max. Shares',       type: 'count',  default: 0 },
+  ],
+  'unraid-notifications': [
+    { key: 'summary', label: 'Zusammenfassung', type: 'toggle', default: true },
+    { key: 'actions', label: 'Aktions-Buttons', type: 'toggle', default: true, cls: 'cfg-hide-actions' },
+    { key: 'maxRows', label: 'Max. Meldungen',  type: 'count',  default: 0 },
+  ],
+  'unraid-system': [
+    { key: 'live',    label: 'CPU/RAM live',     type: 'toggle', default: true },
+    { key: 'meta',    label: 'Versionen & Host', type: 'toggle', default: true },
+    { key: 'actions', label: 'Aktions-Buttons',  type: 'toggle', default: true, cls: 'cfg-hide-actions' },
+  ],
+  'unraid-ups': [
+    { key: 'power', label: 'Leistungsdaten', type: 'toggle', default: true },
   ],
   'plex': [
     { key: 'posters',     label: 'Poster',        type: 'toggle', default: true, cls: 'cfg-hide-posters' },
@@ -2837,12 +3408,19 @@ function applyAllTileConfigs() { DASHBOARD_WIDGETS.forEach((w) => applyTileConfi
 // Nach einer Config-Änderung die Live-Daten der Kachel einmal neu rendern
 // (nur nötig für Optionen, die im Renderer greifen: Limits/Filter).
 const WIDGET_REFRESH = {
-  'service-status': () => pollServiceStatus(),
-  'docker':         () => pollDocker(),
-  'adguard':        () => pollAdGuard(),
-  'unraid-vms':     () => pollVms(),
-  'plex':           () => pollPlex(),
-  'unifi-aps':      () => pollUnifi(),
+  'service-status':       () => pollServiceStatus(),
+  'docker':               () => pollDocker(),
+  'adguard':              () => pollAdGuard(),
+  'unraid-vms':           () => pollVms(),
+  'unraid-docker':        () => pollUnraidDocker(),
+  'unraid-array':         () => pollUnraidArray(),
+  'unraid-disks':         () => pollUnraidArray(),
+  'unraid-shares':        () => pollUnraidShares(),
+  'unraid-notifications': () => pollUnraidNotifications(),
+  'unraid-system':        () => pollUnraidSystem(),
+  'unraid-ups':           () => pollUnraidUps(),
+  'plex':                 () => pollPlex(),
+  'unifi-aps':            () => pollUnifi(),
 };
 
 // Setzt eine Option, wendet sie sofort an und speichert (außerhalb des
@@ -3566,6 +4144,8 @@ async function loadSecrets() {
     set('secretUnraidSshUser', d.UNRAID_SSH_USER);
     set('secretUnraidSshPass', d.UNRAID_SSH_PASSWORD);
     set('secretUnraidSshKey',  d.UNRAID_SSH_KEY);
+    const danger = $('unraidDangerToggle');
+    if (danger) danger.checked = d.UNRAID_DANGER_ACTIONS === 'true';
   } catch { /* ignore, fields stay empty */ }
 }
 
@@ -3590,6 +4170,8 @@ async function saveSecrets(card) {
       UNRAID_SSH_HOST: val('secretUnraidSshHost'), UNRAID_SSH_PORT: val('secretUnraidSshPort'),
       UNRAID_SSH_USER: val('secretUnraidSshUser'), UNRAID_SSH_PASSWORD: val('secretUnraidSshPass'),
       UNRAID_SSH_KEY: val('secretUnraidSshKey'),
+      // Leerstring löscht den Key (Server-Semantik) -> Gefahrenzone aus.
+      UNRAID_DANGER_ACTIONS: ($('unraidDangerToggle') || {}).checked ? 'true' : '',
     };
   }
   try {
@@ -3626,7 +4208,7 @@ const SETTINGS_TREE = [
       { id: 'nextcloud',  label: 'Nextcloud',          badge: 'NC', color: '#0082c9', statusEl: 'nextcloudSettingsStatus' },
       { id: 'weather',    label: 'Weather',            badge: 'WT', color: '#ffb454', statusEl: 'weatherSettingsStatus' },
       { id: 'unifi',      label: 'UniFi / Protect',    badge: 'UF', color: '#5b9dff', statusEl: 'unifiSettingsStatus' },
-      { id: 'unraid',     label: 'Unraid VMs',         badge: 'VM', color: '#ff7a30', statusEl: 'unraidSettingsStatus' },
+      { id: 'unraid',     label: 'Unraid',             badge: 'UN', color: '#ff7a30', statusEl: 'unraidSettingsStatus' },
       { id: 'monitoring', label: 'Service Monitoring', icon: '⏱' },
     ],
   },
