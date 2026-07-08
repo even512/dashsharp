@@ -16,6 +16,7 @@
   --glow-1:         rgba(91,157,255,0.08);
   --glow-2:         rgba(91,157,255,0.05);
   --grid-line:      rgba(120,150,200,0.025);
+  --grid-line-design: rgba(120,150,200,0.09);
   --border-1:       rgba(120,150,200,0.14);
   --border-2:       rgba(120,150,200,0.12);
   --border-3:       rgba(120,150,200,0.10);
@@ -56,6 +57,7 @@
   --glow-1:         rgba(37,99,235,0.07);
   --glow-2:         rgba(37,99,235,0.04);
   --grid-line:      rgba(80,120,200,0.05);
+  --grid-line-design: rgba(80,120,200,0.14);
   --border-1:       rgba(80,130,220,0.22);
   --border-2:       rgba(80,130,220,0.17);
   --border-3:       rgba(80,130,220,0.13);
@@ -179,6 +181,12 @@ select { -webkit-appearance: none; appearance: none; }
    GridStack-Integration: die Kachel-Shell füllt das Grid-Item, kein Padding.
    ========================================================================= */
 .grid-stack { background: transparent; }
+/* Dashboard-Host: relative fürs Empty-State-Overlay, Mindesthöhe als
+   Rechtsklick-Fläche, wenn (noch) keine Kacheln platziert sind. */
+#dashGrids { position: relative; min-height: 55vh; }
+/* Kürzere GridStack-Transitions: gepushte Nachbarn wirken beim Ziehen
+   kontrolliert statt „fliegend" (Standard wären 0.3s). */
+.grid-stack-animate, .grid-stack-animate .grid-stack-item { transition-duration: .12s; }
 .grid-stack-item-content {
   overflow: visible; background: transparent; border: 0; padding: 0;
   inset: 0;
@@ -201,8 +209,9 @@ select { -webkit-appearance: none; appearance: none; }
 }
 /* GridStack-Platzhalter beim Ziehen im Accent-Look */
 .grid-stack > .grid-stack-placeholder > .placeholder-content {
-  border: 1.5px dashed var(--accent); border-radius: 16px;
+  border: 2px dashed var(--accent); border-radius: 16px;
   background: var(--accent-subtle);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 
 /* Überschriften-Kachel (ersetzt die alten Kategorie-Labels) */
@@ -215,6 +224,18 @@ select { -webkit-appearance: none; appearance: none; }
 /* =========================================================================
    Design-Mode
    ========================================================================= */
+/* Rasterlinien: Zellen sind exakt 1/12 der Grid-Breite × cellHeight
+   (--gs-cell-h wird von app.js gesetzt) — Linien fluchten mit den Zellen. */
+body.design-mode .grid-stack {
+  background-image:
+    linear-gradient(to right, var(--grid-line-design) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line-design) 1px, transparent 1px);
+  background-size: calc(100% / 12) var(--gs-cell-h, 66px);
+}
+@media (max-width: 760px) {
+  /* 1-Spalten-Modus: das 12er-Raster passt nicht → Linien aus. */
+  body.design-mode .grid-stack { background-image: none; }
+}
 body.design-mode .grid-stack-item > .grid-stack-item-content { outline: 1px dashed transparent; outline-offset: -1px; transition: outline-color .15s; }
 body.design-mode .grid-stack-item:hover > .grid-stack-item-content { outline-color: var(--accent-border); border-radius: 16px; }
 body.design-mode .grid-stack-item { cursor: grab; }
@@ -256,6 +277,31 @@ body.design-mode .gs-item-heading .gs-tile-controls { display: block; }
 .tile-menu-item { display: block; width: 100%; text-align: left; padding: 8px; border-radius: 7px; background: transparent; border: 0; color: var(--text-2); cursor: pointer; font: 500 12px 'JetBrains Mono', monospace; }
 .tile-menu-item:hover { background: var(--accent-subtle); color: var(--accent); }
 .tile-menu-item.danger:hover { background: rgba(244,63,94,.12); color: var(--red); }
+
+/* Grid-Kontextmenü (Rechtsklick): Kachel-Liste scrollt bei vielen Einträgen */
+.tile-menu-scroll { max-height: min(320px, 55vh); overflow-y: auto; }
+.tile-menu-empty { padding: 8px; font: 500 11px 'JetBrains Mono', monospace; color: var(--text-3); }
+
+/* Empty-State: animierter Hinweis auf das Rechtsklick-Menü */
+#gridEmptyHint {
+  position: absolute; inset: 0; z-index: 3;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; text-align: center; padding: 24px;
+  pointer-events: none; /* Rechtsklick geht durch das Overlay aufs Grid */
+  animation: emptyHintIn .5s ease both;
+}
+.empty-hint-mouse { position: relative; color: var(--text-3); }
+.empty-hint-mouse .empty-hint-btn { color: var(--accent); animation: emptyHintClick 2.4s ease-in-out infinite; }
+.empty-hint-mouse::after {
+  content: ''; position: absolute; top: -7px; right: -9px; width: 30px; height: 30px;
+  border: 2px solid var(--accent); border-radius: 50%; opacity: 0;
+  animation: emptyHintPulse 2.4s ease-out infinite;
+}
+.empty-hint-title { font: 600 14px 'JetBrains Mono', monospace; color: var(--text-2); }
+.empty-hint-sub { font: 500 11px 'JetBrains Mono', monospace; color: var(--text-3); }
+@keyframes emptyHintIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes emptyHintClick { 0%, 100% { opacity: .35; } 12% { opacity: 1; } 28% { opacity: .35; } }
+@keyframes emptyHintPulse { 0%, 8% { transform: scale(.4); opacity: 0; } 14% { opacity: .7; } 55% { transform: scale(1.5); opacity: 0; } 100% { opacity: 0; } }
 
 /* Seiten-Tabs */
 .dash-pages { display: none; gap: 8px; flex-wrap: wrap; align-items: center; margin: 4px 2px 18px; }
