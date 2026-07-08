@@ -428,6 +428,14 @@ const state = {
   upHist: [],
   dispDown: 0, dispUpVal: 0,
   netMaxDisp: 10, lastSampleTs: 0, glancesTs: null,
+  // Network-Throughput-Kachel: anpassbarer Zeitraum & Skala
+  netRangeMs: 60000,        // sichtbares Zeitfenster (10s/1m/10m/1h)
+  netScaleMode: 'auto',     // 'auto' | 'line' | 'fixed'
+  netScaleMax: 100,         // fester Max-Wert (Mbit/s) wenn netScaleMode='fixed'
+  netLineSpeed: 0,          // Link-Speed (Mbit/s) fuer netScaleMode='line'
+  netIfacePref: '',         // gewaehltes Interface ('' = automatisch)
+  netIfaces: [],            // zuletzt gemeldete Interface-Liste (fuer Dropdown)
+  netSource: null,          // 'ssh' | 'glances'
   liveOn: true, gridOn: true, animOn: true, glassOn: true, searchOn: true,
   updateMs: 1600, accent: '#5b9dff',
   settingsCategory: 'general',
@@ -551,6 +559,20 @@ function dash(p) { return `${(p / 100 * CIRC).toFixed(1)} ${(CIRC - p / 100 * CI
    between estimate and reality made the entire line jump once per poll.) */
 const CPU_HIST_N = 46, NET_HIST_N = 40; // visual point density, as before
 function histWindowMs(n) { return (n - 1) * (state.updateMs || 1600); }
+
+// --- Network-Throughput: Zeitraum-Presets & Draw-Downsampling ---------------
+// Der Netz-Verlauf wird bis NET_MAX_RANGE_MS (1h) im Speicher gehalten, das
+// SICHTBARE Fenster (state.netRangeMs) davon aber entkoppelt. Beim Zeichnen
+// wird auf NET_DRAW_POINTS reduziert -> konstante Zeichenkosten, auch bei 1h.
+const NET_RANGES = [
+  { id: '10s', ms: 10000,   label: '10s' },
+  { id: '1m',  ms: 60000,   label: '1m'  },
+  { id: '10m', ms: 600000,  label: '10m' },
+  { id: '1h',  ms: 3600000, label: '1h'  },
+];
+const NET_MAX_RANGE_MS  = 3600000;
+const NET_DRAW_POINTS   = 200;
+const NET_SCALE_PRESETS = [100, 250, 500, 1000]; // Mbit/s
 // Appends a sample. Seeds a flat line when the history is empty or the gap
 // since the previous sample exceeds the window (tab was hidden, Glances was
 // down) — otherwise that gap would render as one long diagonal. Prunes
@@ -563,6 +585,35 @@ function pushSample(arr, t, v, windowMs) {
   arr.push({ t, v });
   const cutoff = t - windowMs;
   while (arr.length > 2 && arr[1].t < cutoff) arr.shift();
+}
+// Sichtbare Punkte im Fenster [now-windowMs, now] (plus einer links davor, damit
+// die Linie den Rand erreicht), peak-preserving auf max. maxPts heruntergesampelt.
+function netDrawArr(arr, now, windowMs, maxPts) {
+  const n = arr.length;
+  if (!n) return arr;
+  const start = now - windowMs;
+  let i0 = 0;
+  while (i0 < n - 1 && arr[i0 + 1].t < start) i0++; // letzter Punkt vor dem Fenster
+  const vis = arr.slice(i0);
+  const m = vis.length;
+  if (m <= maxPts) return vis;
+  const out = [];
+  const bucket = m / maxPts;
+  for (let i = 0; i < maxPts; i++) {
+    const s = Math.floor(i * bucket);
+    const e = Math.min(m, Math.floor((i + 1) * bucket));
+    let best = vis[s];
+    for (let j = s + 1; j < e; j++) if (vis[j].v > best.v) best = vis[j];
+    out.push(best);
+  }
+  return out;
+}
+function maxInArr(arr) { let m = 0; for (let i = 0; i < arr.length; i++) if (arr[i].v > m) m = arr[i].v; return m; }
+// Ziel-Obergrenze der vertikalen Skala je nach Modus.
+function netScaleTarget(dlArr, ulArr) {
+  if (state.netScaleMode === 'fixed' && state.netScaleMax > 0) return state.netScaleMax;
+  if (state.netScaleMode === 'line'  && state.netLineSpeed > 0) return state.netLineSpeed;
+  return Math.max(10, Math.max(maxInArr(dlArr), maxInArr(ulArr)) * 1.15); // auto
 }
 function sparkPoints(arr, w, h, max, pad, now, windowMs) {
   const n = arr.length;
@@ -614,26 +665,37 @@ let _graphFrameHandle = null;
 let _graphDirty = false; // set on new sample / animOn or updateMs change
 function graphFrame() {
   const anim = state.animOn;
-  if (state.cpuHist.length && (anim || _graphDirty)) {
+  if ((state.cpuHist.length || state.netHist.length) && (anim || _graphDirty)) {
     _graphDirty = false;
     // With animations off, draw the static frame anchored at the last sample
     // so the newest point sits exactly on the right edge.
     const now = anim ? performance.now() : state.lastSampleTs;
-    const cpuWin = histWindowMs(CPU_HIST_N);
-    const netWin = histWindowMs(NET_HIST_N);
 
-    // System: CPU + RAM (feste Skala 0..100)
-    setAttr('cpuArea', 'points', areaPoints(state.cpuHist, 460, 64, 100, 0, now, cpuWin));
-    setAttr('cpuLine', 'points', sparkPoints(state.cpuHist, 460, 64, 100, 0, now, cpuWin));
-    setAttr('ramLine', 'points', sparkPoints(state.ramHist, 460, 64, 100, 0, now, cpuWin));
+    // System: CPU + RAM (feste Skala 0..100) – abgeleitetes Fenster wie bisher
+    if (state.cpuHist.length) {
+      const cpuWin = histWindowMs(CPU_HIST_N);
+      setAttr('cpuArea', 'points', areaPoints(state.cpuHist, 460, 64, 100, 0, now, cpuWin));
+      setAttr('cpuLine', 'points', sparkPoints(state.cpuHist, 460, 64, 100, 0, now, cpuWin));
+      setAttr('ramLine', 'points', sparkPoints(state.ramHist, 460, 64, 100, 0, now, cpuWin));
+    }
 
-    // Network: auto-scaled, scale eases toward target (prevents height jumps)
-    const targetMax = Math.max(10, maxOfTwo(state.netHist, state.upHist) * 1.15);
-    state.netMaxDisp += (targetMax - state.netMaxDisp) * (anim ? 0.08 : 1);
-    const nm = state.netMaxDisp || targetMax;
-    setAttr('netArea', 'points', areaPoints(state.netHist, 380, 80, nm, 6, now, netWin));
-    setAttr('netLine', 'points', sparkPoints(state.netHist, 380, 80, nm, 6, now, netWin));
-    setAttr('upLine',  'points', sparkPoints(state.upHist,  380, 80, nm, 6, now, netWin));
+    // Network: eigenes, umschaltbares Zeitfenster + Downsampling auf NET_DRAW_POINTS.
+    if (state.netHist.length) {
+      const netWin = state.netRangeMs || 60000;
+      const dlArr = netDrawArr(state.netHist, now, netWin, NET_DRAW_POINTS);
+      const ulArr = netDrawArr(state.upHist,  now, netWin, NET_DRAW_POINTS);
+      // Skala: auto (geglaettet) / fest / Leitung
+      const targetMax = netScaleTarget(dlArr, ulArr);
+      const ease = state.netScaleMode === 'auto' ? (anim ? 0.08 : 1) : 1;
+      state.netMaxDisp += (targetMax - state.netMaxDisp) * ease;
+      const nm = state.netMaxDisp || targetMax;
+      if (dlArr.length) {
+        setAttr('netArea', 'points', areaPoints(dlArr, 380, 80, nm, 6, now, netWin));
+        setAttr('netLine', 'points', sparkPoints(dlArr, 380, 80, nm, 6, now, netWin));
+      }
+      if (ulArr.length) setAttr('upLine', 'points', sparkPoints(ulArr, 380, 80, nm, 6, now, netWin));
+      setText('netScaleMax', fmtNet(nm));
+    }
 
     // Smoothly count up the big ↓/↑ numbers
     const k = anim ? 0.12 : 1;
@@ -643,6 +705,9 @@ function graphFrame() {
     if (Math.abs(state.netUp   - state.dispUpVal) < 0.04) state.dispUpVal = state.netUp;
     setText('netDown', fmtNet(state.dispDown));
     setText('netUp', fmtNet(state.dispUpVal));
+
+    // Paket-Animation (Daten-Highway) an den aktuellen Durchsatz koppeln
+    updateNetFlow(state.dispDown, state.dispUpVal);
   }
 
   _graphFrameHandle = requestAnimationFrame(graphFrame);
@@ -723,6 +788,47 @@ function setHost(text, color) {
   const el = $('sysHost');
   if (el) { el.textContent = text; el.style.color = color; }
 }
+// Gemeinsame Netz-Aufnahme (Glances-Fallback ODER schneller SSH-Stream). Haelt
+// den Verlauf 1h vor (NET_MAX_RANGE_MS), das sichtbare Fenster wird beim
+// Zeichnen daraus geschnitten (state.netRangeMs).
+function ingestNet(down, up, iface, hostLabel) {
+  down = Math.max(0, +down || 0);
+  up   = Math.max(0, +up   || 0);
+  state.netDown = down;
+  state.netUp = up;
+  if (iface) {
+    setText('netIface', iface);
+    const sep = $('netIfaceSep'); if (sep) sep.style.display = '';
+  }
+  if (hostLabel) setText('netHost', hostLabel);
+  const now = performance.now();
+  pushSample(state.netHist, now, down, NET_MAX_RANGE_MS);
+  pushSample(state.upHist,  now, up,   NET_MAX_RANGE_MS);
+  if (!seeded) {
+    state.dispDown = down;
+    state.dispUpVal = up;
+    state.netMaxDisp = Math.max(10, Math.max(down, up) * 1.15);
+    seeded = true;
+  }
+  state.lastSampleTs = now;
+  _graphDirty = true;
+}
+
+// Schnelles Netz-Event (SSE 'net') – primaere Live-Quelle (SSH /proc/net/dev).
+function applyNet(d) {
+  if (!d) return;
+  state.netSource = d.source || 'ssh';
+  if (Array.isArray(d.ifaces)) state.netIfaces = d.ifaces;
+  let down = d.rxMbit, up = d.txMbit, iface = d.iface;
+  // Client-seitige Interface-Auswahl (Override), falls im Event enthalten.
+  if (state.netIfacePref && d.all && d.all[state.netIfacePref]) {
+    down = d.all[state.netIfacePref].rxMbit;
+    up   = d.all[state.netIfacePref].txMbit;
+    iface = state.netIfacePref;
+  }
+  ingestNet(down, up, iface, null);
+}
+
 function applyMetrics(d) {
   // Dedupe: the server tags every real Glances fetch with a sample timestamp
   // and replays it for cache hits / stale fallbacks. An unchanged ts means
@@ -735,24 +841,15 @@ function applyMetrics(d) {
   state.cpu = d.cpu != null ? d.cpu : state.cpu;
   state.ram = d.mem ? d.mem.percent : state.ram;
   state.cpuTemp = d.cpuTemp != null ? d.cpuTemp : state.cpuTemp;
-  state.netDown = d.net ? d.net.rxMbit : 0;
-  state.netUp = d.net ? d.net.txMbit : 0;
-  if (d.net && d.net.iface) {
-    setText('netHost', d.label || 'host');
-    setText('netIface', d.net.iface);
-    const sep = $('netIfaceSep'); if (sep) sep.style.display = '';
-  }
 
   const now = performance.now();
   pushSample(state.cpuHist, now, state.cpu, histWindowMs(CPU_HIST_N));
   pushSample(state.ramHist, now, state.ram, histWindowMs(CPU_HIST_N));
-  pushSample(state.netHist, now, state.netDown, histWindowMs(NET_HIST_N));
-  pushSample(state.upHist, now, state.netUp, histWindowMs(NET_HIST_N));
-  if (!seeded) {
-    state.dispDown = state.netDown;
-    state.dispUpVal = state.netUp;
-    state.netMaxDisp = Math.max(10, Math.max(state.netDown, state.netUp) * 1.15);
-    seeded = true;
+  // Netz nur aus Glances aufnehmen, wenn KEINE schnelle SSH-Quelle aktiv ist.
+  if (state.netSource !== 'ssh' && d.net) {
+    ingestNet(d.net.rxMbit, d.net.txMbit, d.net.iface, d.label || 'host');
+    state.netSource = state.netSource || 'glances';
+    if (d.net.speedMbit) state.netLineSpeed = d.net.speedMbit;
   }
   state.lastSampleTs = now;
   _graphDirty = true;
@@ -785,10 +882,64 @@ async function pollGlances() {
     console.warn('Glances poll failed:', err.message);
   }
 }
-function startGlances() {
+function markGlancesConnected() {
+  setText('glancesSettingsStatus', '● connected');
+  const gs = $('glancesSettingsStatus'); if (gs) gs.style.color = '#3ddc97';
+}
+function markGlancesError(d) {
+  const msg = d && d.error === 'not_configured' ? 'glances not configured' : 'glances offline';
+  setHost(msg, '#f43f5e');
+  setText('glancesSettingsStatus', '● ' + msg);
+  const gs = $('glancesSettingsStatus'); if (gs) gs.style.color = '#f43f5e';
+}
+
+/* ---------- Live-Metriken: SSE-Push (Primaer) + Polling-Fallback ----------
+   Ein einziger Server-Sent-Events-Stream liefert schnelle 'net'-Events (SSH
+   /proc/net/dev, ~0.5 s) und moderate 'glances'-Events (CPU/RAM/Disk). Kein
+   Poll-Warten, ein Stream fuer alle Tabs. Faellt SSE aus (nie verbunden),
+   wird transparent auf das bisherige /api/glances-Polling zurueckgeschaltet. */
+let metricsEs = null;
+let _esConnected = false;
+let _esFails = 0;
+function openMetricsStream() {
+  closeMetricsStream();
+  clearInterval(dataTimer); dataTimer = null;
+  let es;
+  try { es = new EventSource('/api/glances/stream'); }
+  catch (_) { return startGlancesFallbackPoll(); }
+  metricsEs = es;
+  es.addEventListener('net', (e) => {
+    try { applyNet(JSON.parse(e.data)); } catch (_) { return; }
+    _esConnected = true; _esFails = 0; markGlancesConnected();
+  });
+  es.addEventListener('glances', (e) => {
+    let d; try { d = JSON.parse(e.data); } catch (_) { return; }
+    _esConnected = true; _esFails = 0;
+    if (!d || !d.ok) { markGlancesError(d); return; }
+    applyMetrics(d); markGlancesConnected();
+  });
+  es.onopen = () => { _esConnected = true; _esFails = 0; };
+  es.onerror = () => {
+    _esFails++;
+    // Nie verbunden und mehrfach fehlgeschlagen -> Server kann kein SSE -> Polling.
+    if (!_esConnected && _esFails >= 3) startGlancesFallbackPoll();
+    // Andernfalls reconnectet EventSource selbsttaetig.
+  };
+}
+function closeMetricsStream() {
+  if (metricsEs) { try { metricsEs.close(); } catch (_) {} metricsEs = null; }
+  _esConnected = false; _esFails = 0;
+}
+function startGlancesFallbackPoll() {
+  closeMetricsStream();
   clearInterval(dataTimer);
   pollGlances();
   dataTimer = setInterval(pollGlances, state.updateMs || 1600);
+}
+function startGlances() {
+  clearInterval(dataTimer); dataTimer = null;
+  if (typeof window !== 'undefined' && window.EventSource) openMetricsStream();
+  else startGlancesFallbackPoll();
 }
 
 /* ---------- Docker (via Glances) ---------- */
@@ -2858,6 +3009,7 @@ function startLive() {
 // Counterpart to startLive(): actually clears every live timer (not just a
 // flag-check) so a hidden tab or "Live updates" off truly stops polling.
 function pauseLive() {
+  closeMetricsStream();
   clearInterval(dataTimer);      dataTimer = null;
   clearInterval(dockerTimer);    dockerTimer = null;
   clearInterval(adguardTimer);   adguardTimer = null;
@@ -3098,7 +3250,7 @@ async function saveQlItems() {
    ============================================================================ */
 const DASHBOARD_WIDGETS = [
   { id: 'system-load',        section: 'system',          label: 'System Load',           defaultSize: { w: 5,  h: 6 }, minSize: { w: 3, h: 4 } },
-  { id: 'network-throughput', section: 'system',          label: 'Network Throughput',    defaultSize: { w: 7,  h: 3 }, minSize: { w: 4, h: 3 } },
+  { id: 'network-throughput', section: 'system',          label: 'Network Throughput',    defaultSize: { w: 7,  h: 4 }, minSize: { w: 4, h: 3 } },
   { id: 'disk-storage',       section: 'system',          label: 'Storage · Unraid Array', defaultSize: { w: 7, h: 4 }, minSize: { w: 4, h: 3 } },
   { id: 'service-status',     section: 'dienste',         label: 'Service Status',        defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
   { id: 'docker',             section: 'dienste',         label: 'Docker',                defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
@@ -3134,7 +3286,22 @@ const WIDGET_OPTIONS = {
     { key: 'chart', label: 'Verlaufs-Chart',                type: 'toggle', default: true },
   ],
   'network-throughput': [
-    { key: 'chart', label: 'Verlaufs-Chart', type: 'toggle', default: true },
+    { key: 'chart', label: 'Verlaufs-Chart',   type: 'toggle', default: true },
+    { key: 'flow',  label: 'Paket-Animation',  type: 'toggle', default: true },
+    { key: 'range', label: 'Zeitraum',         type: 'select', default: '1m',
+      options: [{ v: '10s', l: '10s' }, { v: '1m', l: '1m' }, { v: '10m', l: '10m' }, { v: '1h', l: '1h' }] },
+    { key: 'scaleMode', label: 'Skala', type: 'select', default: 'auto',
+      options: [
+        { v: 'auto', l: 'Auto' }, { v: '100', l: '100 Mbit/s' }, { v: '250', l: '250 Mbit/s' },
+        { v: '500', l: '500 Mbit/s' }, { v: '1000', l: '1 Gbit/s' }, { v: 'line', l: 'Leitung' },
+        { v: 'custom', l: 'Eigener Wert…' },
+      ] },
+    { key: 'scaleMax', label: 'Max (Mbit/s)', type: 'number', default: 0 },
+    { key: 'iface',    label: 'Interface',    type: 'select', default: '', options: 'ifaces' },
+    { key: 'ispName',  label: 'ISP-Name',     type: 'text', default: 'willy.tel' },
+    { key: 'ispIcon',  label: 'ISP-Icon',     type: 'icon', default: 'willytel', set: 'isp' },
+    { key: 'srvName',  label: 'Server-Name',  type: 'text', default: 'Unraid' },
+    { key: 'srvIcon',  label: 'Server-Icon',  type: 'icon', default: 'unraid', set: 'srv' },
   ],
   'service-status': [
     { key: 'maxRows', label: 'Max. Einträge', type: 'count', default: 0 },
@@ -3404,6 +3571,7 @@ function applyAllTileConfigs() { DASHBOARD_WIDGETS.forEach((w) => applyTileConfi
 // Nach einer Config-Änderung die Live-Daten der Kachel einmal neu rendern
 // (nur nötig für Optionen, die im Renderer greifen: Limits/Filter).
 const WIDGET_REFRESH = {
+  'network-throughput':   () => applyNetworkConfig(),
   'service-status':       () => pollServiceStatus(),
   'docker':               () => pollDocker(),
   'adguard':              () => pollAdGuard(),
@@ -4053,6 +4221,18 @@ function closeTileSettings() {
   setTimeout(() => { modal.style.display = 'none'; }, 180);
 }
 
+// Optionen fuer ein 'select'-Control. 'ifaces' wird dynamisch aus der zuletzt
+// gemeldeten Interface-Liste aufgebaut (plus "Auto").
+function _tileSelectOptions(widgetId, opt) {
+  if (opt.options === 'ifaces') {
+    const list = [{ v: '', l: 'Auto' }];
+    for (const n of (state.netIfaces || [])) list.push({ v: n, l: n });
+    const cur = String(_cfgVal(widgetId, opt.key) || '');
+    if (cur && !list.some((o) => o.v === cur)) list.push({ v: cur, l: cur });
+    return list;
+  }
+  return Array.isArray(opt.options) ? opt.options : [];
+}
 function _renderTileSettings(widgetId) {
   const wd = WIDGET_BY_ID.get(widgetId);
   const body = $('tileSettingsBody');
@@ -4109,6 +4289,57 @@ function _renderTileSettings(widgetId) {
         _setTileCfg(widgetId, opt.key, n);
       });
       row(opt.label, inp, '0 oder leer = alle anzeigen');
+    } else if (opt.type === 'number') {
+      const inp = document.createElement('input');
+      inp.className = 'cfg-input ts-count';
+      inp.type = 'number';
+      inp.min = '0';
+      inp.placeholder = String(opt.default || 0);
+      const cur = Math.floor(+_cfgVal(widgetId, opt.key)) || 0;
+      inp.value = cur > 0 ? String(cur) : '';
+      inp.addEventListener('input', () =>
+        _setTileCfg(widgetId, opt.key, Math.max(0, Math.floor(+inp.value) || 0)));
+      row(opt.label, inp);
+    } else if (opt.type === 'text') {
+      const inp = document.createElement('input');
+      inp.className = 'cfg-input';
+      inp.type = 'text';
+      inp.placeholder = String(opt.default || '');
+      inp.value = String(_cfgVal(widgetId, opt.key) || '');
+      inp.addEventListener('input', () =>
+        _setTileCfg(widgetId, opt.key, inp.value.trim().slice(0, 40)));
+      row(opt.label, inp);
+    } else if (opt.type === 'select') {
+      const sel = document.createElement('select');
+      sel.className = 'cfg-input';
+      const cur = String(_cfgVal(widgetId, opt.key));
+      for (const o of _tileSelectOptions(widgetId, opt)) {
+        const el = document.createElement('option');
+        el.value = o.v; el.textContent = o.l;
+        if (String(o.v) === cur) el.selected = true;
+        sel.appendChild(el);
+      }
+      sel.addEventListener('change', () => _setTileCfg(widgetId, opt.key, sel.value));
+      row(opt.label, sel);
+    } else if (opt.type === 'icon') {
+      const grid = document.createElement('div');
+      grid.className = 'ts-icon-grid';
+      const set = opt.set === 'srv' ? NET_ICON_SRV : NET_ICON_ISP;
+      const cur = String(_cfgVal(widgetId, opt.key) || '');
+      for (const ic of set) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ts-icon-btn' + (ic.id === cur ? ' active' : '');
+        btn.title = ic.label;
+        btn.innerHTML = netIconSvg(ic.id);
+        btn.addEventListener('click', () => {
+          grid.querySelectorAll('.ts-icon-btn').forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+          _setTileCfg(widgetId, opt.key, ic.id);
+        });
+        grid.appendChild(btn);
+      }
+      row(opt.label, grid);
     }
   }
 
@@ -4611,8 +4842,11 @@ function setAccent(c) {
 function setUpdateMs(v) {
   state.updateMs = parseInt(v, 10) || 1600;
   setText('updateSec', (state.updateMs / 1000).toFixed(1));
-  _graphDirty = true; // graph window is derived from updateMs → rescale once
-  startLive();
+  _graphDirty = true;
+  // Bei aktivem SSE-Stream kommt das Tempo vom Server; updateMs steuert nur den
+  // Polling-Fallback. Daher NICHT den Stream/alle Poller neu aufbauen (Slider
+  // feuert bei jedem Ziehen) – nur den Fallback-Timer anpassen, falls aktiv.
+  if (dataTimer) { clearInterval(dataTimer); dataTimer = setInterval(pollGlances, state.updateMs || 1600); }
   saveUiPrefs();
 }
 
@@ -4755,6 +4989,149 @@ function injectTileDecor() {
   });
 }
 
+/* ============================================================
+   Network-Throughput-Kachel: Knoten-Icons, Konfiguration, Backfill,
+   Paket-Animation ("Daten-Highway").
+   Die Icons sind bewusst EIGENE, vereinfachte, markenfarbene Zeichen
+   (abgerundete Kachel + Monogramm/Glyph) – keine 1:1-Logos.
+   ============================================================ */
+const NET_ICON_ISP = [
+  { id: 'willytel',   label: 'willy.tel',          color: '#0a86c4', text: 'w' },
+  { id: 'wilhelmtel', label: 'wilhelm.tel',        color: '#0a86c4', text: 'w' },
+  { id: 'telekom',    label: 'Telekom',            color: '#e20074', text: 'T' },
+  { id: 'vodafone',   label: 'Vodafone',           color: '#e60000', glyph: 'quote' },
+  { id: 'o2',         label: 'o2',                 color: '#0019a5', text: 'o2', small: true },
+  { id: 'einsundeins',label: '1&1',                color: '#1c449b', text: '1&amp;1', small: true },
+  { id: 'dglasfaser', label: 'Deutsche Glasfaser', color: '#6a1b7a', text: 'df' },
+  { id: 'pyur',       label: 'PŸUR',               color: '#00b3a4', text: 'P' },
+  { id: 'ewe',        label: 'EWE',                color: '#d9a400', text: 'EWE', small: true },
+  { id: 'mnet',       label: 'M-net',              color: '#e2001a', text: 'M' },
+  { id: 'netcologne', label: 'NetCologne',         color: '#c8102e', text: 'NC', small: true },
+  { id: 'globe',      label: 'Internet',           color: '#5b9dff', glyph: 'globe' },
+];
+const NET_ICON_SRV = [
+  { id: 'unraid',   label: 'Unraid',   color: '#f15a2c', glyph: 'stack' },
+  { id: 'synology', label: 'Synology', color: '#8a9096', text: 'S' },
+  { id: 'truenas',  label: 'TrueNAS',  color: '#0095d5', text: 'T' },
+  { id: 'proxmox',  label: 'Proxmox',  color: '#e57000', text: 'P' },
+  { id: 'server',   label: 'Server',   color: '#7f8ea8', glyph: 'server' },
+];
+function _netIconDef(id) {
+  return NET_ICON_ISP.find((i) => i.id === id) || NET_ICON_SRV.find((i) => i.id === id) || null;
+}
+function netIconSvg(id) {
+  const ic = _netIconDef(id) || { color: '#5b9dff', glyph: 'globe' };
+  let inner;
+  if (ic.glyph === 'globe') {
+    inner = `<circle cx="16" cy="16" r="8" fill="none" stroke="#fff" stroke-width="1.6"/>` +
+            `<path d="M8 16h16M16 8c3.2 3 3.2 13 0 16M16 8c-3.2 3-3.2 13 0 16" fill="none" stroke="#fff" stroke-width="1.3"/>`;
+  } else if (ic.glyph === 'stack') {
+    inner = `<g fill="#fff"><rect x="8" y="10" width="16" height="3" rx="1"/>` +
+            `<rect x="8" y="14.5" width="16" height="3" rx="1"/><rect x="8" y="19" width="16" height="3" rx="1"/></g>`;
+  } else if (ic.glyph === 'server') {
+    inner = `<g fill="none" stroke="#fff" stroke-width="1.6"><rect x="8" y="8" width="16" height="7" rx="1.6"/>` +
+            `<rect x="8" y="17" width="16" height="7" rx="1.6"/></g>` +
+            `<g fill="#fff"><circle cx="11.5" cy="11.5" r="1"/><circle cx="11.5" cy="20.5" r="1"/></g>`;
+  } else if (ic.glyph === 'quote') {
+    inner = `<path fill="#fff" d="M14 21c-2.4 0-4-1.7-4-4.1 0-3 2.3-5.6 5.8-7.3l1.1 1.7c-1.9 1.1-3 2.2-3.3 3.4.3-.1.6-.2 1-.2 1.9 0 3.4 1.4 3.4 3.3S16.4 21 14 21z"/>`;
+  } else {
+    const t = ic.text || '?';
+    const fs = ic.small ? 8.5 : (t.replace('&amp;', '&').length > 1 ? 11 : 15);
+    inner = `<text x="16" y="17" fill="#fff" font-family="'Space Grotesk',sans-serif" font-weight="700" ` +
+            `font-size="${fs}" text-anchor="middle" dominant-baseline="middle">${t}</text>`;
+  }
+  return `<svg viewBox="0 0 32 32" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">` +
+         `<rect x="1" y="1" width="30" height="30" rx="8" fill="${ic.color}"/>${inner}</svg>`;
+}
+
+// Liest tile.config der Netz-Kachel und wendet Zeitraum/Skala/Interface/Knoten an.
+function applyNetworkConfig() {
+  const id = 'network-throughput';
+  const rId = String(_cfgVal(id, 'range') || '1m');
+  const range = NET_RANGES.find((r) => r.id === rId) || NET_RANGES[1];
+  const rangeChanged = state.netRangeMs !== range.ms;
+  state.netRangeMs = range.ms;
+
+  const sm = String(_cfgVal(id, 'scaleMode') || 'auto');
+  if (sm === 'auto') state.netScaleMode = 'auto';
+  else if (sm === 'line') state.netScaleMode = 'line';
+  else if (sm === 'custom') { state.netScaleMode = 'fixed'; state.netScaleMax = Math.max(1, +_cfgVal(id, 'scaleMax') || 100); }
+  else { state.netScaleMode = 'fixed'; state.netScaleMax = Math.max(1, +sm || 100); }
+
+  state.netIfacePref = String(_cfgVal(id, 'iface') || '');
+
+  setText('netIspName', String(_cfgVal(id, 'ispName') || 'willy.tel'));
+  setText('netSrvName', String(_cfgVal(id, 'srvName') || 'Unraid'));
+  const ispIco = $('netIspIco'); if (ispIco) ispIco.innerHTML = netIconSvg(String(_cfgVal(id, 'ispIcon') || 'willytel'));
+  const srvIco = $('netSrvIco'); if (srvIco) srvIco.innerHTML = netIconSvg(String(_cfgVal(id, 'srvIcon') || 'unraid'));
+
+  reflectNetControls(rId, sm);
+  _graphDirty = true;
+  // Verlauf fuer den gewaehlten Bereich nachladen (auch initial), damit 10m/1h
+  // sofort gefuellt sind – nicht bei jedem winzigen Re-Apply mehrfach.
+  if (rangeChanged || !state._netBackfilled) { state._netBackfilled = true; backfillNetHistory(range.ms); }
+}
+function reflectNetControls(rangeId, scaleMode) {
+  const shell = _shellFor('network-throughput'); if (!shell) return;
+  shell.querySelectorAll('[data-net-range]').forEach((b) =>
+    b.classList.toggle('active', b.dataset.netRange === rangeId));
+  const sc = shell.querySelector('#netScaleCtl');
+  if (sc && sc.value !== scaleMode) sc.value = scaleMode;
+}
+function setupNetTileControls() {
+  const shell = _shellFor('network-throughput'); if (!shell) return;
+  const rangeCtl = shell.querySelector('#netRangeCtl');
+  if (rangeCtl && !rangeCtl._wired) {
+    rangeCtl._wired = true;
+    rangeCtl.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-net-range]');
+      if (b) _setTileCfg('network-throughput', 'range', b.dataset.netRange);
+    });
+  }
+  const sc = shell.querySelector('#netScaleCtl');
+  if (sc && !sc._wired) {
+    sc._wired = true;
+    sc.addEventListener('change', () => _setTileCfg('network-throughput', 'scaleMode', sc.value));
+  }
+}
+// Serverseitigen Verlauf fuer den gewaehlten Zeitraum holen und die Puffer seeden.
+async function backfillNetHistory(ms) {
+  try {
+    const res = await fetch(`/api/net/history?ms=${ms}&points=${NET_DRAW_POINTS * 2}`, { cache: 'no-store' });
+    const d = await res.json();
+    if (!d || !d.ok || !Array.isArray(d.points) || !d.points.length) return;
+    const offset = performance.now() - d.now; // Server- -> Client-Zeitachse
+    const dl = [], ul = [];
+    for (const p of d.points) {
+      const t = p.t + offset;
+      dl.push({ t, v: Math.max(0, +p.rx || 0) });
+      ul.push({ t, v: Math.max(0, +p.tx || 0) });
+    }
+    state.netHist = dl;
+    state.upHist = ul;
+    seeded = true;
+    _graphDirty = true;
+  } catch (_) { /* Backfill ist optional */ }
+}
+
+/* ---- Paket-Animation: Tempo & Deckkraft je Spur an den Durchsatz koppeln ---- */
+function updateNetFlow(dl, ul) {
+  applyNetLane($('netLaneDl'), dl);
+  applyNetLane($('netLaneUl'), ul);
+}
+function applyNetLane(lane, mbit) {
+  if (!lane) return;
+  const active = mbit > 0.05;
+  if (lane._active !== active) { lane.classList.toggle('active', active); lane._active = active; }
+  if (!active) return;
+  // log-artige Skala: auch kleine Raten zeigen Bewegung, 0..~200 Mbit/s -> schnell.
+  const f = Math.min(1, Math.log10(1 + mbit) / Math.log10(201));
+  const dur = +(3.2 - 2.7 * f).toFixed(2);   // 3.2s (leise) .. 0.5s (viel)
+  const op  = +(0.5 + 0.5 * f).toFixed(2);
+  if (lane._dur !== dur) { lane.style.setProperty('--dur', dur + 's'); lane._dur = dur; }
+  if (lane._op  !== op)  { lane.style.setProperty('--pkt-op', op);      lane._op = op; }
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   _applyTheme(localStorage.getItem('theme') || 'dark');
   loadUiPrefs();
@@ -4762,6 +5139,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupGridContextMenu();
   injectTileDecor();
   applyAllTileConfigs();
+  setupNetTileControls();
+  applyNetworkConfig();
   tickClock();
   clockTimer = setInterval(tickClock, 1000);
   renderData();

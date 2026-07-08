@@ -245,7 +245,11 @@ function checkService(name, url) {
   });
 }
 
-app.use(compression());
+// Kompression global – aber NICHT fuer den SSE-Stream (compression puffert
+// text/event-stream und wuerde die Live-Pushes zurueckhalten).
+app.use(compression({
+  filter: (req, res) => (req.path === '/api/glances/stream' ? false : compression.filter(req, res)),
+}));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
@@ -425,17 +429,240 @@ const WEATHER_TTL   = 600000; // ms – Wetterdaten (10 min)
 const UNIFI_TTL     = 10000;  // ms – UniFi-Netzwerkdaten (10 s)
 const NEXTCLOUD_TTL = 60000;  // ms – Nextcloud-Speicher/Nutzer (60 s)
 
-app.get('/api/glances', async (req, res) => {
+/* ============================================================
+   Live-Netzwerk-Sampler + SSE-Push
+   ------------------------------------------------------------
+   Primaerquelle: /proc/net/dev vom Unraid-Host, per PERSISTENTEM SSH-Stream
+   (ein langlebiges Kommando, kein exec pro Sample). Aus den Byte-Zaehlern
+   werden serverseitig Deltas ueber die Wall-Clock gebildet -> Mbit/s. Das ist
+   derselbe Zaehler, den Unraids eigenes Dashboard liest (inkl. bridged
+   Docker-/VM-Traffic ueber br0), daher genauso fluessig. Faellt der SSH-Weg
+   aus, liefert Glances (pickNet) den Netzwert als Fallback.
+   Ein Ringpuffer (bis NET_HISTORY_MS) erlaubt Backfill fuer 10m/1h.
+   Alle Tabs werden ueber EINEN Stream via Server-Sent-Events versorgt.
+   ============================================================ */
+const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const NET_SAMPLE_MS  = clampN(parseInt(process.env.NET_SAMPLE_MS  || '500', 10) || 500, 250, 4000);
+const NET_HISTORY_MS =        parseInt(process.env.NET_HISTORY_MS || '3600000', 10) || 3600000;
+const NET_SOURCE     = (process.env.NET_SOURCE || 'auto').toLowerCase(); // auto | ssh | glances
+const NET_IFACE_CFG  = (process.env.NET_IFACE  || '').trim();            // '' = auto
+const GLANCES_STREAM_MS = clampN(parseInt(process.env.GLANCES_STREAM_MS || '2000', 10) || 2000, 1000, 15000);
+
+const netState = {
+  latest: null,   // { ts, iface, rxMbit, txMbit, ifaces:[], all:{}, source }
+  history: [],    // [{ t, rx, tx }]  (Mbit/s)
+  prev: null,     // { t, raw:{ iface:{rx,tx} } } – letzte Rohzaehler
+  source: null,   // 'ssh' | 'glances' | null
+  running: false,
+  sshConn: null,
+  buf: '',
+  _reco: null,
+};
+
+// Nur echte, aussagekraeftige Interfaces: lo/veth/docker0/br-<hex>/virbr/vpn raus,
+// die Haupt-Bridge br0 (Unraid) bleibt drin.
+function isRealNetIface(name) {
+  if (!name) return false;
+  if (name === 'lo' || name === 'docker0') return false;
+  if (/^(veth|br-[0-9a-f]{6,}|virbr|tunl|cni|flannel|tailscale|wg\d|zt|ib|gre|sit|bond-slave)/.test(name)) return false;
+  return true;
+}
+function parseProcNetDev(text) {
+  const out = {};
+  for (const line of String(text).split('\n')) {
+    const idx = line.indexOf(':');
+    if (idx < 0) continue;
+    const name = line.slice(0, idx).trim();
+    if (!/^[a-zA-Z0-9._-]+$/.test(name)) continue;
+    const nums = line.slice(idx + 1).trim().split(/\s+/).map(Number);
+    if (nums.length < 16 || nums.some((n) => !Number.isFinite(n))) continue;
+    out[name] = { rx: nums[0], tx: nums[8] }; // Spalte 0 = rx bytes, 8 = tx bytes
+  }
+  return out;
+}
+function pushNetHistory(t, rx, tx) {
+  const h = netState.history;
+  const last = h[h.length - 1];
+  if (last && t <= last.t) return; // monoton halten
+  h.push({ t, rx, tx });
+  const cutoff = t - NET_HISTORY_MS;
+  let drop = 0;
+  while (drop < h.length && h[drop].t < cutoff) drop++;
+  if (drop) h.splice(0, drop);
+}
+// Peak-preserving Downsampling auf max. `maxPts` Punkte.
+function downsampleNet(points, maxPts) {
+  const n = points.length;
+  if (n <= maxPts) return points;
+  const out = [];
+  const bucket = n / maxPts;
+  for (let i = 0; i < maxPts; i++) {
+    const s = Math.floor(i * bucket);
+    const e = Math.min(n, Math.floor((i + 1) * bucket));
+    let best = points[s];
+    for (let j = s; j < e; j++) {
+      if ((points[j].rx + points[j].tx) > (best.rx + best.tx)) best = points[j];
+    }
+    out.push(best);
+  }
+  return out;
+}
+
+// ---- SSE-Clients & Broadcast ----
+const sseClients = new Set();
+function sseSend(res, event, data) {
+  try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch (_) { /* ignore */ }
+}
+function broadcast(event, data) { for (const res of sseClients) sseSend(res, event, data); }
+
+// ---- Netzraten berechnen & waehlen ----
+function buildNetSample(prevRaw, curRaw, dtSec) {
+  const all = {};
+  const cums = {};
+  for (const name of Object.keys(curRaw)) {
+    if (!isRealNetIface(name)) continue;
+    const p = prevRaw[name];
+    if (!p) continue;
+    let drx = curRaw[name].rx - p.rx;
+    let dtx = curRaw[name].tx - p.tx;
+    if (drx < 0) drx = 0; // Counter-Reset/Reboot
+    if (dtx < 0) dtx = 0;
+    const mbit = (b) => Math.max(0, +(((b / dtSec) * 8) / 1e6).toFixed(2));
+    all[name] = { rxMbit: mbit(drx), txMbit: mbit(dtx) };
+    cums[name] = curRaw[name].rx + curRaw[name].tx;
+  }
+  const names = Object.keys(all);
+  if (!names.length) return null;
+  names.sort((a, b) => (cums[b] || 0) - (cums[a] || 0));
+  let iface = NET_IFACE_CFG && all[NET_IFACE_CFG] ? NET_IFACE_CFG : names[0];
+  return {
+    ts: Date.now(), iface,
+    rxMbit: all[iface].rxMbit, txMbit: all[iface].txMbit,
+    ifaces: names, all, source: 'ssh',
+  };
+}
+function onNetTick(text) {
+  const cur = parseProcNetDev(text);
+  if (!Object.keys(cur).length) return;
+  const now = Date.now();
+  if (netState.prev) {
+    const dt = (now - netState.prev.t) / 1000;
+    if (dt > 0.05) {
+      const sample = buildNetSample(netState.prev.raw, cur, dt);
+      if (sample) {
+        netState.latest = sample;
+        pushNetHistory(now, sample.rxMbit, sample.txMbit);
+        broadcast('net', sample);
+      }
+    }
+  }
+  netState.prev = { t: now, raw: cur };
+  netState.source = 'ssh';
+}
+function onNetChunk(s) {
+  netState.buf += s;
+  let idx;
+  while ((idx = netState.buf.indexOf('__NETTICK__')) >= 0) {
+    const seg = netState.buf.slice(0, idx);
+    netState.buf = netState.buf.slice(idx + 11);
+    onNetTick(seg);
+  }
+  if (netState.buf.length > 65536) netState.buf = ''; // Sicherheitsnetz
+}
+function scheduleNetReconnect(cfg) {
+  netState.sshConn = null;
+  netState.prev = null; // Luecke -> Delta neu aufsetzen
+  netState.buf = '';
+  if (!netState.running) return;
+  clearTimeout(netState._reco);
+  netState._reco = setTimeout(() => connectNetSsh(cfg), 5000);
+}
+function connectNetSsh(cfg) {
+  sshConnect(cfg, 10000).then((conn) => {
+    netState.sshConn = conn;
+    conn.on('close', () => scheduleNetReconnect(cfg));
+    conn.on('error', () => { /* close folgt */ });
+    const secs = (NET_SAMPLE_MS / 1000).toFixed(3);
+    const cmd = `sh -c 'while :; do cat /proc/net/dev; echo __NETTICK__; sleep ${secs}; done'`;
+    conn.exec(cmd, (err, stream) => {
+      if (err) { try { conn.end(); } catch (_) {} return scheduleNetReconnect(cfg); }
+      netState.buf = '';
+      stream.on('data', (d) => onNetChunk(d.toString('utf8')));
+      stream.stderr.on('data', () => { /* ignore */ });
+      stream.on('close', () => { try { conn.end(); } catch (_) {} });
+    });
+  }).catch(() => scheduleNetReconnect(cfg));
+}
+function startNetSampler() {
+  if (netState.running) return;
+  if (NET_SOURCE === 'glances') { netState.source = netState.source || 'glances'; return; }
+  const cfg = unraidSshCfg();
+  if (!cfg) { netState.source = netState.source || 'glances'; return; } // kein SSH -> Glances-Fallback
+  netState.running = true;
+  console.log(`Netz-Sampler: SSH /proc/net/dev @ ${NET_SAMPLE_MS}ms auf ${cfg.host}`);
+  connectNetSsh(cfg);
+}
+
+// ---- Glances-Broadcast (CPU/RAM/Disk) nur solange Clients verbunden sind ----
+let glancesStreamTimer = null;
+function ensureGlancesStream() {
+  if (glancesStreamTimer || sseClients.size === 0) return;
+  const tick = async () => {
+    if (sseClients.size === 0) { clearInterval(glancesStreamTimer); glancesStreamTimer = null; return; }
+    broadcast('glances', await fetchGlancesSample());
+  };
+  glancesStreamTimer = setInterval(tick, GLANCES_STREAM_MS);
+  tick();
+}
+
+// ---- SSE-Stream: net (schnell) + glances (moderat) ----
+app.get('/api/glances/stream', (req, res) => {
+  res.set({
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+  res.write('retry: 3000\n\n');
+  sseClients.add(res);
+
+  if (netState.latest) sseSend(res, 'net', netState.latest);
+  fetchGlancesSample().then((d) => sseSend(res, 'glances', d)).catch(() => {});
+  ensureGlancesStream();
+
+  const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch (_) {} }, 20000);
+  req.on('close', () => { clearInterval(hb); sseClients.delete(res); });
+});
+
+// ---- Backfill fuer den gewaehlten Zeitraum (10m/1h) ----
+app.get('/api/net/history', (req, res) => {
   res.set('Cache-Control', 'no-store');
+  const ms  = clampN(parseInt(req.query.ms, 10) || 300000, 1000, NET_HISTORY_MS);
+  const pts = clampN(parseInt(req.query.points, 10) || 400, 20, 2000);
+  const since = Date.now() - ms;
+  let out = netState.history;
+  let lo = 0; while (lo < out.length && out[lo].t < since) lo++;
+  out = downsampleNet(out.slice(lo), pts);
+  res.json({
+    ok: true, now: Date.now(),
+    iface: netState.latest ? netState.latest.iface : null,
+    source: netState.source, points: out,
+  });
+});
+
+// Holt (bzw. liefert aus dem Cache) ein vollstaendiges Glances-Sample. Wird
+// sowohl von der REST-Route /api/glances als auch vom SSE-Broadcast genutzt.
+async function fetchGlancesSample() {
   const { url, label } = glancesCfg();
-  if (!url) return res.json({ ok: false, error: 'not_configured' });
+  if (!url) return { ok: false, error: 'not_configured' };
 
   // Circuit-Breaker: bei offenem Circuit gecachte Daten liefern, Glances in Ruhe lassen.
   const circuitOpen = glancesFailStreak >= GLANCES_CB_THRESHOLD;
   const effectiveTTL = circuitOpen ? GLANCES_CB_TTL : GLANCES_TTL;
 
   if (cache.glances.data && Date.now() - cache.glances.ts < effectiveTTL) {
-    return res.json(cache.glances.data);
+    return cache.glances.data;
   }
 
   if (circuitOpen) {
@@ -495,14 +722,32 @@ app.get('/api/glances', async (req, res) => {
       uptime: typeof uptime === 'string' ? uptime : (uptime && uptime.seconds) || null,
     };
     cache.glances = { ts: result.ts, data: result };
-    res.json(result);
+    // Netz-Verlauf auch aus Glances speisen, solange KEIN SSH-Sampler laeuft
+    // (Fallback-Quelle + Backfill fuer die Kachel).
+    if (netState.source !== 'ssh' && netResult) {
+      netState.latest = {
+        ts: result.ts, iface: netResult.iface,
+        rxMbit: netResult.rxMbit, txMbit: netResult.txMbit,
+        ifaces: netResult.iface ? [netResult.iface] : [],
+        all: netResult.iface ? { [netResult.iface]: { rxMbit: netResult.rxMbit, txMbit: netResult.txMbit } } : {},
+        source: 'glances',
+      };
+      pushNetHistory(result.ts, netResult.rxMbit, netResult.txMbit);
+      netState.source = netState.source || 'glances';
+    }
+    return result;
   } catch (err) {
     glancesFailStreak++;
     console.error(`Glances fehlgeschlagen (Streak ${glancesFailStreak}):`, err.message);
     // Gespeicherte Daten als Fallback – Dashboard bleibt sichtbar
-    if (cache.glances.data) return res.json({ ...cache.glances.data, _stale: true });
-    res.json({ ok: false, error: 'fetch_failed', message: err.message });
+    if (cache.glances.data) return { ...cache.glances.data, _stale: true };
+    return { ok: false, error: 'fetch_failed', message: err.message };
   }
+}
+
+app.get('/api/glances', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await fetchGlancesSample());
 });
 
 /* ============================================================
@@ -2343,4 +2588,7 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(PORT, () => {
   console.log(`Homelab Dashboard running on http://localhost:${PORT}`);
   console.log(`Config: ${CONFIG_PATH}`);
+  // Netz-Sampler dauerhaft starten (falls SSH konfiguriert), damit der
+  // 1h-Verlauf sofort warmlaeuft und 10m/1h ohne Aufwaermzeit verfuegbar sind.
+  startNetSampler();
 });
