@@ -306,6 +306,10 @@ body.design-mode #layoutEditBar { display: flex; flex-wrap: wrap; gap: 12px; }
 /* Per-Kachel-Config: JS-generierte Inhalte via Shell-Klasse ausblenden */
 [data-widget-id="plex"].cfg-hide-posters .plex-poster { display: none !important; }
 [data-widget-id="unraid-vms"].cfg-hide-actions .vm-btn:not(.vm-more) { display: none !important; }
+[data-widget-id="unraid-docker"].cfg-hide-actions .vm-btn,
+[data-widget-id="unraid-array"].cfg-hide-actions .unraid-actions,
+[data-widget-id="unraid-notifications"].cfg-hide-actions .vm-btn,
+[data-widget-id="unraid-system"].cfg-hide-actions .unraid-actions { display: none !important; }
 
 /* Toast / Snackbar */
 .toast-host { position: fixed; left: 24px; bottom: 24px; z-index: 500; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; pointer-events: none; }
