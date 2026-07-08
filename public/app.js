@@ -3263,19 +3263,15 @@ function _packTiles(items) {
   return out;
 }
 
-// Frische Installation: eine Seite, Überschrift je Kategorie + alle Widgets.
+// Frische Installation: leeres Grid — alle Widgets warten (versteckt) im
+// Katalog und werden per Rechtsklick aufs Grid oder im Design-Modus platziert.
 function buildDefaultDashboard() {
   const page = 'home';
-  const items = [];
-  for (const sec of LEGACY_SECTION_ORDER) {
-    const widgets = DASHBOARD_WIDGETS.filter((w) => w.section === sec);
-    if (!widgets.length) continue;
-    if (sec !== 'netzwerk-detail') { // netzwerk-detail teilt sich die "Network"-Überschrift
-      items.push({ id: _uid('heading:'), type: 'heading', page, text: LEGACY_SECTION_NAMES[sec], h: 1, hidden: false });
-    }
-    for (const w of widgets) items.push({ id: w.id, type: 'widget', page, w: w.defaultSize.w, h: w.defaultSize.h, hidden: false, config: {} });
-  }
-  return { version: 2, pages: [{ id: page, name: 'Dashboard', icon: 'grid' }], tiles: _packTiles(items).map((t) => ({ ...t, page })) };
+  const tiles = DASHBOARD_WIDGETS.map((w) => ({
+    id: w.id, type: 'widget', page, x: 0, y: 0,
+    w: w.defaultSize.w, h: w.defaultSize.h, hidden: true, config: {},
+  }));
+  return { version: 2, pages: [{ id: page, name: 'Dashboard', icon: 'grid' }], tiles };
 }
 
 // Migration vom alten Modell [{id,section,hidden}] auf das neue Seiten-Modell.
@@ -3423,10 +3419,17 @@ const WIDGET_REFRESH = {
   'unifi-aps':            () => pollUnifi(),
 };
 
-// Setzt eine Option, wendet sie sofort an und speichert (außerhalb des
-// Design-Modus) verzögert; im Design-Modus greift die Snapshot-Logik und
+// Außerhalb des Design-Modus gibt es kein „✓ Fertig" → Änderungen verzögert
+// (leise) speichern; im Design-Modus greift die Snapshot-Logik und
 // gespeichert wird erst über „✓ Fertig".
 let _cfgSaveTimer = null;
+function _saveIfLive() {
+  if (_designOn) return;
+  clearTimeout(_cfgSaveTimer);
+  _cfgSaveTimer = setTimeout(() => saveDashboard({ silent: true }), 600);
+}
+
+// Setzt eine Option, wendet sie sofort an und speichert ggf. verzögert.
 function _setTileCfg(widgetId, key, value) {
   const t = _tileById(widgetId);
   if (!t) return;
@@ -3436,10 +3439,7 @@ function _setTileCfg(widgetId, key, value) {
   else t.config[key] = value;
   applyTileConfig(widgetId);
   try { WIDGET_REFRESH[widgetId]?.(); } catch { /* ignore */ }
-  if (!_designOn) {
-    clearTimeout(_cfgSaveTimer);
-    _cfgSaveTimer = setTimeout(() => saveDashboard({ silent: true }), 600);
-  }
+  _saveIfLive();
 }
 
 /* ---------- DOM builders ---------- */
@@ -3497,9 +3497,14 @@ function buildGridForPage(pageId) {
     float: true,
     staticGrid: !_designOn,
     resizable: { handles: 'e, se, s, sw, w' },
-    columnOpts: { breakpointForWindow: true, breakpoints: [{ w: 760, c: 1 }], layout: 'moveScale' },
   }, gridEl);
+  // Zellhöhe als CSS-Variable → Rasterlinien im Design-Modus (styles.css).
+  gridEl.style.setProperty('--gs-cell-h', GRID_CELL_HEIGHT + 'px');
   grid.on('change', () => { if (_designOn) _syncGridToModel(pageId); });
+  // Schmales Fenster: selbst auf 1 Spalte stapeln (siehe Resize-Listener).
+  // Gridstacks columnOpts/moveScale rundete beim Zurückschalten Breiten auf
+  // und ließ Kacheln breiter werden als eingestellt — daher kein columnOpts.
+  if (_isNarrowViewport()) grid.column(1, 'list');
   _grids.set(pageId, grid);
   _builtPages.add(pageId);
   return grid;
@@ -3516,6 +3521,37 @@ function _syncGridToModel(pageId) {
     if (t) { t.x = n.x; t.y = n.y; t.w = n.w; t.h = n.h; }
   });
 }
+
+// Responsive: unter 760px stapelt jedes Grid auf 1 Spalte (Liste), darüber
+// gilt wieder exakt die im Modell gespeicherte 12-Spalten-Geometrie. Das
+// Modell ist die einzige Wahrheit — beim Hin- und Herschalten driftet nichts.
+const NARROW_VIEWPORT_PX = 760;
+function _isNarrowViewport() { return window.innerWidth < NARROW_VIEWPORT_PX; }
+
+function _applyModelGeometry(pageId) {
+  const grid = _grids.get(pageId);
+  if (!grid || grid.getColumn() !== GRID_COLUMNS) return;
+  grid.batchUpdate();
+  grid.getGridItems().forEach((el) => {
+    const t = _tileById(el.getAttribute('gs-id'), pageId);
+    if (t) grid.update(el, { x: t.x, y: t.y, w: t.w, h: t.h });
+  });
+  grid.batchUpdate(false);
+}
+
+let _viewportResizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(_viewportResizeTimer);
+  _viewportResizeTimer = setTimeout(() => {
+    const narrow = _isNarrowViewport();
+    _grids.forEach((grid, pageId) => {
+      const want = narrow ? 1 : GRID_COLUMNS;
+      if (grid.getColumn() === want) return;
+      grid.column(want, narrow ? 'list' : 'none');
+      if (!narrow) _applyModelGeometry(pageId);
+    });
+  }, 120);
+});
 
 // Baut nur die aktive Seite neu (Shells zurück in den Pool, Grid verwerfen,
 // aus dem Modell neu aufbauen). Robuster als Live-Manipulation bei add/hide.
@@ -3545,6 +3581,31 @@ function _rebuildAllGrids() {
 function _applyGridVisibility() {
   $('dashGrids').querySelectorAll('.grid-stack').forEach((g) => { g.style.display = (g.dataset.page === _activePage) ? '' : 'none'; });
   if (_designOn) _grids.get(_activePage)?.setStatic(false);
+  _updateEmptyHint();
+}
+
+// Leere Seite: animierter Hinweis auf das Rechtsklick-Menü (pointer-events:
+// none, damit der Rechtsklick durch das Overlay aufs Grid durchgeht).
+function _updateEmptyHint() {
+  const host = $('dashGrids');
+  if (!host) return;
+  const empty = _pageTiles(_activePage).length === 0;
+  let hint = $('gridEmptyHint');
+  if (!empty) { if (hint) hint.remove(); return; }
+  if (hint) return;
+  hint = document.createElement('div');
+  hint.id = 'gridEmptyHint';
+  hint.innerHTML =
+    '<div class="empty-hint-mouse">' +
+      '<svg width="46" height="64" viewBox="0 0 46 64" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+        '<rect x="3" y="3" width="40" height="58" rx="20" stroke="currentColor" stroke-width="2"/>' +
+        '<path d="M23 5 V 23" stroke="currentColor" stroke-width="2"/>' +
+        '<path class="empty-hint-btn" d="M23 3 A 20 20 0 0 1 43 23 L 23 23 Z" fill="currentColor"/>' +
+      '</svg>' +
+    '</div>' +
+    '<div class="empty-hint-title">Rechtsklick auf das Grid, um Kacheln zu platzieren</div>' +
+    '<div class="empty-hint-sub">Abschnitte &amp; weitere Seiten gibt es im Design-Modus (✎)</div>';
+  host.appendChild(hint);
 }
 
 /* ---------- Load / save / page switching ---------- */
@@ -3725,6 +3786,24 @@ function addWidgetToActivePage(widgetId) {
   delete t._wasPlaced;
   _rebuildActivePage();
   renderCatalogIfOpen();
+  _saveIfLive();
+  toast(`${wd.label} hinzugefügt`);
+}
+
+// Wie addWidgetToActivePage, aber an einer konkreten Zelle (Rechtsklick-Menü).
+function addWidgetAt(widgetId, x, y) {
+  const wd = WIDGET_BY_ID.get(widgetId);
+  const t = _tileById(widgetId);
+  if (!wd || !t) return;
+  _syncGridToModel(_activePage);
+  t.hidden = false; t.page = _activePage;
+  delete t._wasPlaced;
+  if (!(+t.w > 0) || !(+t.h > 0)) { t.w = wd.defaultSize.w; t.h = wd.defaultSize.h; }
+  t.x = Math.max(0, Math.min(GRID_COLUMNS - t.w, Math.round(x)));
+  t.y = Math.max(0, Math.round(y));
+  _rebuildActivePage();
+  renderCatalogIfOpen();
+  _saveIfLive();
   toast(`${wd.label} hinzugefügt`);
 }
 
@@ -3744,11 +3823,14 @@ function hideTile(tileId) {
 // Rückwärtskompatibel: alte Inline-onclicks der Shell-Controls.
 function hideTileNow(tileId) { hideTile(tileId); }
 
-function addHeading() {
+function addHeading() { addHeadingAt(_bottomY(_activePage)); }
+
+function addHeadingAt(y) {
   _syncGridToModel(_activePage);
   const id = _uid('heading:');
-  _dashboard.tiles.push({ id, type: 'heading', page: _activePage, x: 0, y: _bottomY(_activePage), w: GRID_COLUMNS, h: 1, text: 'Neuer Abschnitt' });
+  _dashboard.tiles.push({ id, type: 'heading', page: _activePage, x: 0, y: Math.max(0, Math.round(y)), w: GRID_COLUMNS, h: 1, text: 'Neuer Abschnitt' });
   _rebuildActivePage();
+  _saveIfLive();
   // Neue Überschrift direkt zum Bearbeiten öffnen.
   const el = $('dashGrids').querySelector(`.grid-stack-item[gs-id="${id}"] .gs-heading-text`);
   if (el) startHeadingEdit(el, id);
@@ -3759,6 +3841,7 @@ function removeHeading(id) {
   _syncGridToModel(_activePage);
   _dashboard.tiles = _dashboard.tiles.filter((t) => t.id !== id);
   _rebuildActivePage();
+  _saveIfLive();
   toast('Überschrift entfernt');
 }
 
@@ -3775,6 +3858,7 @@ function startHeadingEdit(textEl, id) {
     textEl.classList.remove('editing');
     const t = _tileById(id);
     if (t) { t.text = (textEl.textContent || '').trim().slice(0, 80) || 'Abschnitt'; textEl.textContent = t.text; }
+    _saveIfLive();
   };
   textEl.addEventListener('blur', commit, { once: true });
   textEl.addEventListener('keydown', (e) => {
@@ -3844,15 +3928,96 @@ function openTileMenu(t, anchor) {
     }
   }
   document.body.appendChild(menu);
-  anchor.closest('.gs-tile-controls')?.classList.add('menu-open');
-  const r = anchor.getBoundingClientRect();
-  menu.style.top = (r.bottom + 6) + 'px';
-  menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+  if (anchor instanceof Element) {
+    anchor.closest('.gs-tile-controls')?.classList.add('menu-open');
+    const r = anchor.getBoundingClientRect();
+    _placeMenuAt(menu, r.left, r.bottom + 6);
+  } else {
+    // Rechtsklick: anchor ist ein {x,y}-Punkt in Viewport-Koordinaten.
+    _placeMenuAt(menu, anchor.x, anchor.y);
+  }
   setTimeout(() => document.addEventListener('mousedown', _tileMenuOutside), 0);
+}
+
+function _placeMenuAt(menu, x, y) {
+  menu.style.left = Math.max(8, Math.min(x, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+  menu.style.top = Math.max(8, Math.min(y, window.innerHeight - menu.offsetHeight - 8)) + 'px';
 }
 function _tileMenuOutside(e) {
   const m = $('tileMenu');
   if (m && !m.contains(e.target)) closeTileMenu();
+}
+
+/* ---------- Grid-Kontextmenü (Rechtsklick: Kachel/Abschnitt platzieren) ---------- */
+
+// Zelle unter dem Mauszeiger — bewusst selbst gerechnet (Spalte = 1/12 der
+// Grid-Breite, Zeile = cellHeight), damit auch ein leeres Grid (Höhe 0) und
+// Klicks unterhalb der letzten Zeile sinnvolle Koordinaten liefern.
+function _cellFromEvent(e) {
+  const gridEl = $('dashGrids').querySelector(`.grid-stack[data-page="${_activePage}"]`);
+  const grid = _grids.get(_activePage);
+  if (!gridEl || !grid || grid.getColumn() !== GRID_COLUMNS) return { x: 0, y: _bottomY(_activePage) };
+  const r = gridEl.getBoundingClientRect();
+  if (!(r.width > 0)) return { x: 0, y: _bottomY(_activePage) };
+  const x = Math.max(0, Math.min(GRID_COLUMNS - 1, Math.floor((e.clientX - r.left) / (r.width / GRID_COLUMNS))));
+  const y = Math.max(0, Math.floor((e.clientY - r.top) / GRID_CELL_HEIGHT));
+  return { x, y };
+}
+
+function openGridContextMenu(e) {
+  closeTileMenu();
+  const cell = _cellFromEvent(e);
+  const menu = document.createElement('div');
+  menu.id = 'tileMenu';
+  menu.className = 'tile-menu grid-ctx-menu';
+  const add = (label, cls, fn) => {
+    const b = document.createElement('button');
+    b.className = 'tile-menu-item' + (cls ? ' ' + cls : '');
+    b.textContent = label;
+    b.addEventListener('click', (ev) => { ev.stopPropagation(); closeTileMenu(); fn(); });
+    return b;
+  };
+  const lbl = document.createElement('div');
+  lbl.className = 'tile-menu-label';
+  lbl.textContent = 'Kachel platzieren';
+  menu.appendChild(lbl);
+  const list = document.createElement('div');
+  list.className = 'tile-menu-scroll';
+  const catalog = _catalogTiles()
+    .map((t) => WIDGET_BY_ID.get(t.id))
+    .filter(Boolean)
+    .sort((a, b) => a.label.localeCompare(b.label, 'de'));
+  if (catalog.length) {
+    catalog.forEach((wd) => list.appendChild(add(wd.label, '', () => addWidgetAt(wd.id, cell.x, cell.y))));
+  } else {
+    const none = document.createElement('div');
+    none.className = 'tile-menu-empty';
+    none.textContent = 'Alle Kacheln sind platziert';
+    list.appendChild(none);
+  }
+  menu.appendChild(list);
+  const sep = document.createElement('div'); sep.className = 'tile-menu-sep'; menu.appendChild(sep);
+  menu.appendChild(add('＋ Abschnitt hinzufügen', '', () => addHeadingAt(cell.y)));
+  if (!_designOn) menu.appendChild(add('✎ Design-Modus öffnen', '', enterDesignMode));
+  document.body.appendChild(menu);
+  _placeMenuAt(menu, e.clientX, e.clientY);
+  setTimeout(() => document.addEventListener('mousedown', _tileMenuOutside), 0);
+}
+
+// Rechtsklick im Dashboard-Bereich abfangen: auf einer Kachel → deren
+// Optionsmenü, auf freier Fläche → Platzierungsmenü an der Zelle.
+function setupGridContextMenu() {
+  const host = $('dashGrids');
+  if (!host) return;
+  host.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const item = e.target.closest('.grid-stack-item');
+    if (item) {
+      const t = _tileById(item.getAttribute('gs-id'), _activePage);
+      if (t) { openTileMenu(t, { x: e.clientX, y: e.clientY }); return; }
+    }
+    openGridContextMenu(e);
+  });
 }
 
 /* ---------- Tile settings modal (Kachel-Einstellungen) ---------- */
@@ -4053,7 +4218,7 @@ function renderDesignBar() {
     btn('Seite löschen', 'cfg-btn-del', () => deletePage(_activePage), 'Aktive Seite mit allen Kacheln löschen'),
   ]));
   bar.appendChild(group([
-    btn('Zurücksetzen', 'cfg-btn-del', resetDashboardLayout, 'Layout auf Standard zurücksetzen'),
+    btn('Grid leeren', 'cfg-btn-del', resetDashboardLayout, 'Alle Kacheln entfernen und mit leerem Grid starten'),
     btn('Verwerfen', '', () => exitDesignMode(false), 'Änderungen verwerfen'),
     btn('✓ Fertig', 'design-primary', () => exitDesignMode(true), 'Speichern & Design-Modus verlassen'),
   ]));
@@ -4103,13 +4268,13 @@ function renderLayoutEditor() {
 function toggleLayoutEditMode() { toggleDesignMode(); }
 function saveDashboardLayout() { saveDashboard(); }
 function resetDashboardLayout() {
-  if (!confirm('Layout auf Standard zurücksetzen? Alle Anpassungen gehen verloren.')) return;
+  if (!confirm('Alle Kacheln vom Dashboard entfernen und mit leerem Grid starten?')) return;
   _dashboard = reconcileDashboard(buildDefaultDashboard());
   _activePage = _dashboard.pages[0].id;
   _rebuildAllGrids();
   applyAllTileConfigs();
   renderPageTabs();
-  toast('Layout zurückgesetzt');
+  toast('Grid geleert');
 }
 
 /* ---------- Secrets (credentials) ---------- */
@@ -4594,6 +4759,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   _applyTheme(localStorage.getItem('theme') || 'dark');
   loadUiPrefs();
   await loadDashboard();
+  setupGridContextMenu();
   injectTileDecor();
   applyAllTileConfigs();
   tickClock();
