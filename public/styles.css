@@ -149,6 +149,74 @@ select { -webkit-appearance: none; appearance: none; }
 @keyframes tdPing  { 0% { transform: scale(0.55); opacity: 0; } 30% { opacity: 1; } 100% { transform: scale(1.15); opacity: 0; } }
 @keyframes tdBlink { 0%,100% { opacity: 0.25; } 50% { opacity: 1; } }
 
+/* ── Network-Throughput: Paket-Animation "Daten-Highway" + On-Tile-Controls ──
+   Zwei beschriftete Knoten (ISP ↔ Server) mit zwei Spuren; blaue Pakete fliessen
+   ISP→Server (Download, links→rechts), gruene Server→ISP (Upload). Tempo/Deckkraft
+   werden per CSS-Custom-Property (--dur/--pkt-op) aus dem Durchsatz moduliert.
+   Rein compositor-getrieben (transform), Reisebreite via Container-Query-Einheit. */
+.net-flow { display: flex; align-items: center; gap: 10px; margin: 2px 0 10px; flex-shrink: 0; }
+.net-node { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 54px; flex-shrink: 0; }
+.net-node-ico { width: 30px; height: 30px; display: block; }
+.net-node-ico svg { display: block; width: 100%; height: 100%; }
+.net-node-name {
+  font: 600 9px 'JetBrains Mono', monospace; color: var(--text-3);
+  letter-spacing: .02em; max-width: 58px; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.net-lanes { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.net-lane {
+  position: relative; height: 12px; border-radius: 6px; overflow: hidden;
+  background: color-mix(in srgb, var(--text-5) 14%, transparent);
+  container-type: inline-size; --n: 5;
+}
+.net-pkt {
+  position: absolute; top: 50%; left: 0; width: 7px; height: 5px;
+  margin-top: -2.5px; border-radius: 2px; opacity: 0; will-change: transform;
+}
+.net-lane-dl .net-pkt {
+  background: #5b9dff; box-shadow: 0 0 5px rgba(91,157,255,.75);
+  animation: netPktRight var(--dur, 2.4s) linear infinite;
+  animation-delay: calc(var(--dur, 2.4s) / var(--n) * var(--i) * -1);
+}
+.net-lane-ul .net-pkt {
+  background: #3ddc97; box-shadow: 0 0 5px rgba(61,220,151,.65);
+  animation: netPktLeft var(--dur, 2.4s) linear infinite;
+  animation-delay: calc(var(--dur, 2.4s) / var(--n) * var(--i) * -1);
+}
+.net-lane.active .net-pkt { opacity: var(--pkt-op, .85); }
+@keyframes netPktRight { from { transform: translateX(-8px); } to { transform: translateX(100cqw); } }
+@keyframes netPktLeft  { from { transform: translateX(100cqw); } to { transform: translateX(-8px); } }
+/* Bei abgeschalteten Animationen keine gestapelten statischen Pakete zeigen. */
+.no-anim .net-pkt { display: none; }
+
+.net-ctl { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; flex-shrink: 0; }
+.net-seg { display: inline-flex; gap: 2px; background: color-mix(in srgb, var(--text-5) 12%, transparent); border-radius: 8px; padding: 2px; }
+.net-seg button {
+  font: 600 10px 'JetBrains Mono', monospace; color: var(--text-3);
+  background: transparent; border: 0; border-radius: 6px; padding: 3px 8px; cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.net-seg button:hover { color: var(--text-1); }
+.net-seg button.active { background: var(--accent, #5b9dff); color: #fff; }
+.net-ctl-right { display: inline-flex; align-items: center; gap: 8px; }
+.net-axis-max { font: 500 9px 'JetBrains Mono', monospace; color: var(--text-4); white-space: nowrap; }
+.net-scale-sel {
+  font: 600 10px 'JetBrains Mono', monospace; color: var(--text-2);
+  background: color-mix(in srgb, var(--text-5) 12%, transparent);
+  border: 1px solid var(--border-2); border-radius: 7px; padding: 3px 6px; cursor: pointer;
+}
+
+/* Icon-Auswahl (Kachel-Einstellungen: ISP-/Server-Icon) */
+.ts-icon-grid { display: flex; flex-wrap: wrap; gap: 6px; max-width: 264px; justify-content: flex-end; }
+.ts-icon-btn {
+  width: 34px; height: 34px; padding: 3px; border-radius: 9px; cursor: pointer;
+  background: transparent; border: 1px solid var(--border-2);
+  transition: border-color .15s, transform .1s, box-shadow .15s;
+}
+.ts-icon-btn svg { display: block; width: 100%; height: 100%; }
+.ts-icon-btn:hover { transform: translateY(-1px); }
+.ts-icon-btn.active { border-color: var(--accent, #5b9dff); box-shadow: 0 0 0 1px var(--accent, #5b9dff); }
+
 /* Glaseffekt abschaltbar (Einstellung "Glaseffekt") */
 .no-glass .glassy { backdrop-filter: none !important; }
 
