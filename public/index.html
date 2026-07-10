@@ -146,14 +146,20 @@
             </div>
             <span style="width:7px;height:7px;border-radius:50%;background:#5b9dff;animation:pulse 2s infinite;flex-shrink:0;margin-top:2px"></span>
           </div>
-          <div style="display:flex;gap:26px;margin-bottom:10px;flex-shrink:0">
-            <div>
-              <div style="font:600 25px/1 'Space Grotesk',sans-serif;color:#5b9dff;font-variant-numeric:tabular-nums">↓ <span id="netDown">42.0</span></div>
-              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:4px">Mbit/s Download</div>
+          <div class="net-rows" style="margin-bottom:10px;flex-shrink:0">
+            <div class="net-row net-row-wan" id="netRowWan">
+              <div class="net-row-label">Internet (WAN)</div>
+              <div class="net-row-vals">
+                <div><span class="net-num net-num-dl">↓ <span id="wanDown">–</span></span><span class="net-unit">Mbit/s Download</span></div>
+                <div><span class="net-num net-num-ul">↑ <span id="wanUp">–</span></span><span class="net-unit">Mbit/s Upload</span></div>
+              </div>
             </div>
-            <div>
-              <div style="font:600 25px/1 'Space Grotesk',sans-serif;color:#3ddc97;font-variant-numeric:tabular-nums">↑ <span id="netUp">8.0</span></div>
-              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:4px">Mbit/s Upload</div>
+            <div class="net-row net-row-srv">
+              <div class="net-row-label"><span id="netRowSrvName">Unraid</span> · NIC</div>
+              <div class="net-row-vals">
+                <div><span class="net-num net-num-dl">↓ <span id="netDown">0</span></span><span class="net-unit">Mbit/s Download</span></div>
+                <div><span class="net-num net-num-ul">↑ <span id="netUp">0</span></span><span class="net-unit">Mbit/s Upload</span></div>
+              </div>
             </div>
           </div>
           <div data-cfg="chart" class="net-ctl">
@@ -164,6 +170,7 @@
               <button type="button" data-net-range="1h">1h</button>
             </div>
             <div class="net-ctl-right">
+              <span class="net-legend" id="netLegend" style="display:none"><span class="net-legend-dot" style="background:#5b9dff"></span>Unraid<span class="net-legend-dot" style="background:#8b6dff"></span>WAN</span>
               <span class="net-axis-max"><span id="netScaleMax">–</span> Mbit/s</span>
               <select id="netScaleCtl" class="net-scale-sel" title="Skala (Mbit/s-Achse)">
                 <option value="auto">Auto</option>
@@ -179,20 +186,28 @@
             <polygon id="netArea" points="" fill="rgba(91,157,255,0.1)"/>
             <polyline id="netLine" points="" fill="none" stroke="#5b9dff" stroke-width="2" vector-effect="non-scaling-stroke"/>
             <polyline id="upLine" points="" fill="none" stroke="#3ddc97" stroke-width="2" vector-effect="non-scaling-stroke" opacity="0.8"/>
+            <polyline id="wanLine" points="" fill="none" stroke="#8b6dff" stroke-width="2" vector-effect="non-scaling-stroke"/>
+            <polyline id="wanUpLine" points="" fill="none" stroke="#ffb454" stroke-width="2" vector-effect="non-scaling-stroke" opacity="0.85"/>
           </svg>
         </div>
-        <div data-cfg="flow" class="net-flow" title="ISP ↔ Server">
+        <div data-cfg="flow" class="net-flow" title="Internet ↔ Unraid / Netzwerk">
           <div class="net-node net-node-top">
             <span class="net-node-ico" id="netIspIco"></span>
             <span class="net-node-name" id="netIspName">willy.tel</span>
           </div>
-          <div class="net-lanes">
-            <div class="net-lane net-lane-dl" id="netLaneDl" title="Download"></div>
-            <div class="net-lane net-lane-ul" id="netLaneUl" title="Upload"></div>
+          <div class="net-lanes-y" id="netLanesY">
+            <div class="net-lane-diag" id="netLaneSrv" title="Unraid-Anteil (WAN)"></div>
+            <div class="net-lane-diag" id="netLaneLan" title="Netzwerk-Anteil (WAN)"></div>
           </div>
-          <div class="net-node net-node-bottom">
-            <span class="net-node-ico" id="netSrvIco"></span>
-            <span class="net-node-name" id="netSrvName">Unraid</span>
+          <div class="net-nodes-bottom">
+            <div class="net-node">
+              <span class="net-node-ico" id="netSrvIco"></span>
+              <span class="net-node-name" id="netSrvName">Unraid</span>
+            </div>
+            <div class="net-node">
+              <span class="net-node-ico" id="netLanIco"></span>
+              <span class="net-node-name" id="netLanName">Netzwerk</span>
+            </div>
           </div>
         </div>
       </div>
