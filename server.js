@@ -99,6 +99,21 @@ async function getNetworkSiteId(cfg, hostId) {
   return _cachedNetSiteId;
 }
 
+// WAN aus stat/health — rx_bytes-r / tx_bytes-r = bytes/s (rolling rate).
+// Wird vom /api/unifi-Handler UND vom WAN-Sampler genutzt.
+function parseWanHealth(healthRaw) {
+  const wanRaw = ((healthRaw.data || healthRaw) || []).find(h => h.subsystem === 'wan') || {};
+  const rxBytesR = wanRaw['rx_bytes-r'];
+  const txBytesR = wanRaw['tx_bytes-r'];
+  return {
+    status:    wanRaw.status || 'unknown',
+    ip:        wanRaw.wan_ip || null,
+    latencyMs: wanRaw.latency != null ? Number(wanRaw.latency) : null,
+    rxRate:    rxBytesR != null ? parseFloat((rxBytesR * 8 / 1e6).toFixed(2)) : null,
+    txRate:    txBytesR != null ? parseFloat((txBytesR * 8 / 1e6).toFixed(2)) : null,
+  };
+}
+
 const STATUS_CFG_PATH    = path.join(__dirname, 'config', 'status.json');
 const SECRETS_PATH       = path.join(__dirname, 'config', 'secrets.json');
 const QUICKLINKS_PATH    = path.join(__dirname, 'config', 'quicklinks.json');
@@ -480,8 +495,7 @@ function parseProcNetDev(text) {
   }
   return out;
 }
-function pushNetHistory(t, rx, tx) {
-  const h = netState.history;
+function pushHistory(h, t, rx, tx) {
   const last = h[h.length - 1];
   if (last && t <= last.t) return; // monoton halten
   h.push({ t, rx, tx });
@@ -490,6 +504,7 @@ function pushNetHistory(t, rx, tx) {
   while (drop < h.length && h[drop].t < cutoff) drop++;
   if (drop) h.splice(0, drop);
 }
+function pushNetHistory(t, rx, tx) { pushHistory(netState.history, t, rx, tx); }
 // Peak-preserving Downsampling auf max. `maxPts` Punkte.
 function downsampleNet(points, maxPts) {
   const n = points.length;
@@ -550,6 +565,7 @@ function onNetTick(text) {
     if (dt > 0.05) {
       const sample = buildNetSample(netState.prev.raw, cur, dt);
       if (sample) {
+        if (wanState.latest) sample.wan = wanState.latest; // WAN huckepack (additiv)
         netState.latest = sample;
         pushNetHistory(now, sample.rxMbit, sample.txMbit);
         broadcast('net', sample);
@@ -603,6 +619,64 @@ function startNetSampler() {
   connectNetSsh(cfg);
 }
 
+/* ============================================================
+   WAN-Sampler (UniFi stat/health) + SSE-Push
+   ------------------------------------------------------------
+   Pollt die WAN-Raten (Internet ↓/↑) des UniFi-Gateways ueber die Cloud-API
+   und speist sie in denselben SSE-Kanal wie den Netz-Sampler: als Feld `wan`
+   an jedem `net`-Sample UND als eigenstaendiges `wan`-Event (ohne Unraid-SSH
+   gibt es keine `net`-Events, das WAN soll trotzdem live sein). Ein eigener
+   Ringpuffer erlaubt Backfill wie beim Unraid-Verlauf. Adaptives Intervall:
+   schnell solange SSE-Clients zuschauen, sparsam im Leerlauf (History bleibt
+   warm); bei Fehlern exponentielles Backoff (schont das api.ui.com-Limit).
+   ============================================================ */
+const WAN_SAMPLE_MS = clampN(parseInt(process.env.WAN_SAMPLE_MS || '3000', 10) || 3000, 2000, 60000);
+const WAN_IDLE_MS   = clampN(parseInt(process.env.WAN_IDLE_MS   || '15000', 10) || 15000, WAN_SAMPLE_MS, 120000);
+
+const wanState = {
+  latest: null,    // { ts, status, rxMbit, txMbit, latencyMs, ip }
+  history: [],     // [{ t, rx, tx }]  (Mbit/s)
+  failStreak: 0,
+  running: false,
+  timer: null,
+};
+
+async function sampleWanOnce() {
+  const cfg = unifiCfg();
+  if (!cfg.apiKey) return;
+  try {
+    const hostId = await getConsoleId(cfg);
+    const healthRaw = await unifiFetch(cfg, `/v1/connector/consoles/${hostId}/proxy/network/api/s/default/stat/health`, 5000);
+    const wan = parseWanHealth(healthRaw);
+    const ts = Date.now();
+    wanState.latest = { ts, status: wan.status, rxMbit: wan.rxRate, txMbit: wan.txRate, latencyMs: wan.latencyMs, ip: wan.ip };
+    wanState.failStreak = 0;
+    if (wan.rxRate != null) pushHistory(wanState.history, ts, wan.rxRate, wan.txRate || 0);
+    broadcast('wan', wanState.latest);
+  } catch (err) {
+    wanState.failStreak++;
+    // Clients einmalig informieren, damit die Kachel degradieren kann;
+    // wanState.latest bleibt fuer Backfill/Stale-Anzeige erhalten.
+    if (wanState.failStreak === 3)
+      broadcast('wan', { ts: Date.now(), status: 'error', rxMbit: null, txMbit: null });
+  }
+  scheduleWanNext();
+}
+function scheduleWanNext() {
+  if (!wanState.running) return;
+  const base = sseClients.size ? WAN_SAMPLE_MS : WAN_IDLE_MS;
+  const delay = Math.min(60000, base * 2 ** Math.min(4, wanState.failStreak));
+  clearTimeout(wanState.timer);
+  wanState.timer = setTimeout(sampleWanOnce, delay);
+}
+function startWanSampler() {
+  if (wanState.running) return;
+  if (!unifiCfg().apiKey) { console.log('WAN-Sampler: UniFi nicht konfiguriert (kein API-Key)'); return; }
+  wanState.running = true;
+  console.log(`WAN-Sampler: UniFi stat/health @ ${WAN_SAMPLE_MS}ms (idle ${WAN_IDLE_MS}ms)`);
+  sampleWanOnce();
+}
+
 // ---- Glances-Broadcast (CPU/RAM/Disk) nur solange Clients verbunden sind ----
 let glancesStreamTimer = null;
 function ensureGlancesStream() {
@@ -626,8 +700,12 @@ app.get('/api/glances/stream', (req, res) => {
   res.flushHeaders();
   res.write('retry: 3000\n\n');
   sseClients.add(res);
+  // Sobald ein Client zuschaut, das WAN-Idle-Intervall sofort verlassen
+  // (einzelner Timer, clearTimeout in scheduleWanNext verhindert Doppelung).
+  if (wanState.running) scheduleWanNext();
 
   if (netState.latest) sseSend(res, 'net', netState.latest);
+  if (wanState.latest) sseSend(res, 'wan', wanState.latest);
   fetchGlancesSample().then((d) => sseSend(res, 'glances', d)).catch(() => {});
   ensureGlancesStream();
 
@@ -644,10 +722,15 @@ app.get('/api/net/history', (req, res) => {
   let out = netState.history;
   let lo = 0; while (lo < out.length && out[lo].t < since) lo++;
   out = downsampleNet(out.slice(lo), pts);
+  // WAN-Verlauf (UniFi) im selben Fenster, additiv — alte Clients ignorieren ihn.
+  let wanOut = wanState.history;
+  let wlo = 0; while (wlo < wanOut.length && wanOut[wlo].t < since) wlo++;
+  wanOut = downsampleNet(wanOut.slice(wlo), pts);
   res.json({
     ok: true, now: Date.now(),
     iface: netState.latest ? netState.latest.iface : null,
     source: netState.source, points: out,
+    wan: wanOut, wanOk: !!wanState.latest,
   });
 });
 
@@ -1294,6 +1377,8 @@ app.post('/api/secrets', (req, res) => {
     fs.writeFileSync(SECRETS_PATH, JSON.stringify(_secrets, null, 2));
     // Caches invalidieren damit naechster Poll sofort mit neuen Creds laeuft
     for (const k of Object.keys(cache)) cache[k] = { ts: 0, data: null };
+    // Frisch gesetzter UniFi-Key startet den WAN-Sampler ohne Neustart (idempotent).
+    startWanSampler();
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -1382,17 +1467,7 @@ app.get('/api/unifi', async (req, res) => {
       unifiFetch(cfg, `${legBase}/stat/sta`),
     ]);
 
-    // WAN aus stat/health — rx_bytes-r / tx_bytes-r = bytes/s (rolling rate)
-    const wanRaw = ((healthRaw.data || healthRaw) || []).find(h => h.subsystem === 'wan') || {};
-    const rxBytesR = wanRaw['rx_bytes-r'];
-    const txBytesR = wanRaw['tx_bytes-r'];
-    const wan = {
-      status:    wanRaw.status || 'unknown',
-      ip:        wanRaw.wan_ip || null,
-      latencyMs: wanRaw.latency != null ? Number(wanRaw.latency) : null,
-      rxRate:    rxBytesR != null ? parseFloat((rxBytesR * 8 / 1e6).toFixed(2)) : null,
-      txRate:    txBytesR != null ? parseFloat((txBytesR * 8 / 1e6).toFixed(2)) : null,
-    };
+    const wan = parseWanHealth(healthRaw);
 
     // Clients aus stat/sta — volle Signal/Band/AP-MAC Daten
     const stas    = (staRaw.data || staRaw) || [];
@@ -2591,4 +2666,5 @@ server.listen(PORT, () => {
   // Netz-Sampler dauerhaft starten (falls SSH konfiguriert), damit der
   // 1h-Verlauf sofort warmlaeuft und 10m/1h ohne Aufwaermzeit verfuegbar sind.
   startNetSampler();
+  startWanSampler();
 });

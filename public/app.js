@@ -436,6 +436,16 @@ const state = {
   netIfacePref: '',         // gewaehltes Interface ('' = automatisch)
   netIfaces: [],            // zuletzt gemeldete Interface-Liste (fuer Dropdown)
   netSource: null,          // 'ssh' | 'glances'
+  // WAN (UniFi-Gateway): Internet-Durchsatz fuer die Durchsatz-Kachel
+  wanDown: 0, wanUp: 0,             // Zielwerte aus SSE (Mbit/s)
+  dispWanDown: 0, dispWanUp: 0,     // geglaettete Anzeigewerte
+  wanHist: [], wanUpHist: [],       // Ringpuffer wie netHist/upHist
+  wanStatus: null,                  // UniFi-WAN-Status ('ok'/'error'/... , null = nie empfangen)
+  wanTs: 0,                         // Server-ts des letzten Samples (Dedupe wan-Event vs. net.wan)
+  _wanRxAt: 0,                      // Empfangszeit (performance.now()) fuer Staleness
+  _wanShown: false,                 // ob die WAN-Zeile gerade Werte (statt '–') zeigt
+  netChartSeries: 'unraid',         // Chart-Datenquelle: 'unraid' | 'wan' | 'both'
+  netFlowOn: true,                  // Spiegel der 'flow'-Option (kein DOM-Read im rAF)
   liveOn: true, gridOn: true, animOn: true, glassOn: true, searchOn: true,
   updateMs: 1600, accent: '#5b9dff',
   settingsCategory: 'general',
@@ -609,11 +619,12 @@ function netDrawArr(arr, now, windowMs, maxPts) {
   return out;
 }
 function maxInArr(arr) { let m = 0; for (let i = 0; i < arr.length; i++) if (arr[i].v > m) m = arr[i].v; return m; }
-// Ziel-Obergrenze der vertikalen Skala je nach Modus.
-function netScaleTarget(dlArr, ulArr) {
+// Ziel-Obergrenze der vertikalen Skala je nach Modus. `peak` = Maximum ueber
+// alle aktuell GEZEICHNETEN Serien (Unraid und/oder WAN).
+function netScaleTarget(peak) {
   if (state.netScaleMode === 'fixed' && state.netScaleMax > 0) return state.netScaleMax;
   if (state.netScaleMode === 'line'  && state.netLineSpeed > 0) return state.netLineSpeed;
-  return Math.max(10, Math.max(maxInArr(dlArr), maxInArr(ulArr)) * 1.15); // auto
+  return Math.max(10, peak * 1.15); // auto
 }
 function sparkPoints(arr, w, h, max, pad, now, windowMs) {
   const n = arr.length;
@@ -665,7 +676,7 @@ let _graphFrameHandle = null;
 let _graphDirty = false; // set on new sample / animOn or updateMs change
 function graphFrame() {
   const anim = state.animOn;
-  if ((state.cpuHist.length || state.netHist.length) && (anim || _graphDirty)) {
+  if ((state.cpuHist.length || state.netHist.length || state.wanHist.length) && (anim || _graphDirty)) {
     _graphDirty = false;
     // With animations off, draw the static frame anchored at the last sample
     // so the newest point sits exactly on the right edge.
@@ -680,20 +691,34 @@ function graphFrame() {
     }
 
     // Network: eigenes, umschaltbares Zeitfenster + Downsampling auf NET_DRAW_POINTS.
-    if (state.netHist.length) {
+    if (state.netHist.length || state.wanHist.length) {
       const netWin = state.netRangeMs || 60000;
-      const dlArr = netDrawArr(state.netHist, now, netWin, NET_DRAW_POINTS);
-      const ulArr = netDrawArr(state.upHist,  now, netWin, NET_DRAW_POINTS);
-      // Skala: auto (geglaettet) / fest / Leitung
-      const targetMax = netScaleTarget(dlArr, ulArr);
+      // Serienauswahl (Kachel-Option): Unraid / WAN / beides.
+      // 'wan' ohne WAN-Daten faellt auf Unraid zurueck (kein leeres Chart).
+      const sel = state.netChartSeries;
+      const wantWan    = (sel === 'wan' || sel === 'both') && state.wanHist.length > 0;
+      const wantUnraid = sel === 'unraid' || sel === 'both' || !wantWan;
+      const dlArr  = wantUnraid && state.netHist.length ? netDrawArr(state.netHist,   now, netWin, NET_DRAW_POINTS) : [];
+      const ulArr  = wantUnraid && state.upHist.length  ? netDrawArr(state.upHist,    now, netWin, NET_DRAW_POINTS) : [];
+      const wdlArr = wantWan ? netDrawArr(state.wanHist,   now, netWin, NET_DRAW_POINTS) : [];
+      const wulArr = wantWan ? netDrawArr(state.wanUpHist, now, netWin, NET_DRAW_POINTS) : [];
+      // Skala: auto (geglaettet) / fest / Leitung — Peak ueber alle gezeichneten Serien
+      const peak = Math.max(maxInArr(dlArr), maxInArr(ulArr), maxInArr(wdlArr), maxInArr(wulArr));
+      const targetMax = netScaleTarget(peak);
       const ease = state.netScaleMode === 'auto' ? (anim ? 0.08 : 1) : 1;
       state.netMaxDisp += (targetMax - state.netMaxDisp) * ease;
       const nm = state.netMaxDisp || targetMax;
+      // Flaeche folgt der Download-Linie der fuehrenden Serie (Unraid, sonst WAN).
       if (dlArr.length) {
         setAttr('netArea', 'points', areaPoints(dlArr, 380, 80, nm, 6, now, netWin));
         setAttr('netLine', 'points', sparkPoints(dlArr, 380, 80, nm, 6, now, netWin));
+      } else {
+        setAttr('netArea', 'points', wdlArr.length ? areaPoints(wdlArr, 380, 80, nm, 6, now, netWin) : '');
+        setAttr('netLine', 'points', '');
       }
-      if (ulArr.length) setAttr('upLine', 'points', sparkPoints(ulArr, 380, 80, nm, 6, now, netWin));
+      setAttr('upLine',    'points', ulArr.length  ? sparkPoints(ulArr,  380, 80, nm, 6, now, netWin) : '');
+      setAttr('wanLine',   'points', wdlArr.length ? sparkPoints(wdlArr, 380, 80, nm, 6, now, netWin) : '');
+      setAttr('wanUpLine', 'points', wulArr.length ? sparkPoints(wulArr, 380, 80, nm, 6, now, netWin) : '');
       setText('netScaleMax', fmtNet(nm));
     }
 
@@ -706,8 +731,27 @@ function graphFrame() {
     setText('netDown', fmtNet(state.dispDown));
     setText('netUp', fmtNet(state.dispUpVal));
 
-    // Paket-Animation (Daten-Highway) an den aktuellen Durchsatz koppeln
-    updateNetFlow(state.dispDown, state.dispUpVal);
+    // WAN-Zeile: langsameres Easing (Samples nur ~alle 3 s -> Wert gleitet dazwischen).
+    const kw = anim ? 0.05 : 1;
+    state.dispWanDown += (state.wanDown - state.dispWanDown) * kw;
+    state.dispWanUp   += (state.wanUp   - state.dispWanUp)   * kw;
+    if (Math.abs(state.wanDown - state.dispWanDown) < 0.04) state.dispWanDown = state.wanDown;
+    if (Math.abs(state.wanUp   - state.dispWanUp)   < 0.04) state.dispWanUp   = state.wanUp;
+    // Staleness ueber die Client-Uhr (immun gegen Server-/Client-Drift): nach 30 s
+    // ohne frisches Sample zeigt die Zeile '–' und wird gedimmt.
+    const wanFresh = state._wanRxAt > 0 && (performance.now() - state._wanRxAt) < 30000;
+    if (wanFresh !== state._wanShown) {
+      state._wanShown = wanFresh;
+      const row = $('netRowWan'); if (row) row.classList.toggle('stale', !wanFresh && state._wanRxAt > 0);
+      if (!wanFresh) { setText('wanDown', '–'); setText('wanUp', '–'); }
+    }
+    if (wanFresh) {
+      setText('wanDown', fmtNet(state.dispWanDown));
+      setText('wanUp',   fmtNet(state.dispWanUp));
+    }
+
+    // Paket-Animation (Y-Topologie) an die aktuellen Durchsaetze koppeln
+    updateNetFlow();
   }
 
   _graphFrameHandle = requestAnimationFrame(graphFrame);
@@ -827,6 +871,23 @@ function applyNet(d) {
     iface = state.netIfacePref;
   }
   ingestNet(down, up, iface, null);
+  if (d.wan) ingestWan(d.wan); // WAN-Huckepack am net-Sample
+}
+
+// WAN-Sample (UniFi-Gateway) aufnehmen. Kommt doppelt an (eigenes 'wan'-Event
+// + Huckepack an 'net'-Events) -> Dedupe ueber den Server-Zeitstempel.
+function ingestWan(w) {
+  if (!w || !w.ts || w.ts === state.wanTs) return;
+  state.wanTs = w.ts;
+  state.wanStatus = w.status || null;
+  if (w.rxMbit == null) return; // Fehler-/Leersample: Werte behalten, Staleness laeuft weiter
+  state.wanDown = Math.max(0, +w.rxMbit || 0);
+  state.wanUp   = Math.max(0, +w.txMbit || 0);
+  const now = performance.now();
+  state._wanRxAt = now;
+  pushSample(state.wanHist,   now, state.wanDown, NET_MAX_RANGE_MS);
+  pushSample(state.wanUpHist, now, state.wanUp,   NET_MAX_RANGE_MS);
+  _graphDirty = true;
 }
 
 function applyMetrics(d) {
@@ -911,6 +972,9 @@ function openMetricsStream() {
   es.addEventListener('net', (e) => {
     try { applyNet(JSON.parse(e.data)); } catch (_) { return; }
     _esConnected = true; _esFails = 0; markGlancesConnected();
+  });
+  es.addEventListener('wan', (e) => {
+    try { ingestWan(JSON.parse(e.data)); } catch (_) { /* ignore */ }
   });
   es.addEventListener('glances', (e) => {
     let d; try { d = JSON.parse(e.data); } catch (_) { return; }
@@ -2850,6 +2914,10 @@ async function pollUnifi() {
       return;
     }
     _unifiState = d;
+    // Fallback-Feed fuer die Durchsatz-Kachel ohne SSE: nur einspeisen, wenn
+    // laenger kein frisches WAN-Sample ueber den Stream kam (sonst doppelt).
+    if (d.wan && d.wan.rxRate != null && performance.now() - state._wanRxAt > 15000)
+      ingestWan({ ts: Date.now(), status: d.wan.status, rxMbit: d.wan.rxRate, txMbit: d.wan.txRate });
     renderUnifi(d);
     renderUnifiAps(d.devices);
     setText('unifiCamName', d.cameras?.[0]?.name || '–');
@@ -3287,6 +3355,8 @@ const WIDGET_OPTIONS = {
   ],
   'network-throughput': [
     { key: 'chart', label: 'Verlaufs-Chart',   type: 'toggle', default: true },
+    { key: 'chartSeries', label: 'Chart-Datenquelle', type: 'select', default: 'unraid',
+      options: [{ v: 'unraid', l: 'Unraid' }, { v: 'wan', l: 'Internet (WAN)' }, { v: 'both', l: 'Beide' }] },
     { key: 'flow',  label: 'Paket-Animation',  type: 'toggle', default: true },
     { key: 'range', label: 'Zeitraum',         type: 'select', default: '1m',
       options: [{ v: '10s', l: '10s' }, { v: '1m', l: '1m' }, { v: '10m', l: '10m' }, { v: '1h', l: '1h' }] },
@@ -3304,6 +3374,9 @@ const WIDGET_OPTIONS = {
     { key: 'srvName',  label: 'Server-Name',  type: 'text', default: 'Unraid' },
     { key: 'srvIcon',  label: 'Server-Icon',  type: 'icon', default: 'unraid', set: 'srv' },
     { key: 'srvLogo',  label: 'Server-Logo-URL', type: 'logourl', default: '' },
+    { key: 'lanName',  label: 'Netzwerk-Name', type: 'text', default: 'Netzwerk' },
+    { key: 'lanIcon',  label: 'Netzwerk-Icon', type: 'icon', default: 'lan', set: 'lan' },
+    { key: 'lanLogo',  label: 'Netzwerk-Logo-URL', type: 'logourl', default: '' },
   ],
   'service-status': [
     { key: 'maxRows', label: 'Max. Einträge', type: 'count', default: 0 },
@@ -4335,7 +4408,7 @@ function _renderTileSettings(widgetId) {
     } else if (opt.type === 'icon') {
       const grid = document.createElement('div');
       grid.className = 'ts-icon-grid';
-      const set = opt.set === 'srv' ? NET_ICON_SRV : NET_ICON_ISP;
+      const set = opt.set === 'srv' ? NET_ICON_SRV : opt.set === 'lan' ? NET_ICON_LAN : NET_ICON_ISP;
       const cur = String(_cfgVal(widgetId, opt.key) || '');
       for (const ic of set) {
         const btn = document.createElement('button');
@@ -5034,8 +5107,15 @@ const NET_ICON_SRV = [
   { id: 'proxmox',  label: 'Proxmox',  color: '#e57000', text: 'P', slug: 'proxmox' },
   { id: 'server',   label: 'Server',   color: '#7f8ea8', glyph: 'server' },
 ];
+// Icons fuer den dritten Knoten der Y-Animation (allgemeines Netzwerk).
+const NET_ICON_LAN = [
+  { id: 'lan',     label: 'Netzwerk', color: '#7f8ea8', glyph: 'nodes' },
+  { id: 'wifi',    label: 'WLAN',     color: '#5b9dff', glyph: 'wifi' },
+  { id: 'devices', label: 'Geräte',   color: '#3ddc97', glyph: 'devices' },
+];
 function _netIconDef(id) {
-  return NET_ICON_ISP.find((i) => i.id === id) || NET_ICON_SRV.find((i) => i.id === id) || null;
+  return NET_ICON_ISP.find((i) => i.id === id) || NET_ICON_SRV.find((i) => i.id === id) ||
+         NET_ICON_LAN.find((i) => i.id === id) || null;
 }
 function _netIconSlugUrl(id) { const d = _netIconDef(id); return d && d.slug ? NET_ICON_CDN + d.slug + '.svg' : ''; }
 // DOM-Element fuer ein Knoten-Icon: echtes Logo (eigene Logo-URL bevorzugt, sonst
@@ -5071,6 +5151,17 @@ function netIconSvg(id) {
             `<g fill="#fff"><circle cx="11.5" cy="11.5" r="1"/><circle cx="11.5" cy="20.5" r="1"/></g>`;
   } else if (ic.glyph === 'quote') {
     inner = `<path fill="#fff" d="M14 21c-2.4 0-4-1.7-4-4.1 0-3 2.3-5.6 5.8-7.3l1.1 1.7c-1.9 1.1-3 2.2-3.3 3.4.3-.1.6-.2 1-.2 1.9 0 3.4 1.4 3.4 3.3S16.4 21 14 21z"/>`;
+  } else if (ic.glyph === 'nodes') {
+    inner = `<g fill="none" stroke="#fff" stroke-width="1.4"><path d="M16 12v4M11.5 20.5l3-3M20.5 20.5l-3-3"/></g>` +
+            `<g fill="#fff"><circle cx="16" cy="10" r="2.4"/><circle cx="10.5" cy="22" r="2.4"/><circle cx="21.5" cy="22" r="2.4"/></g>`;
+  } else if (ic.glyph === 'wifi') {
+    inner = `<g fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round">` +
+            `<path d="M9 14.5c4-3.8 10-3.8 14 0M11.5 17.5c2.6-2.4 6.4-2.4 9 0"/></g>` +
+            `<circle cx="16" cy="21" r="1.7" fill="#fff"/>`;
+  } else if (ic.glyph === 'devices') {
+    inner = `<g fill="none" stroke="#fff" stroke-width="1.5"><rect x="8" y="10" width="12" height="8" rx="1.4"/>` +
+            `<rect x="17" y="15" width="7" height="9" rx="1.4"/></g>` +
+            `<path d="M11 21h6" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>`;
   } else {
     const t = ic.text || '?';
     const fs = ic.small ? 8.5 : (t.replace('&amp;', '&').length > 1 ? 11 : 15);
@@ -5097,13 +5188,25 @@ function applyNetworkConfig() {
 
   state.netIfacePref = String(_cfgVal(id, 'iface') || '');
 
+  // Chart-Datenquelle (Unraid / WAN / beides) + Legende nur bei 'both'.
+  state.netChartSeries = String(_cfgVal(id, 'chartSeries') || 'unraid');
+  const leg = $('netLegend'); if (leg) leg.style.display = state.netChartSeries === 'both' ? '' : 'none';
+  // Flow-Toggle spiegeln: data-cfg blendet nur das DOM aus, das Flag spart
+  // zusaetzlich die rAF-Arbeit (kein DOM-Read pro Frame noetig).
+  state.netFlowOn = _cfgVal(id, 'flow') !== false;
+
+  const srvName = String(_cfgVal(id, 'srvName') || 'Unraid');
   setText('netIspName', String(_cfgVal(id, 'ispName') || 'willy.tel'));
-  setText('netSrvName', String(_cfgVal(id, 'srvName') || 'Unraid'));
+  setText('netSrvName', srvName);
+  setText('netRowSrvName', srvName);
+  setText('netLanName', String(_cfgVal(id, 'lanName') || 'Netzwerk'));
   _setNodeIcon('netIspIco', String(_cfgVal(id, 'ispIcon') || 'willytel'), _cfgVal(id, 'ispLogo'));
   _setNodeIcon('netSrvIco', String(_cfgVal(id, 'srvIcon') || 'unraid'),   _cfgVal(id, 'srvLogo'));
+  _setNodeIcon('netLanIco', String(_cfgVal(id, 'lanIcon') || 'lan'),      _cfgVal(id, 'lanLogo'));
 
   reflectNetControls(rId, sm);
   _graphDirty = true;
+  layoutNetFlowY(); // Diagonalen an die (evtl. geaenderte) Kachelgroesse anpassen
   // Verlauf fuer den gewaehlten Bereich nachladen (auch initial), damit 10m/1h
   // sofort gefuellt sind – nicht bei jedem winzigen Re-Apply mehrfach.
   if (rangeChanged || !state._netBackfilled) { state._netBackfilled = true; backfillNetHistory(range.ms); }
@@ -5136,39 +5239,104 @@ async function backfillNetHistory(ms) {
   try {
     const res = await fetch(`/api/net/history?ms=${ms}&points=${NET_DRAW_POINTS * 2}`, { cache: 'no-store' });
     const d = await res.json();
-    if (!d || !d.ok || !Array.isArray(d.points) || !d.points.length) return;
+    if (!d || !d.ok) return;
     const offset = performance.now() - d.now; // Server- -> Client-Zeitachse
-    const dl = [], ul = [];
-    for (const p of d.points) {
-      const t = p.t + offset;
-      dl.push({ t, v: Math.max(0, +p.rx || 0) });
-      ul.push({ t, v: Math.max(0, +p.tx || 0) });
+    if (Array.isArray(d.points) && d.points.length) {
+      const dl = [], ul = [];
+      for (const p of d.points) {
+        const t = p.t + offset;
+        dl.push({ t, v: Math.max(0, +p.rx || 0) });
+        ul.push({ t, v: Math.max(0, +p.tx || 0) });
+      }
+      state.netHist = dl;
+      state.upHist = ul;
+      seeded = true;
     }
-    state.netHist = dl;
-    state.upHist = ul;
-    seeded = true;
+    // WAN-Verlauf (UniFi) mit derselben Offset-Logik seeden.
+    if (Array.isArray(d.wan) && d.wan.length) {
+      const wdl = [], wul = [];
+      for (const p of d.wan) {
+        const t = p.t + offset;
+        wdl.push({ t, v: Math.max(0, +p.rx || 0) });
+        wul.push({ t, v: Math.max(0, +p.tx || 0) });
+      }
+      state.wanHist = wdl;
+      state.wanUpHist = wul;
+    }
     _graphDirty = true;
   } catch (_) { /* Backfill ist optional */ }
 }
 
-/* ---- Paket-Animation (vertikale Autobahn): rAF-Partikelsystem ----
-   Statt die CSS-animation-duration je Frame zu aendern (das laesst Pakete
-   springen), bewegt JS jedes Paket selbst. Die geglaettete Rate steuert NUR,
-   wie oft neue Pakete starten und wie schnell sie sind; das Tempo wird beim
+/* ---- Paket-Animation (Y-Topologie): rAF-Partikelsystem ----
+   Internet (oben Mitte) -> Unraid (unten links) / Netzwerk (unten rechts);
+   Upload laeuft auf denselben Spuren rueckwaerts. Dargestellt wird NUR der
+   WAN-Verkehr: der Unraid-Anteil wird als min(Unraid-NIC, WAN) geschaetzt,
+   der Rest laeuft auf der Netzwerk-Spur; rein lokaler LAN-Traffic taucht
+   nicht auf. Statt die CSS-animation-duration je Frame zu aendern (das
+   laesst Pakete springen), bewegt JS jedes Paket selbst; das Tempo wird beim
    Start fixiert und bleibt konstant -> ruhig. Einmal gestartete Pakete laufen
-   IMMER bis zum Ziel (kein Verschwinden auf der Strecke); bei ~0 Durchsatz
-   werden nur keine neuen mehr emittiert. */
-const NET_PKT_MAX = 22;         // Deckel aktiver Pakete je Spur
-let _netFlowMeasure = 0;        // Zaehler fuer gelegentliches Neuvermessen der Spurhoehe
-function updateNetFlow(dl, ul) {
-  const now = performance.now();
-  const remeasure = (_netFlowMeasure++ % 20) === 0; // ~alle 20 Frames Hoehe neu lesen
-  stepNetLane($('netLaneDl'), dl, now, +1, remeasure);
-  stepNetLane($('netLaneUl'), ul, now, -1, remeasure);
+   IMMER bis zum Ziel; bei ~0 Durchsatz werden nur keine neuen mehr emittiert.
+   Tempo & Dichte skalieren LINEAR mit der Rate relativ zur GEMEINSAMEN
+   Referenz (schnellster Fluss): 1 Gbit Download neben 20 Mbit Upload wirkt
+   damit sichtbar drastisch schneller/dichter — nicht "etwas" schneller wie
+   bei der frueheren log-Skalierung. */
+const NET_PKT_MAX = 22;         // Deckel aktiver Pakete je Fluss
+let _netFlowMeasure = 0;        // Zaehler fuer gelegentliches Neuvermessen der Geometrie
+
+// Diagonal-Spuren an die Kachelgeometrie anpassen: Laenge + Winkel so, dass
+// beide Spuren vom oberen Mittelpunkt zu den unteren Knoten bei 25%/75% der
+// Breite zeigen (dort zentriert die Flexbox auch die Knoten-Icons). Das
+// lokale "unten" (0,1) einer Spur zeigt nach rotate(phi) auf
+// (-sin phi, cos phi) -> phi = -atan2(dx, dy).
+function layoutNetFlowY() {
+  const wrap = $('netLanesY');
+  if (!wrap || !wrap.clientWidth || !wrap.clientHeight) return;
+  const W = wrap.clientWidth, H = wrap.clientHeight;
+  const place = (lane, frac) => {
+    if (!lane) return;
+    const dx = frac * W - W / 2, dy = H;
+    lane.style.height = Math.hypot(dx, dy).toFixed(1) + 'px';
+    lane.style.transform = `rotate(${(-Math.atan2(dx, dy)).toFixed(4)}rad)`;
+  };
+  place($('netLaneSrv'), 0.25);
+  place($('netLaneLan'), 0.75);
 }
-function stepNetLane(lane, mbit, now, dir, remeasure) {
+
+function updateNetFlow() {
+  if (!state.netFlowOn) return; // Kachel-Option 'flow' aus -> keine rAF-Arbeit
+  const now = performance.now();
+  const remeasure = (_netFlowMeasure++ % 20) === 0; // ~alle 20 Frames Geometrie neu lesen
+  if (remeasure) layoutNetFlowY();
+
+  // Aufteilung des WAN-Verkehrs auf die beiden Ziele (je Richtung):
+  // Unraid-Anteil = min(NIC, WAN) — klemmt auch den Fall "NIC > WAN"
+  // (lokaler Traffic) —, der Rest gehoert dem uebrigen Netzwerk.
+  const wanFresh = state._wanRxAt > 0 && (now - state._wanRxAt) < 30000;
+  let srvDl, srvUl, lanDl, lanUl;
+  if (wanFresh) {
+    srvDl = Math.min(state.dispDown,  state.dispWanDown);
+    srvUl = Math.min(state.dispUpVal, state.dispWanUp);
+    lanDl = Math.max(0, state.dispWanDown - srvDl);
+    lanUl = Math.max(0, state.dispWanUp   - srvUl);
+  } else {
+    // Ohne WAN-Daten: Legacy-Verhalten — Unraid-Durchsatz auf der Server-Spur.
+    srvDl = state.dispDown; srvUl = state.dispUpVal; lanDl = 0; lanUl = 0;
+  }
+
+  // Gemeinsame Tempo-/Dichte-Referenz: der schnellste Fluss. Floor 20 Mbit/s,
+  // damit Kleinverkehr (nachts) insgesamt gemaechlich wirkt.
+  const ref = Math.max(20, srvDl, srvUl, lanDl, lanUl);
+
+  const laneSrv = $('netLaneSrv'), laneLan = $('netLaneLan');
+  stepNetLane(laneSrv, 'dl', srvDl, ref, now, +1, remeasure);
+  stepNetLane(laneSrv, 'ul', srvUl, ref, now, -1, remeasure);
+  stepNetLane(laneLan, 'dl', lanDl, ref, now, +1, remeasure);
+  stepNetLane(laneLan, 'ul', lanUl, ref, now, -1, remeasure);
+}
+function stepNetLane(lane, key, mbit, ref, now, dir, remeasure) {
   if (!lane) return;
-  const f = lane._flow || (lane._flow = { pkts: [], pool: [], sRate: 0, emitAcc: 0, lastTs: now, h: 0 });
+  const flows = lane._flows || (lane._flows = {});
+  const f = flows[key] || (flows[key] = { pkts: [], pool: [], sRate: 0, emitAcc: 0, lastTs: now, h: 0 });
 
   // Animationen aus -> alles raeumen und nichts bewegen.
   if (!state.animOn) {
@@ -5187,12 +5355,11 @@ function stepNetLane(lane, mbit, now, dir, remeasure) {
   f.sRate += ((mbit || 0) - f.sRate) * (1 - Math.exp(-dt / 0.8));
   const rate = f.sRate;
 
-  // Intensitaet gegen die aktuell sichtbare Skala (log-artig).
-  const ref = Math.max(20, state.netMaxDisp || 100);
-  const inten = Math.min(1, Math.max(0, Math.log10(1 + rate) / Math.log10(1 + ref)));
-
-  const pxSpeed = (0.12 + 0.7 * inten) * H;                 // px/s: langsam .. schnell
-  const emitPerSec = rate > 0.05 ? (0.6 + 9 * inten) : 0;   // Pakete/s: einzeln .. viele
+  // Tempo & Dichte LINEAR zur Rate relativ zur gemeinsamen Referenz —
+  // rate/ref statt log: 20 vs. 1000 Mbit sind 2% vs. 100%, nicht fast gleich.
+  const ratio = Math.min(1, rate / Math.max(1, ref));
+  const pxSpeed    = (0.10 + 0.80 * ratio) * H;              // px/s; Sockel: nie stehenbleiben
+  const emitPerSec = rate > 0.05 ? (0.5 + 9.5 * ratio) : 0;  // Pakete/s: Rinnsal .. dichter Strom
 
   // Bestehende Pakete bewegen; erst AM ZIEL recyceln.
   for (let i = f.pkts.length - 1; i >= 0; i--) {
@@ -5212,7 +5379,11 @@ function stepNetLane(lane, mbit, now, dir, remeasure) {
     while (f.emitAcc >= 1 && f.pkts.length < NET_PKT_MAX && guard++ < 6) {
       f.emitAcc -= 1;
       let node = f.pool.pop();
-      if (!node) { node = document.createElement('span'); node.className = 'net-pkt'; lane.appendChild(node); }
+      if (!node) {
+        node = document.createElement('span');
+        node.className = 'net-pkt ' + (dir > 0 ? 'net-pkt-dl' : 'net-pkt-ul');
+        lane.appendChild(node);
+      }
       node.style.opacity = '0';
       node.style.transform = dir > 0 ? 'translate3d(0,0,0)' : `translate3d(0,${H}px,0)`;
       f.pkts.push({ node, pos: 0, speed: pxSpeed });
