@@ -3300,8 +3300,10 @@ const WIDGET_OPTIONS = {
     { key: 'iface',    label: 'Interface',    type: 'select', default: '', options: 'ifaces' },
     { key: 'ispName',  label: 'ISP-Name',     type: 'text', default: 'willy.tel' },
     { key: 'ispIcon',  label: 'ISP-Icon',     type: 'icon', default: 'willytel', set: 'isp' },
+    { key: 'ispLogo',  label: 'ISP-Logo-URL', type: 'logourl', default: '' },
     { key: 'srvName',  label: 'Server-Name',  type: 'text', default: 'Unraid' },
     { key: 'srvIcon',  label: 'Server-Icon',  type: 'icon', default: 'unraid', set: 'srv' },
+    { key: 'srvLogo',  label: 'Server-Logo-URL', type: 'logourl', default: '' },
   ],
   'service-status': [
     { key: 'maxRows', label: 'Max. Einträge', type: 'count', default: 0 },
@@ -4309,6 +4311,15 @@ function _renderTileSettings(widgetId) {
       inp.addEventListener('input', () =>
         _setTileCfg(widgetId, opt.key, inp.value.trim().slice(0, 40)));
       row(opt.label, inp);
+    } else if (opt.type === 'logourl') {
+      const inp = document.createElement('input');
+      inp.className = 'cfg-input';
+      inp.type = 'url';
+      inp.placeholder = 'https://…/logo.svg';
+      inp.value = String(_cfgVal(widgetId, opt.key) || '');
+      inp.addEventListener('input', () =>
+        _setTileCfg(widgetId, opt.key, inp.value.trim().slice(0, 300)));
+      row(opt.label, inp, 'Eigene Logo-URL – überschreibt das gewählte Icon');
     } else if (opt.type === 'select') {
       const sel = document.createElement('select');
       sel.className = 'cfg-input';
@@ -4331,7 +4342,7 @@ function _renderTileSettings(widgetId) {
         btn.type = 'button';
         btn.className = 'ts-icon-btn' + (ic.id === cur ? ' active' : '');
         btn.title = ic.label;
-        btn.innerHTML = netIconSvg(ic.id);
+        btn.appendChild(netNodeIcon(ic.id, ''));
         btn.addEventListener('click', () => {
           grid.querySelectorAll('.ts-icon-btn').forEach((b) => b.classList.remove('active'));
           btn.classList.add('active');
@@ -4991,33 +5002,59 @@ function injectTileDecor() {
 
 /* ============================================================
    Network-Throughput-Kachel: Knoten-Icons, Konfiguration, Backfill,
-   Paket-Animation ("Daten-Highway").
-   Die Icons sind bewusst EIGENE, vereinfachte, markenfarbene Zeichen
-   (abgerundete Kachel + Monogramm/Glyph) – keine 1:1-Logos.
-   ============================================================ */
+   Paket-Animation.
+   Echte Firmen-Logos werden ueber die dashboard-icons-Sammlung (dieselbe Art
+   CDN wie die Quick-Access-Icons) per `slug` REFERENZIERT; das vereinfachte
+   markenfarbene Monogramm dient nur noch als Offline-/404-Fallback. Fuer nicht
+   gelistete Anbieter (z. B. willy.tel) kann je Knoten eine eigene Logo-URL
+   gesetzt werden. Es werden keine Logos ins Repo gebuendelt/nachgezeichnet. */
+const NET_ICON_CDN = 'https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons@main/svg/';
 const NET_ICON_ISP = [
   { id: 'willytel',   label: 'willy.tel',          color: '#0a86c4', text: 'w' },
   { id: 'wilhelmtel', label: 'wilhelm.tel',        color: '#0a86c4', text: 'w' },
-  { id: 'telekom',    label: 'Telekom',            color: '#e20074', text: 'T' },
-  { id: 'vodafone',   label: 'Vodafone',           color: '#e60000', glyph: 'quote' },
-  { id: 'o2',         label: 'o2',                 color: '#0019a5', text: 'o2', small: true },
+  { id: 'telekom',    label: 'Telekom',            color: '#e20074', text: 'T',  slug: 'telekom' },
+  { id: 'vodafone',   label: 'Vodafone',           color: '#e60000', glyph: 'quote', slug: 'vodafone' },
+  { id: 'o2',         label: 'o2',                 color: '#0019a5', text: 'o2', small: true, slug: 'o2' },
+  { id: 'telefonica', label: 'Telefónica',         color: '#0019a5', text: 'Tf', small: true, slug: 'telefonica' },
   { id: 'einsundeins',label: '1&1',                color: '#1c449b', text: '1&amp;1', small: true },
+  { id: 'congstar',   label: 'congstar',           color: '#e6007e', text: 'c',  slug: 'congstar' },
   { id: 'dglasfaser', label: 'Deutsche Glasfaser', color: '#6a1b7a', text: 'df' },
   { id: 'pyur',       label: 'PŸUR',               color: '#00b3a4', text: 'P' },
   { id: 'ewe',        label: 'EWE',                color: '#d9a400', text: 'EWE', small: true },
   { id: 'mnet',       label: 'M-net',              color: '#e2001a', text: 'M' },
   { id: 'netcologne', label: 'NetCologne',         color: '#c8102e', text: 'NC', small: true },
+  { id: 'fritzbox',   label: 'FRITZ!Box',          color: '#c8102e', text: 'Fb', small: true, slug: 'fritzbox' },
+  { id: 'sky',        label: 'Sky',                color: '#0072c9', text: 'sky', small: true, slug: 'sky' },
   { id: 'globe',      label: 'Internet',           color: '#5b9dff', glyph: 'globe' },
 ];
 const NET_ICON_SRV = [
-  { id: 'unraid',   label: 'Unraid',   color: '#f15a2c', glyph: 'stack' },
-  { id: 'synology', label: 'Synology', color: '#8a9096', text: 'S' },
-  { id: 'truenas',  label: 'TrueNAS',  color: '#0095d5', text: 'T' },
-  { id: 'proxmox',  label: 'Proxmox',  color: '#e57000', text: 'P' },
+  { id: 'unraid',   label: 'Unraid',   color: '#f15a2c', glyph: 'stack', slug: 'unraid' },
+  { id: 'synology', label: 'Synology', color: '#8a9096', text: 'S', slug: 'synology' },
+  { id: 'truenas',  label: 'TrueNAS',  color: '#0095d5', text: 'T', slug: 'truenas' },
+  { id: 'proxmox',  label: 'Proxmox',  color: '#e57000', text: 'P', slug: 'proxmox' },
   { id: 'server',   label: 'Server',   color: '#7f8ea8', glyph: 'server' },
 ];
 function _netIconDef(id) {
   return NET_ICON_ISP.find((i) => i.id === id) || NET_ICON_SRV.find((i) => i.id === id) || null;
+}
+function _netIconSlugUrl(id) { const d = _netIconDef(id); return d && d.slug ? NET_ICON_CDN + d.slug + '.svg' : ''; }
+// DOM-Element fuer ein Knoten-Icon: echtes Logo (eigene Logo-URL bevorzugt, sonst
+// CDN-slug) mit onerror-Fallback auf das inline-Monogramm; sonst direkt Monogramm.
+function netNodeIcon(id, logoUrl) {
+  const url = (logoUrl && String(logoUrl).trim()) || _netIconSlugUrl(id);
+  if (url) {
+    const img = document.createElement('img');
+    img.src = url; img.alt = ''; img.loading = 'lazy';
+    img.onerror = () => { const s = document.createElement('span'); s.innerHTML = netIconSvg(id); if (img.parentNode) img.replaceWith(s.firstChild); };
+    return img;
+  }
+  const s = document.createElement('span');
+  s.innerHTML = netIconSvg(id);
+  return s.firstChild;
+}
+function _setNodeIcon(elId, iconId, logoUrl) {
+  const el = $(elId); if (!el) return;
+  el.innerHTML = ''; el.appendChild(netNodeIcon(iconId, logoUrl));
 }
 function netIconSvg(id) {
   const ic = _netIconDef(id) || { color: '#5b9dff', glyph: 'globe' };
@@ -5062,8 +5099,8 @@ function applyNetworkConfig() {
 
   setText('netIspName', String(_cfgVal(id, 'ispName') || 'willy.tel'));
   setText('netSrvName', String(_cfgVal(id, 'srvName') || 'Unraid'));
-  const ispIco = $('netIspIco'); if (ispIco) ispIco.innerHTML = netIconSvg(String(_cfgVal(id, 'ispIcon') || 'willytel'));
-  const srvIco = $('netSrvIco'); if (srvIco) srvIco.innerHTML = netIconSvg(String(_cfgVal(id, 'srvIcon') || 'unraid'));
+  _setNodeIcon('netIspIco', String(_cfgVal(id, 'ispIcon') || 'willytel'), _cfgVal(id, 'ispLogo'));
+  _setNodeIcon('netSrvIco', String(_cfgVal(id, 'srvIcon') || 'unraid'),   _cfgVal(id, 'srvLogo'));
 
   reflectNetControls(rId, sm);
   _graphDirty = true;
@@ -5114,22 +5151,75 @@ async function backfillNetHistory(ms) {
   } catch (_) { /* Backfill ist optional */ }
 }
 
-/* ---- Paket-Animation: Tempo & Deckkraft je Spur an den Durchsatz koppeln ---- */
+/* ---- Paket-Animation (vertikale Autobahn): rAF-Partikelsystem ----
+   Statt die CSS-animation-duration je Frame zu aendern (das laesst Pakete
+   springen), bewegt JS jedes Paket selbst. Die geglaettete Rate steuert NUR,
+   wie oft neue Pakete starten und wie schnell sie sind; das Tempo wird beim
+   Start fixiert und bleibt konstant -> ruhig. Einmal gestartete Pakete laufen
+   IMMER bis zum Ziel (kein Verschwinden auf der Strecke); bei ~0 Durchsatz
+   werden nur keine neuen mehr emittiert. */
+const NET_PKT_MAX = 22;         // Deckel aktiver Pakete je Spur
+let _netFlowMeasure = 0;        // Zaehler fuer gelegentliches Neuvermessen der Spurhoehe
 function updateNetFlow(dl, ul) {
-  applyNetLane($('netLaneDl'), dl);
-  applyNetLane($('netLaneUl'), ul);
+  const now = performance.now();
+  const remeasure = (_netFlowMeasure++ % 20) === 0; // ~alle 20 Frames Hoehe neu lesen
+  stepNetLane($('netLaneDl'), dl, now, +1, remeasure);
+  stepNetLane($('netLaneUl'), ul, now, -1, remeasure);
 }
-function applyNetLane(lane, mbit) {
+function stepNetLane(lane, mbit, now, dir, remeasure) {
   if (!lane) return;
-  const active = mbit > 0.05;
-  if (lane._active !== active) { lane.classList.toggle('active', active); lane._active = active; }
-  if (!active) return;
-  // log-artige Skala: auch kleine Raten zeigen Bewegung, 0..~200 Mbit/s -> schnell.
-  const f = Math.min(1, Math.log10(1 + mbit) / Math.log10(201));
-  const dur = +(3.2 - 2.7 * f).toFixed(2);   // 3.2s (leise) .. 0.5s (viel)
-  const op  = +(0.5 + 0.5 * f).toFixed(2);
-  if (lane._dur !== dur) { lane.style.setProperty('--dur', dur + 's'); lane._dur = dur; }
-  if (lane._op  !== op)  { lane.style.setProperty('--pkt-op', op);      lane._op = op; }
+  const f = lane._flow || (lane._flow = { pkts: [], pool: [], sRate: 0, emitAcc: 0, lastTs: now, h: 0 });
+
+  // Animationen aus -> alles raeumen und nichts bewegen.
+  if (!state.animOn) {
+    if (f.pkts.length) { for (const p of f.pkts) p.node.style.opacity = '0'; f.pool.push(...f.pkts.map((p) => p.node)); f.pkts.length = 0; }
+    return;
+  }
+
+  let dt = (now - f.lastTs) / 1000; f.lastTs = now;
+  if (dt <= 0) return;
+  if (dt > 0.1) dt = 0.1; // Tab-Wechsel/Ruckler abfangen
+
+  if (remeasure || !f.h) { const h = lane.clientHeight; if (h) f.h = h; }
+  const H = f.h || 60;
+
+  // Rate glaetten (EMA, tau ~0.8s) -> ruhige Reaktion.
+  f.sRate += ((mbit || 0) - f.sRate) * (1 - Math.exp(-dt / 0.8));
+  const rate = f.sRate;
+
+  // Intensitaet gegen die aktuell sichtbare Skala (log-artig).
+  const ref = Math.max(20, state.netMaxDisp || 100);
+  const inten = Math.min(1, Math.max(0, Math.log10(1 + rate) / Math.log10(1 + ref)));
+
+  const pxSpeed = (0.12 + 0.7 * inten) * H;                 // px/s: langsam .. schnell
+  const emitPerSec = rate > 0.05 ? (0.6 + 9 * inten) : 0;   // Pakete/s: einzeln .. viele
+
+  // Bestehende Pakete bewegen; erst AM ZIEL recyceln.
+  for (let i = f.pkts.length - 1; i >= 0; i--) {
+    const p = f.pkts[i];
+    p.pos += p.speed * dt;
+    if (p.pos >= H) { p.node.style.opacity = '0'; f.pool.push(p.node); f.pkts.splice(i, 1); continue; }
+    const y = dir > 0 ? p.pos : (H - p.pos);
+    p.node.style.transform = `translate3d(0,${y.toFixed(1)}px,0)`;
+    const edge = p.pos < (H - p.pos) ? p.pos : (H - p.pos); // sanftes Ein-/Ausblenden an den Enden
+    p.node.style.opacity = (edge < 9 ? edge / 9 : 1).toFixed(2);
+  }
+
+  // Neue Pakete emittieren (nur bei Traffic).
+  if (emitPerSec > 0 && H > 0) {
+    f.emitAcc += emitPerSec * dt;
+    let guard = 0;
+    while (f.emitAcc >= 1 && f.pkts.length < NET_PKT_MAX && guard++ < 6) {
+      f.emitAcc -= 1;
+      let node = f.pool.pop();
+      if (!node) { node = document.createElement('span'); node.className = 'net-pkt'; lane.appendChild(node); }
+      node.style.opacity = '0';
+      node.style.transform = dir > 0 ? 'translate3d(0,0,0)' : `translate3d(0,${H}px,0)`;
+      f.pkts.push({ node, pos: 0, speed: pxSpeed });
+    }
+  } else {
+    f.emitAcc = 0;
+  }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {

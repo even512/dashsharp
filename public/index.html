@@ -136,67 +136,65 @@
         </div>
       </div>
 
-      <div data-widget-id="network-throughput" style="grid-column:span 7;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:18px 20px;position:relative;overflow:hidden;display:flex;flex-direction:column">
+      <div data-widget-id="network-throughput" style="grid-column:span 7;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:18px 20px;position:relative;overflow:hidden;display:flex;flex-direction:row;gap:14px">
         <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('network-throughput')">✕</button></div>
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;flex-shrink:0">
-          <div>
-            <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase"><span data-tile-title>Network Throughput</span></div>
-            <div style="font:500 10px 'JetBrains Mono',monospace;color:#3d5268;margin-top:4px;letter-spacing:0.05em"><span id="netHost">–</span><span id="netIfaceSep" style="display:none"> · </span><span id="netIface"></span></div>
+        <div class="net-main">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;flex-shrink:0">
+            <div>
+              <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase"><span data-tile-title>Network Throughput</span></div>
+              <div style="font:500 10px 'JetBrains Mono',monospace;color:#3d5268;margin-top:4px;letter-spacing:0.05em"><span id="netHost">–</span><span id="netIfaceSep" style="display:none"> · </span><span id="netIface"></span></div>
+            </div>
+            <span style="width:7px;height:7px;border-radius:50%;background:#5b9dff;animation:pulse 2s infinite;flex-shrink:0;margin-top:2px"></span>
           </div>
-          <span style="width:7px;height:7px;border-radius:50%;background:#5b9dff;animation:pulse 2s infinite;flex-shrink:0;margin-top:2px"></span>
+          <div style="display:flex;gap:26px;margin-bottom:10px;flex-shrink:0">
+            <div>
+              <div style="font:600 25px/1 'Space Grotesk',sans-serif;color:#5b9dff;font-variant-numeric:tabular-nums">↓ <span id="netDown">42.0</span></div>
+              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:4px">Mbit/s Download</div>
+            </div>
+            <div>
+              <div style="font:600 25px/1 'Space Grotesk',sans-serif;color:#3ddc97;font-variant-numeric:tabular-nums">↑ <span id="netUp">8.0</span></div>
+              <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:4px">Mbit/s Upload</div>
+            </div>
+          </div>
+          <div data-cfg="chart" class="net-ctl">
+            <div class="net-seg" id="netRangeCtl">
+              <button type="button" data-net-range="10s">10s</button>
+              <button type="button" data-net-range="1m">1m</button>
+              <button type="button" data-net-range="10m">10m</button>
+              <button type="button" data-net-range="1h">1h</button>
+            </div>
+            <div class="net-ctl-right">
+              <span class="net-axis-max"><span id="netScaleMax">–</span> Mbit/s</span>
+              <select id="netScaleCtl" class="net-scale-sel" title="Skala (Mbit/s-Achse)">
+                <option value="auto">Auto</option>
+                <option value="100">100</option>
+                <option value="250">250</option>
+                <option value="500">500</option>
+                <option value="1000">1 Gbit</option>
+                <option value="line">Leitung</option>
+              </select>
+            </div>
+          </div>
+          <svg data-cfg="chart" viewBox="0 0 380 80" preserveAspectRatio="none" width="100%" height="64" style="display:block;width:100%;flex:1 1 40px;min-height:40px">
+            <polygon id="netArea" points="" fill="rgba(91,157,255,0.1)"/>
+            <polyline id="netLine" points="" fill="none" stroke="#5b9dff" stroke-width="2" vector-effect="non-scaling-stroke"/>
+            <polyline id="upLine" points="" fill="none" stroke="#3ddc97" stroke-width="2" vector-effect="non-scaling-stroke" opacity="0.8"/>
+          </svg>
         </div>
-        <div style="display:flex;gap:26px;margin-bottom:10px;flex-shrink:0">
-          <div>
-            <div style="font:600 25px/1 'Space Grotesk',sans-serif;color:#5b9dff;font-variant-numeric:tabular-nums">↓ <span id="netDown">42.0</span></div>
-            <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:4px">Mbit/s Download</div>
-          </div>
-          <div>
-            <div style="font:600 25px/1 'Space Grotesk',sans-serif;color:#3ddc97;font-variant-numeric:tabular-nums">↑ <span id="netUp">8.0</span></div>
-            <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:4px">Mbit/s Upload</div>
-          </div>
-        </div>
-        <div data-cfg="flow" class="net-flow">
-          <div class="net-node">
+        <div data-cfg="flow" class="net-flow" title="ISP ↔ Server">
+          <div class="net-node net-node-top">
             <span class="net-node-ico" id="netIspIco"></span>
             <span class="net-node-name" id="netIspName">willy.tel</span>
           </div>
           <div class="net-lanes">
-            <div class="net-lane net-lane-dl" id="netLaneDl">
-              <span class="net-pkt" style="--i:0"></span><span class="net-pkt" style="--i:1"></span><span class="net-pkt" style="--i:2"></span><span class="net-pkt" style="--i:3"></span><span class="net-pkt" style="--i:4"></span>
-            </div>
-            <div class="net-lane net-lane-ul" id="netLaneUl">
-              <span class="net-pkt" style="--i:0"></span><span class="net-pkt" style="--i:1"></span><span class="net-pkt" style="--i:2"></span><span class="net-pkt" style="--i:3"></span><span class="net-pkt" style="--i:4"></span>
-            </div>
+            <div class="net-lane net-lane-dl" id="netLaneDl" title="Download"></div>
+            <div class="net-lane net-lane-ul" id="netLaneUl" title="Upload"></div>
           </div>
-          <div class="net-node">
+          <div class="net-node net-node-bottom">
             <span class="net-node-ico" id="netSrvIco"></span>
             <span class="net-node-name" id="netSrvName">Unraid</span>
           </div>
         </div>
-        <div data-cfg="chart" class="net-ctl">
-          <div class="net-seg" id="netRangeCtl">
-            <button type="button" data-net-range="10s">10s</button>
-            <button type="button" data-net-range="1m">1m</button>
-            <button type="button" data-net-range="10m">10m</button>
-            <button type="button" data-net-range="1h">1h</button>
-          </div>
-          <div class="net-ctl-right">
-            <span class="net-axis-max"><span id="netScaleMax">–</span> Mbit/s</span>
-            <select id="netScaleCtl" class="net-scale-sel" title="Skala (Mbit/s-Achse)">
-              <option value="auto">Auto</option>
-              <option value="100">100</option>
-              <option value="250">250</option>
-              <option value="500">500</option>
-              <option value="1000">1 Gbit</option>
-              <option value="line">Leitung</option>
-            </select>
-          </div>
-        </div>
-        <svg data-cfg="chart" viewBox="0 0 380 80" preserveAspectRatio="none" width="100%" height="64" style="display:block;width:100%;flex:1 1 40px;min-height:40px">
-          <polygon id="netArea" points="" fill="rgba(91,157,255,0.1)"/>
-          <polyline id="netLine" points="" fill="none" stroke="#5b9dff" stroke-width="2" vector-effect="non-scaling-stroke"/>
-          <polyline id="upLine" points="" fill="none" stroke="#3ddc97" stroke-width="2" vector-effect="non-scaling-stroke" opacity="0.8"/>
-        </svg>
       </div>
 
       <div data-widget-id="disk-storage" style="grid-column:span 7;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden;display:flex;flex-direction:column">
