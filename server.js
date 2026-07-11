@@ -74,6 +74,113 @@ function unifiFetch(cfg, urlPath, timeoutMs = 6000) {
   });
 }
 
+/* ------------------------------------------------------------
+   UniFi lokal (LAN) — umgeht die Cloud fuer einen Live-WAN-Wert.
+   Read-only Konto auf der UniFi-OS-Console: Login -> TOKEN-Cookie
+   (+ CSRF), danach GETs auf /proxy/network/api/s/<site>/... . Das
+   self-signed Zertifikat der Console wird gezielt akzeptiert (LAN).
+   ------------------------------------------------------------ */
+function unifiLocalCfg() {
+  return {
+    url:  (getSecret('UNIFI_LOCAL_URL')  || '').trim().replace(/\/+$/, ''),
+    user:  getSecret('UNIFI_LOCAL_USER') || '',
+    pass:  getSecret('UNIFI_LOCAL_PASS') || '',
+    site: (getSecret('UNIFI_LOCAL_SITE') || 'default').trim() || 'default',
+  };
+}
+function unifiLocalReady(cfg = unifiLocalCfg()) {
+  return !!(cfg.url && cfg.user && cfg.pass);
+}
+
+let unifiLocalSession = null; // { cookie, csrf } — nach erfolgreichem Login
+
+// Roh-Request gegen die lokale Console (self-signed erlaubt, LAN).
+function unifiLocalRequest(cfg, { method = 'GET', urlPath, body = null, headers = {}, timeoutMs = 5000 }) {
+  return new Promise((resolve, reject) => {
+    let parsed;
+    try { parsed = new URL(cfg.url + urlPath); } catch (e) { return reject(e); }
+    const payload = body != null ? Buffer.from(JSON.stringify(body)) : null;
+    let settled = false;
+    const req = https.request(
+      {
+        hostname: parsed.hostname,
+        port:     parsed.port || 443,
+        path:     parsed.pathname + parsed.search,
+        method,
+        rejectUnauthorized: false, // Console nutzt self-signed Zertifikat (LAN)
+        headers: {
+          Accept: 'application/json',
+          ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': payload.length } : {}),
+          ...headers,
+        },
+      },
+      (res) => {
+        let raw = '';
+        res.on('data', c => raw += c);
+        res.on('end', () => {
+          if (settled) return; settled = true;
+          clearTimeout(timer);
+          resolve({ statusCode: res.statusCode, headers: res.headers, raw });
+        });
+      }
+    );
+    const timer = setTimeout(() => {
+      if (settled) return; settled = true;
+      req.destroy();
+      reject(new Error('timeout'));
+    }, timeoutMs);
+    req.on('error', e => { if (settled) return; settled = true; clearTimeout(timer); reject(e); });
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+// JWT-Payload dekodieren (Fallback fuer den csrfToken-Claim).
+function decodeJwtPayload(jwt) {
+  try {
+    const part = String(jwt).split('.')[1];
+    if (!part) return null;
+    return JSON.parse(Buffer.from(part.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+  } catch { return null; }
+}
+
+// Login gegen UniFi OS -> { cookie, csrf }, gecached in unifiLocalSession.
+async function unifiLocalLogin(cfg) {
+  const r = await unifiLocalRequest(cfg, {
+    method: 'POST',
+    urlPath: '/api/auth/login',
+    body: { username: cfg.user, password: cfg.pass, rememberMe: true },
+    timeoutMs: 8000,
+  });
+  if (r.statusCode >= 400) throw new Error(`Login HTTP ${r.statusCode}`);
+  const setCookie = r.headers['set-cookie'] || [];
+  const tokenC = (Array.isArray(setCookie) ? setCookie : [setCookie])
+    .map(c => (c || '').split(';')[0])
+    .find(c => /^TOKEN=/.test(c));
+  if (!tokenC) throw new Error('Login: kein TOKEN-Cookie erhalten');
+  const csrf = r.headers['x-csrf-token'] ||
+               (decodeJwtPayload(tokenC.slice('TOKEN='.length)) || {}).csrfToken || '';
+  unifiLocalSession = { cookie: tokenC, csrf };
+  console.log(`UniFi lokal: Login ok → ${cfg.url}`);
+  return unifiLocalSession;
+}
+
+// GET auf die lokale Network-API (apiPath ab /stat/...). Re-Login bei 401.
+async function unifiLocalFetch(cfg, apiPath, timeoutMs = 5000) {
+  const doGet = async () => {
+    const sess = unifiLocalSession || await unifiLocalLogin(cfg);
+    return unifiLocalRequest(cfg, {
+      urlPath: `/proxy/network/api/s/${cfg.site}${apiPath}`,
+      headers: { Cookie: sess.cookie, ...(sess.csrf ? { 'X-CSRF-Token': sess.csrf } : {}) },
+      timeoutMs,
+    });
+  };
+  let r = await doGet();
+  if (r.statusCode === 401) { unifiLocalSession = null; r = await doGet(); }
+  if (r.statusCode >= 400) throw new Error(`HTTP ${r.statusCode}`);
+  try { return JSON.parse(r.raw); } catch (e) { throw new Error('JSON-Parse fehlgeschlagen'); }
+}
+
 // Gecachte IDs — werden beim ersten erfolgreichen API-Call gesetzt
 let _cachedHostId = null;
 let _cachedNetSiteId = null;
@@ -641,12 +748,23 @@ const wanState = {
   timer: null,
 };
 
+let _wanSrcLogged = null; // letzte geloggte Quelle (LOCAL/CLOUD) — nur bei Wechsel loggen
 async function sampleWanOnce() {
+  const localCfg = unifiLocalCfg();
   const cfg = unifiCfg();
-  if (!cfg.apiKey) return;
+  const useLocal = unifiLocalReady(localCfg);
+  if (!useLocal && !cfg.apiKey) return;
+  // Effektive Quelle bei Wechsel einmal loggen (Diagnose).
+  const srcLabel = useLocal ? `LOCAL ${localCfg.url}` : 'CLOUD api.ui.com';
+  if (srcLabel !== _wanSrcLogged) { _wanSrcLogged = srcLabel; console.log(`WAN-Sampler: Quelle = ${srcLabel}`); }
   try {
-    const hostId = await getConsoleId(cfg);
-    const healthRaw = await unifiFetch(cfg, `/v1/connector/consoles/${hostId}/proxy/network/api/s/default/stat/health`, 5000);
+    let healthRaw;
+    if (useLocal) {
+      healthRaw = await unifiLocalFetch(localCfg, '/stat/health', 5000);
+    } else {
+      const hostId = await getConsoleId(cfg);
+      healthRaw = await unifiFetch(cfg, `/v1/connector/consoles/${hostId}/proxy/network/api/s/default/stat/health`, 5000);
+    }
     const wan = parseWanHealth(healthRaw);
     const ts = Date.now();
     wanState.latest = { ts, status: wan.status, rxMbit: wan.rxRate, txMbit: wan.txRate, latencyMs: wan.latencyMs, ip: wan.ip };
@@ -655,6 +773,9 @@ async function sampleWanOnce() {
     broadcast('wan', wanState.latest);
   } catch (err) {
     wanState.failStreak++;
+    // Ersten Fehler klar loggen (Diagnose: Login/URL/Zertifikat), danach still.
+    if (wanState.failStreak === 1)
+      console.warn(`WAN-Sampler Fehler (${useLocal ? 'lokal' : 'cloud'}): ${err.message}`);
     // Clients einmalig informieren, damit die Kachel degradieren kann;
     // wanState.latest bleibt fuer Backfill/Stale-Anzeige erhalten.
     if (wanState.failStreak === 3)
@@ -674,7 +795,10 @@ function scheduleWanNext() {
 }
 function startWanSampler() {
   if (wanState.running) return;
-  if (!unifiCfg().apiKey) { console.log('WAN-Sampler: UniFi nicht konfiguriert (kein API-Key)'); return; }
+  if (!unifiLocalReady() && !unifiCfg().apiKey) {
+    console.log('WAN-Sampler: UniFi nicht konfiguriert (weder lokal noch Cloud-API-Key)');
+    return;
+  }
   wanState.running = true;
   console.log(`WAN-Sampler: UniFi stat/health @ ${WAN_SAMPLE_MS}ms (idle ${WAN_IDLE_MS}ms)`);
   sampleWanOnce();
@@ -1356,8 +1480,8 @@ app.post('/api/quicklinks', (req, res) => {
   }
 });
 
-const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH', 'UNRAID_URL', 'UNRAID_API_KEY', 'UNRAID_SSH_HOST', 'UNRAID_SSH_PORT', 'UNRAID_SSH_USER', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'UNRAID_DANGER_ACTIONS'];
-const SECRETS_MASKED = new Set(['ADGUARD_PASS', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'NEXTCLOUD_PASS', 'UNRAID_API_KEY', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY']);
+const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'UNIFI_LOCAL_URL', 'UNIFI_LOCAL_USER', 'UNIFI_LOCAL_PASS', 'UNIFI_LOCAL_SITE', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH', 'UNRAID_URL', 'UNRAID_API_KEY', 'UNRAID_SSH_HOST', 'UNRAID_SSH_PORT', 'UNRAID_SSH_USER', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'UNRAID_DANGER_ACTIONS'];
+const SECRETS_MASKED = new Set(['ADGUARD_PASS', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'UNIFI_LOCAL_PASS', 'NEXTCLOUD_PASS', 'UNRAID_API_KEY', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY']);
 
 app.get('/api/secrets', (req, res) => {
   const out = {};
@@ -1380,7 +1504,9 @@ app.post('/api/secrets', (req, res) => {
     fs.writeFileSync(SECRETS_PATH, JSON.stringify(_secrets, null, 2));
     // Caches invalidieren damit naechster Poll sofort mit neuen Creds laeuft
     for (const k of Object.keys(cache)) cache[k] = { ts: 0, data: null };
-    // Frisch gesetzter UniFi-Key startet den WAN-Sampler ohne Neustart (idempotent).
+    unifiLocalSession = null; // ggf. geaenderte lokale UniFi-Creds erzwingen Re-Login
+    _wanSrcLogged = null;     // Quellenwechsel (lokal<->cloud) beim naechsten Poll loggen
+    // Frisch gesetzte UniFi-Creds starten den WAN-Sampler ohne Neustart (idempotent).
     startWanSampler();
     res.json({ ok: true });
   } catch (err) {
