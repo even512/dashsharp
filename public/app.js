@@ -448,6 +448,7 @@ const state = {
   netFlowOn: true,                  // Spiegel der 'flow'-Option (kein DOM-Read im rAF)
   netPktShape: 'block',             // Paket-Form der Flow-Animation: 'block' | 'dot'
   netTrailOn: true,                 // Trail hinter Block-Paketen
+  netLocalOn: true,                 // Server<->LAN-Linie (lokaler Verkehr) in der Flow-Animation
   liveOn: true, gridOn: true, animOn: true, glassOn: true, searchOn: true,
   updateMs: 1600, accent: '#5b9dff',
   settingsCategory: 'general',
@@ -3373,6 +3374,7 @@ const WIDGET_OPTIONS = {
     { key: 'packetShape', label: 'Paket-Form', type: 'select', default: 'block',
       options: [{ v: 'block', l: 'Block' }, { v: 'dot', l: 'Punkt' }] },
     { key: 'flowTrail', label: 'Paket-Schweif', type: 'toggle', default: true },
+    { key: 'localFlow', label: 'Lokaler Server↔LAN-Verkehr', type: 'toggle', default: true },
     { key: 'ispName',  label: 'Internet-Name', type: 'text', default: 'willy.tel' },
     { key: 'srvName',  label: 'Server-Name',  type: 'text', default: 'Unraid' },
     { key: 'lanName',  label: 'Netzwerk-Name', type: 'text', default: 'Netzwerk' },
@@ -5090,6 +5092,9 @@ function applyNetworkConfig() {
   // Paket-Stil (Design-Optionen): Block/Dot + Trail.
   state.netPktShape = String(_cfgVal(id, 'packetShape') || 'block');
   state.netTrailOn  = _cfgVal(id, 'flowTrail') !== false;
+  // Lokale Server<->LAN-Linie: Flag + DOM-Gruppe (Linie + Werte-Labels) togglen.
+  state.netLocalOn  = _cfgVal(id, 'localFlow') !== false;
+  const locGrp = $('netLocGroup'); if (locGrp) locGrp.style.display = state.netLocalOn ? '' : 'none';
 
   const srvName = String(_cfgVal(id, 'srvName') || 'Unraid');
   setText('netRowSrvName', srvName);
@@ -5180,11 +5185,18 @@ const NF_SPLIT = { x: 110, y: 100 };
 const NF_END   = { srv: { x: 45,  y: 216 }, lan: { x: 175, y: 216 } };
 const NF_C1    = { srv: { x: 110, y: 150 }, lan: { x: 110, y: 150 } };
 const NF_C2    = { srv: { x: 72,  y: 216 }, lan: { x: 148, y: 216 } };
+// Direkter lokaler Rand Server(45,216) <-> LAN(175,216), leicht nach unten gebogen
+// (quadratische Bezier). Phase 0 = Server, 1 = LAN.
+const NF_LOC   = { p0: { x: 45, y: 216 }, c: { x: 110, y: 228 }, p1: { x: 175, y: 216 } };
 const NF_STREAMS = [
-  { key: 'srvDl', branch: 'srv', up: false, slots: 12 },
-  { key: 'lanDl', branch: 'lan', up: false, slots: 12 },
-  { key: 'srvUl', branch: 'srv', up: true,  slots: 8 },
-  { key: 'lanUl', branch: 'lan', up: true,  slots: 8 },
+  { key: 'srvDl', path: 'y',   branch: 'srv', up: false, slots: 12 },
+  { key: 'lanDl', path: 'y',   branch: 'lan', up: false, slots: 12 },
+  { key: 'srvUl', path: 'y',   branch: 'srv', up: true,  slots: 8 },
+  { key: 'lanUl', path: 'y',   branch: 'lan', up: true,  slots: 8 },
+  // Lokaler Verkehr auf dem direkten Rand: Server->LAN (Upload, gruen) laeuft
+  // vorwaerts, LAN->Server (Download, blau) rueckwaerts.
+  { key: 'locUl', path: 'loc', dir: 'fwd', color: '#3ddc84', slots: 10 },
+  { key: 'locDl', path: 'loc', dir: 'rev', color: '#4d8dff', slots: 10 },
 ];
 
 function nfLerp(a, b, t) { return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }; }
@@ -5200,27 +5212,42 @@ function nfBezier(branch, t) {
 function nfSampleDown(branch, t) {
   return t < 0.5 ? nfLerp(NF_WAN, NF_SPLIT, t / 0.5) : nfBezier(branch, (t - 0.5) / 0.5);
 }
-// Bogenlaengen-LUT je Ast: Phase 0..1 laeuft mit KONSTANTER Pixel-Geschwindig-
+// Lokaler Rand Server<->LAN: quadratische Bezier, t 0=Server .. 1=LAN.
+function nfSampleLoc(t) {
+  const mt = 1 - t, p0 = NF_LOC.p0, c = NF_LOC.c, p1 = NF_LOC.p1;
+  return {
+    x: mt * mt * p0.x + 2 * mt * t * c.x + t * t * p1.x,
+    y: mt * mt * p0.y + 2 * mt * t * c.y + t * t * p1.y,
+  };
+}
+// LUT-Key -> Sampler(t). 'srv'/'lan' laufen die Y-Topologie, 'loc' den lokalen Rand.
+const NF_SAMPLERS = {
+  srv: (t) => nfSampleDown('srv', t),
+  lan: (t) => nfSampleDown('lan', t),
+  loc: nfSampleLoc,
+};
+// Bogenlaengen-LUT je Pfad: Phase 0..1 laeuft mit KONSTANTER Pixel-Geschwindig-
 // keit ueber den GESAMTEN Weg. Ohne dies kriechen Pakete auf dem kurzen Trunk
 // (Strang zum Internet) und springen an der Abzweigung auf ~2.5x Pixel-Tempo,
 // obwohl 'speed' (Phase/s) gleich ist -> Internet-Strang wirkt langsamer.
-const NF_LUT = {};  // branch -> { xs, ys, cum, total, n }
-function nfLut(branch) {
-  const cached = NF_LUT[branch];
+const NF_LUT = {};  // key -> { xs, ys, cum, total, n }
+function nfLut(key) {
+  const cached = NF_LUT[key];
   if (cached) return cached;
+  const sample = NF_SAMPLERS[key];
   const n = 240, xs = [], ys = [], cum = [0];
   let px = 0, py = 0;
   for (let i = 0; i <= n; i++) {
-    const p = nfSampleDown(branch, i / n);
+    const p = sample(i / n);
     xs.push(p.x); ys.push(p.y);
     if (i > 0) cum.push(cum[i - 1] + Math.hypot(p.x - px, p.y - py));
     px = p.x; py = p.y;
   }
-  return (NF_LUT[branch] = { xs, ys, cum, total: cum[n], n });
+  return (NF_LUT[key] = { xs, ys, cum, total: cum[n], n });
 }
 // Position + Tangentenwinkel beim Bogen-Anteil ph (0..1) -> gleichmaessiges Tempo.
-function nfArcPos(branch, ph) {
-  const L = nfLut(branch);
+function nfArcPos(key, ph) {
+  const L = nfLut(key);
   const target = Math.max(0, Math.min(1, ph)) * L.total;
   let lo = 1, hi = L.n;  // kleinster Index i mit cum[i] >= target
   while (lo < hi) { const m = (lo + hi) >> 1; if (L.cum[m] < target) lo = m + 1; else hi = m; }
@@ -5233,11 +5260,16 @@ function nfArcPos(branch, ph) {
     ang: Math.atan2(L.ys[i] - L.ys[i - 1], L.xs[i] - L.xs[i - 1]) * 180 / Math.PI,
   };
 }
-// Position/Winkel in Download-Richtung; Upload = gespiegelte Phase + 180 Grad.
-function nfPosDown(branch, ph)   { return nfArcPos(branch, ph); }
-function nfAngleDown(branch, ph) { return nfArcPos(branch, ph).ang; }
-function nfPos(branch, ph, up)   { return up ? nfPosDown(branch, 1 - ph) : nfPosDown(branch, ph); }
-function nfAngle(branch, ph, up) { return up ? nfAngleDown(branch, 1 - ph) + 180 : nfAngleDown(branch, ph); }
+// LUT-Key und ob die Phase gespiegelt laeuft (Upload bzw. LAN->Server-Rueckrichtung).
+function nfStreamKey(s) { return s.path === 'loc' ? 'loc' : s.branch; }
+function nfStreamRev(s) { return s.path === 'loc' ? s.dir === 'rev' : s.up; }
+// Position/Winkel; gespiegelte Richtung = gespiegelte Phase + 180 Grad.
+function nfPos(s, ph)   { return nfArcPos(nfStreamKey(s), nfStreamRev(s) ? 1 - ph : ph); }
+function nfAngle(s, ph) {
+  const rev = nfStreamRev(s);
+  const a = nfArcPos(nfStreamKey(s), rev ? 1 - ph : ph).ang;
+  return rev ? a + 180 : a;
+}
 
 let _nfPools = null;  // key -> { defs:[{rect,trail,phase,initialPhase,speedVar,active,ever}], sRate }
 let _nfLastTs = 0;
@@ -5251,7 +5283,7 @@ function nfInitPools() {
       const mk = () => {
         const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         r.setAttribute('class', 'net-pkt');
-        r.setAttribute('fill', s.up ? '#3ddc84' : '#4d8dff');
+        r.setAttribute('fill', s.color || (s.up ? '#3ddc84' : '#4d8dff'));
         r.setAttribute('opacity', '0');
         g.appendChild(r);
         return r;
@@ -5275,7 +5307,7 @@ function nfSetLbl(id, txt) {
   setText(id, txt);
 }
 function nfDrawRect(r, s, ph, shape, isTrail) {
-  const pos = nfPos(s.branch, ph, s.up);
+  const pos = nfPos(s, ph);
   const edge = 0.03; // sanftes Ein-/Ausblenden an den Enden
   let op = 0.9 * Math.min(1, Math.min(ph / edge, (1 - ph) / edge));
   if (isTrail) op *= 0.35;
@@ -5285,7 +5317,7 @@ function nfDrawRect(r, s, ph, shape, isTrail) {
     r.removeAttribute('transform');
   } else {
     w = isTrail ? 5 : 7.5; h = isTrail ? 2 : 3;
-    r.setAttribute('transform', `rotate(${nfAngle(s.branch, ph, s.up).toFixed(1)} ${pos.x.toFixed(2)} ${pos.y.toFixed(2)})`);
+    r.setAttribute('transform', `rotate(${nfAngle(s, ph).toFixed(1)} ${pos.x.toFixed(2)} ${pos.y.toFixed(2)})`);
   }
   r.setAttribute('x', (pos.x - w / 2).toFixed(2));
   r.setAttribute('y', (pos.y - h / 2).toFixed(2));
@@ -5308,14 +5340,23 @@ function updateNetFlow() {
   // Unraid-Anteil = min(NIC, WAN) — klemmt auch den Fall "NIC > WAN"
   // (lokaler Traffic) —, der Rest gehoert dem uebrigen Netzwerk.
   const wanFresh = state._wanRxAt > 0 && (now - state._wanRxAt) < 30000;
+  const localOn = state.netLocalOn;
   let rates;
   if (wanFresh) {
     const srvDl = Math.min(state.dispDown,  state.dispWanDown);
     const srvUl = Math.min(state.dispUpVal, state.dispWanUp);
-    rates = { srvDl, srvUl, lanDl: Math.max(0, state.dispWanDown - srvDl), lanUl: Math.max(0, state.dispWanUp - srvUl) };
+    rates = {
+      srvDl, srvUl,
+      lanDl: Math.max(0, state.dispWanDown - srvDl), lanUl: Math.max(0, state.dispWanUp - srvUl),
+      // Lokaler Rand: NIC-Durchsatz minus WAN-Anteil = Verkehr, der im LAN bleibt.
+      // locUl = Server->LAN (Upload), locDl = LAN->Server (Download).
+      locUl: localOn ? Math.max(0, state.dispUpVal - srvUl) : 0,
+      locDl: localOn ? Math.max(0, state.dispDown  - srvDl) : 0,
+    };
   } else {
-    // Ohne WAN-Daten: Legacy-Verhalten — Unraid-Durchsatz auf der Server-Kurve.
-    rates = { srvDl: state.dispDown, srvUl: state.dispUpVal, lanDl: 0, lanUl: 0 };
+    // Ohne WAN-Daten: Legacy-Verhalten — Unraid-Durchsatz auf der Server-Kurve;
+    // WAN/lokal ist nicht trennbar, der lokale Rand bleibt leer.
+    rates = { srvDl: state.dispDown, srvUl: state.dispUpVal, lanDl: 0, lanUl: 0, locUl: 0, locDl: 0 };
   }
 
   // Wertelabels an den Knoten (laufen auch bei animOn=aus weiter — sind Daten).
@@ -5326,6 +5367,10 @@ function updateNetFlow() {
   nfSetLbl('netFlowSrvUl', '↑ ' + fmt(rates.srvUl));
   nfSetLbl('netFlowLanDl', '↓ ' + fmt(rates.lanDl));
   nfSetLbl('netFlowLanUl', '↑ ' + fmt(rates.lanUl));
+  if (localOn) {
+    nfSetLbl('netFlowLocUl', '↑ ' + fmt(rates.locUl));
+    nfSetLbl('netFlowLocDl', '↓ ' + fmt(rates.locDl));
+  }
 
   // Animationen global aus -> Pakete stilllegen (CSS .no-anim versteckt zusaetzlich).
   if (!state.animOn) {
@@ -5337,9 +5382,18 @@ function updateNetFlow() {
     return;
   }
 
+  // Lokale Linie deaktiviert -> deren Pakete SOFORT ausblenden (nicht auf einer
+  // nun unsichtbaren Linie auslaufen lassen wie bei reinen Ratenaenderungen).
+  if (!localOn) {
+    for (const s of NF_STREAMS) {
+      if (s.path !== 'loc') continue;
+      for (const d of pools[s.key].defs) { d.active = false; nfHide(d.rect); nfHide(d.trail); }
+    }
+  }
+
   // Gemeinsame Tempo-/Dichte-Referenz: der schnellste Fluss. Floor 20 Mbit/s,
   // damit Kleinverkehr (nachts) insgesamt gemaechlich wirkt.
-  const ref = Math.max(20, rates.srvDl, rates.srvUl, rates.lanDl, rates.lanUl);
+  const ref = Math.max(20, rates.srvDl, rates.srvUl, rates.lanDl, rates.lanUl, rates.locUl, rates.locDl);
   const shape = state.netPktShape;
   const trailOn = state.netTrailOn && shape !== 'dot';
 

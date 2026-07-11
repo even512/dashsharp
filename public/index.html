@@ -208,6 +208,13 @@
             <path d="M110,100 C110,150 148,216 175,216" stroke="rgba(94,163,255,0.22)" stroke-width="1.5" fill="none"/>
             <circle cx="110" cy="100" r="2.5" fill="rgba(159,180,184,0.5)"/>
 
+            <!-- Direkter lokaler Rand Server <-> LAN (Verkehr, der das Internet nie beruehrt) -->
+            <g id="netLocGroup">
+              <path d="M45,216 Q110,228 175,216" stroke="rgba(94,163,255,0.22)" stroke-width="1.5" fill="none"/>
+              <text id="netFlowLocUl" x="110" y="204" text-anchor="middle" font-size="10" fill="#3ddc84" font-weight="600">↑ –</text>
+              <text id="netFlowLocDl" x="110" y="214" text-anchor="middle" font-size="10" fill="#4d8dff" font-weight="600">↓ –</text>
+            </g>
+
             <g id="netPkts" filter="url(#netGlow)"></g>
 
             <circle cx="110" cy="20" r="5" class="nf-node" stroke="#22d3ee" stroke-width="1.5" filter="url(#netGlow)"/>
