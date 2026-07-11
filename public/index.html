@@ -842,6 +842,21 @@
                   <input id="secretUnifiLocalUser" placeholder="Lokaler User (read-only)" class="cfg-input" style="width:150px" />
                   <input id="secretUnifiLocalPass" type="password" placeholder="Passwort" class="cfg-input" style="width:124px" />
                 </div>
+                <div style="font:400 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:8px;text-align:right;max-width:280px">
+                  Präziseste WAN-Quelle: liest den Durchsatz direkt vom Gateway per SSH (SSH an der Console aktivieren). <span style="color:#ffb454">Gibt Dash# SSH-Zugriff aufs Gateway</span> – nur im vertrauenswürdigen LAN. Optional.
+                </div>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input id="secretUnifiGwSshHost" placeholder="SSH-Host (leer = aus Console-URL)" class="cfg-input" style="width:190px" />
+                  <input id="secretUnifiGwSshPort" placeholder="22" class="cfg-input" style="width:84px" />
+                </div>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input id="secretUnifiGwSshUser" placeholder="SSH-User (root)" class="cfg-input" style="width:150px" />
+                  <input id="secretUnifiGwSshPass" type="password" placeholder="SSH-Passwort (oder Key)" class="cfg-input" style="width:124px" />
+                </div>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input id="secretUnifiGwWanIface" placeholder="WAN-Interface (leer = auto)" class="cfg-input" style="width:280px" />
+                </div>
+                <textarea id="secretUnifiGwSshKey" placeholder="Privater SSH-Key (optional, statt Passwort)" class="cfg-input" style="width:280px;min-height:50px;resize:vertical;font-size:11px"></textarea>
                 <button onclick="saveSecrets('unifi')" class="cfg-btn">↵ Save</button>
               </div>
             </div>
