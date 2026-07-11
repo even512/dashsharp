@@ -446,6 +446,8 @@ const state = {
   _wanShown: false,                 // ob die WAN-Zeile gerade Werte (statt '–') zeigt
   netChartSeries: 'unraid',         // Chart-Datenquelle: 'unraid' | 'wan' | 'both'
   netFlowOn: true,                  // Spiegel der 'flow'-Option (kein DOM-Read im rAF)
+  netPktShape: 'block',             // Paket-Form der Flow-Animation: 'block' | 'dot'
+  netTrailOn: true,                 // Trail hinter Block-Paketen
   liveOn: true, gridOn: true, animOn: true, glassOn: true, searchOn: true,
   updateMs: 1600, accent: '#5b9dff',
   settingsCategory: 'general',
@@ -3368,15 +3370,12 @@ const WIDGET_OPTIONS = {
       ] },
     { key: 'scaleMax', label: 'Max (Mbit/s)', type: 'number', default: 0 },
     { key: 'iface',    label: 'Interface',    type: 'select', default: '', options: 'ifaces' },
-    { key: 'ispName',  label: 'ISP-Name',     type: 'text', default: 'willy.tel' },
-    { key: 'ispIcon',  label: 'ISP-Icon',     type: 'icon', default: 'willytel', set: 'isp' },
-    { key: 'ispLogo',  label: 'ISP-Logo-URL', type: 'logourl', default: '' },
+    { key: 'packetShape', label: 'Paket-Form', type: 'select', default: 'block',
+      options: [{ v: 'block', l: 'Block' }, { v: 'dot', l: 'Punkt' }] },
+    { key: 'flowTrail', label: 'Paket-Schweif', type: 'toggle', default: true },
+    { key: 'ispName',  label: 'Internet-Name', type: 'text', default: 'willy.tel' },
     { key: 'srvName',  label: 'Server-Name',  type: 'text', default: 'Unraid' },
-    { key: 'srvIcon',  label: 'Server-Icon',  type: 'icon', default: 'unraid', set: 'srv' },
-    { key: 'srvLogo',  label: 'Server-Logo-URL', type: 'logourl', default: '' },
     { key: 'lanName',  label: 'Netzwerk-Name', type: 'text', default: 'Netzwerk' },
-    { key: 'lanIcon',  label: 'Netzwerk-Icon', type: 'icon', default: 'lan', set: 'lan' },
-    { key: 'lanLogo',  label: 'Netzwerk-Logo-URL', type: 'logourl', default: '' },
   ],
   'service-status': [
     { key: 'maxRows', label: 'Max. Einträge', type: 'count', default: 0 },
@@ -4384,15 +4383,6 @@ function _renderTileSettings(widgetId) {
       inp.addEventListener('input', () =>
         _setTileCfg(widgetId, opt.key, inp.value.trim().slice(0, 40)));
       row(opt.label, inp);
-    } else if (opt.type === 'logourl') {
-      const inp = document.createElement('input');
-      inp.className = 'cfg-input';
-      inp.type = 'url';
-      inp.placeholder = 'https://…/logo.svg';
-      inp.value = String(_cfgVal(widgetId, opt.key) || '');
-      inp.addEventListener('input', () =>
-        _setTileCfg(widgetId, opt.key, inp.value.trim().slice(0, 300)));
-      row(opt.label, inp, 'Eigene Logo-URL – überschreibt das gewählte Icon');
     } else if (opt.type === 'select') {
       const sel = document.createElement('select');
       sel.className = 'cfg-input';
@@ -4405,25 +4395,6 @@ function _renderTileSettings(widgetId) {
       }
       sel.addEventListener('change', () => _setTileCfg(widgetId, opt.key, sel.value));
       row(opt.label, sel);
-    } else if (opt.type === 'icon') {
-      const grid = document.createElement('div');
-      grid.className = 'ts-icon-grid';
-      const set = opt.set === 'srv' ? NET_ICON_SRV : opt.set === 'lan' ? NET_ICON_LAN : NET_ICON_ISP;
-      const cur = String(_cfgVal(widgetId, opt.key) || '');
-      for (const ic of set) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'ts-icon-btn' + (ic.id === cur ? ' active' : '');
-        btn.title = ic.label;
-        btn.appendChild(netNodeIcon(ic.id, ''));
-        btn.addEventListener('click', () => {
-          grid.querySelectorAll('.ts-icon-btn').forEach((b) => b.classList.remove('active'));
-          btn.classList.add('active');
-          _setTileCfg(widgetId, opt.key, ic.id);
-        });
-        grid.appendChild(btn);
-      }
-      row(opt.label, grid);
     }
   }
 
@@ -5074,103 +5045,10 @@ function injectTileDecor() {
 }
 
 /* ============================================================
-   Network-Throughput-Kachel: Knoten-Icons, Konfiguration, Backfill,
-   Paket-Animation.
-   Echte Firmen-Logos werden ueber die dashboard-icons-Sammlung (dieselbe Art
-   CDN wie die Quick-Access-Icons) per `slug` REFERENZIERT; das vereinfachte
-   markenfarbene Monogramm dient nur noch als Offline-/404-Fallback. Fuer nicht
-   gelistete Anbieter (z. B. willy.tel) kann je Knoten eine eigene Logo-URL
-   gesetzt werden. Es werden keine Logos ins Repo gebuendelt/nachgezeichnet. */
-const NET_ICON_CDN = 'https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons@main/svg/';
-const NET_ICON_ISP = [
-  { id: 'willytel',   label: 'willy.tel',          color: '#0a86c4', text: 'w' },
-  { id: 'wilhelmtel', label: 'wilhelm.tel',        color: '#0a86c4', text: 'w' },
-  { id: 'telekom',    label: 'Telekom',            color: '#e20074', text: 'T',  slug: 'telekom' },
-  { id: 'vodafone',   label: 'Vodafone',           color: '#e60000', glyph: 'quote', slug: 'vodafone' },
-  { id: 'o2',         label: 'o2',                 color: '#0019a5', text: 'o2', small: true, slug: 'o2' },
-  { id: 'telefonica', label: 'Telefónica',         color: '#0019a5', text: 'Tf', small: true, slug: 'telefonica' },
-  { id: 'einsundeins',label: '1&1',                color: '#1c449b', text: '1&amp;1', small: true },
-  { id: 'congstar',   label: 'congstar',           color: '#e6007e', text: 'c',  slug: 'congstar' },
-  { id: 'dglasfaser', label: 'Deutsche Glasfaser', color: '#6a1b7a', text: 'df' },
-  { id: 'pyur',       label: 'PŸUR',               color: '#00b3a4', text: 'P' },
-  { id: 'ewe',        label: 'EWE',                color: '#d9a400', text: 'EWE', small: true },
-  { id: 'mnet',       label: 'M-net',              color: '#e2001a', text: 'M' },
-  { id: 'netcologne', label: 'NetCologne',         color: '#c8102e', text: 'NC', small: true },
-  { id: 'fritzbox',   label: 'FRITZ!Box',          color: '#c8102e', text: 'Fb', small: true, slug: 'fritzbox' },
-  { id: 'sky',        label: 'Sky',                color: '#0072c9', text: 'sky', small: true, slug: 'sky' },
-  { id: 'globe',      label: 'Internet',           color: '#5b9dff', glyph: 'globe' },
-];
-const NET_ICON_SRV = [
-  { id: 'unraid',   label: 'Unraid',   color: '#f15a2c', glyph: 'stack', slug: 'unraid' },
-  { id: 'synology', label: 'Synology', color: '#8a9096', text: 'S', slug: 'synology' },
-  { id: 'truenas',  label: 'TrueNAS',  color: '#0095d5', text: 'T', slug: 'truenas' },
-  { id: 'proxmox',  label: 'Proxmox',  color: '#e57000', text: 'P', slug: 'proxmox' },
-  { id: 'server',   label: 'Server',   color: '#7f8ea8', glyph: 'server' },
-];
-// Icons fuer den dritten Knoten der Y-Animation (allgemeines Netzwerk).
-const NET_ICON_LAN = [
-  { id: 'lan',     label: 'Netzwerk', color: '#7f8ea8', glyph: 'nodes' },
-  { id: 'wifi',    label: 'WLAN',     color: '#5b9dff', glyph: 'wifi' },
-  { id: 'devices', label: 'Geräte',   color: '#3ddc97', glyph: 'devices' },
-];
-function _netIconDef(id) {
-  return NET_ICON_ISP.find((i) => i.id === id) || NET_ICON_SRV.find((i) => i.id === id) ||
-         NET_ICON_LAN.find((i) => i.id === id) || null;
-}
-function _netIconSlugUrl(id) { const d = _netIconDef(id); return d && d.slug ? NET_ICON_CDN + d.slug + '.svg' : ''; }
-// DOM-Element fuer ein Knoten-Icon: echtes Logo (eigene Logo-URL bevorzugt, sonst
-// CDN-slug) mit onerror-Fallback auf das inline-Monogramm; sonst direkt Monogramm.
-function netNodeIcon(id, logoUrl) {
-  const url = (logoUrl && String(logoUrl).trim()) || _netIconSlugUrl(id);
-  if (url) {
-    const img = document.createElement('img');
-    img.src = url; img.alt = ''; img.loading = 'lazy';
-    img.onerror = () => { const s = document.createElement('span'); s.innerHTML = netIconSvg(id); if (img.parentNode) img.replaceWith(s.firstChild); };
-    return img;
-  }
-  const s = document.createElement('span');
-  s.innerHTML = netIconSvg(id);
-  return s.firstChild;
-}
-function _setNodeIcon(elId, iconId, logoUrl) {
-  const el = $(elId); if (!el) return;
-  el.innerHTML = ''; el.appendChild(netNodeIcon(iconId, logoUrl));
-}
-function netIconSvg(id) {
-  const ic = _netIconDef(id) || { color: '#5b9dff', glyph: 'globe' };
-  let inner;
-  if (ic.glyph === 'globe') {
-    inner = `<circle cx="16" cy="16" r="8" fill="none" stroke="#fff" stroke-width="1.6"/>` +
-            `<path d="M8 16h16M16 8c3.2 3 3.2 13 0 16M16 8c-3.2 3-3.2 13 0 16" fill="none" stroke="#fff" stroke-width="1.3"/>`;
-  } else if (ic.glyph === 'stack') {
-    inner = `<g fill="#fff"><rect x="8" y="10" width="16" height="3" rx="1"/>` +
-            `<rect x="8" y="14.5" width="16" height="3" rx="1"/><rect x="8" y="19" width="16" height="3" rx="1"/></g>`;
-  } else if (ic.glyph === 'server') {
-    inner = `<g fill="none" stroke="#fff" stroke-width="1.6"><rect x="8" y="8" width="16" height="7" rx="1.6"/>` +
-            `<rect x="8" y="17" width="16" height="7" rx="1.6"/></g>` +
-            `<g fill="#fff"><circle cx="11.5" cy="11.5" r="1"/><circle cx="11.5" cy="20.5" r="1"/></g>`;
-  } else if (ic.glyph === 'quote') {
-    inner = `<path fill="#fff" d="M14 21c-2.4 0-4-1.7-4-4.1 0-3 2.3-5.6 5.8-7.3l1.1 1.7c-1.9 1.1-3 2.2-3.3 3.4.3-.1.6-.2 1-.2 1.9 0 3.4 1.4 3.4 3.3S16.4 21 14 21z"/>`;
-  } else if (ic.glyph === 'nodes') {
-    inner = `<g fill="none" stroke="#fff" stroke-width="1.4"><path d="M16 12v4M11.5 20.5l3-3M20.5 20.5l-3-3"/></g>` +
-            `<g fill="#fff"><circle cx="16" cy="10" r="2.4"/><circle cx="10.5" cy="22" r="2.4"/><circle cx="21.5" cy="22" r="2.4"/></g>`;
-  } else if (ic.glyph === 'wifi') {
-    inner = `<g fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round">` +
-            `<path d="M9 14.5c4-3.8 10-3.8 14 0M11.5 17.5c2.6-2.4 6.4-2.4 9 0"/></g>` +
-            `<circle cx="16" cy="21" r="1.7" fill="#fff"/>`;
-  } else if (ic.glyph === 'devices') {
-    inner = `<g fill="none" stroke="#fff" stroke-width="1.5"><rect x="8" y="10" width="12" height="8" rx="1.4"/>` +
-            `<rect x="17" y="15" width="7" height="9" rx="1.4"/></g>` +
-            `<path d="M11 21h6" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>`;
-  } else {
-    const t = ic.text || '?';
-    const fs = ic.small ? 8.5 : (t.replace('&amp;', '&').length > 1 ? 11 : 15);
-    inner = `<text x="16" y="17" fill="#fff" font-family="'Space Grotesk',sans-serif" font-weight="700" ` +
-            `font-size="${fs}" text-anchor="middle" dominant-baseline="middle">${t}</text>`;
-  }
-  return `<svg viewBox="0 0 32 32" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">` +
-         `<rect x="1" y="1" width="30" height="30" rx="8" fill="${ic.color}"/>${inner}</svg>`;
-}
+   Network-Throughput-Kachel: Konfiguration, Backfill, Paket-Animation.
+   Die Knoten der Flow-Animation (Internet/Server/Netzwerk) werden design-pur
+   als beschriftete Glow-Kreise im SVG dargestellt (siehe index.html) – keine
+   Firmen-Logos/Icons mehr; nur die Namen sind konfigurierbar. */
 
 // Liest tile.config der Netz-Kachel und wendet Zeitraum/Skala/Interface/Knoten an.
 function applyNetworkConfig() {
@@ -5194,19 +5072,19 @@ function applyNetworkConfig() {
   // Flow-Toggle spiegeln: data-cfg blendet nur das DOM aus, das Flag spart
   // zusaetzlich die rAF-Arbeit (kein DOM-Read pro Frame noetig).
   state.netFlowOn = _cfgVal(id, 'flow') !== false;
+  // Paket-Stil (Design-Optionen): Block/Dot + Trail.
+  state.netPktShape = String(_cfgVal(id, 'packetShape') || 'block');
+  state.netTrailOn  = _cfgVal(id, 'flowTrail') !== false;
 
   const srvName = String(_cfgVal(id, 'srvName') || 'Unraid');
-  setText('netIspName', String(_cfgVal(id, 'ispName') || 'willy.tel'));
-  setText('netSrvName', srvName);
   setText('netRowSrvName', srvName);
-  setText('netLanName', String(_cfgVal(id, 'lanName') || 'Netzwerk'));
-  _setNodeIcon('netIspIco', String(_cfgVal(id, 'ispIcon') || 'willytel'), _cfgVal(id, 'ispLogo'));
-  _setNodeIcon('netSrvIco', String(_cfgVal(id, 'srvIcon') || 'unraid'),   _cfgVal(id, 'srvLogo'));
-  _setNodeIcon('netLanIco', String(_cfgVal(id, 'lanIcon') || 'lan'),      _cfgVal(id, 'lanLogo'));
+  // Knoten-Beschriftung im Flow-SVG (design-pur: nur Text, keine Icons mehr).
+  setText('netFlowIspLbl', String(_cfgVal(id, 'ispName') || 'willy.tel'));
+  setText('netFlowSrvLbl', srvName);
+  setText('netFlowLanLbl', String(_cfgVal(id, 'lanName') || 'Netzwerk'));
 
   reflectNetControls(rId, sm);
   _graphDirty = true;
-  layoutNetFlowY(); // Diagonalen an die (evtl. geaenderte) Kachelgroesse anpassen
   // Verlauf fuer den gewaehlten Bereich nachladen (auch initial), damit 10m/1h
   // sofort gefuellt sind – nicht bei jedem winzigen Re-Apply mehrfach.
   if (rangeChanged || !state._netBackfilled) { state._netBackfilled = true; backfillNetHistory(range.ms); }
@@ -5267,129 +5145,194 @@ async function backfillNetHistory(ms) {
   } catch (_) { /* Backfill ist optional */ }
 }
 
-/* ---- Paket-Animation (Y-Topologie): rAF-Partikelsystem ----
-   Internet (oben Mitte) -> Unraid (unten links) / Netzwerk (unten rechts);
-   Upload laeuft auf denselben Spuren rueckwaerts. Dargestellt wird NUR der
-   WAN-Verkehr: der Unraid-Anteil wird als min(Unraid-NIC, WAN) geschaetzt,
-   der Rest laeuft auf der Netzwerk-Spur; rein lokaler LAN-Traffic taucht
-   nicht auf. Statt die CSS-animation-duration je Frame zu aendern (das
-   laesst Pakete springen), bewegt JS jedes Paket selbst; das Tempo wird beim
-   Start fixiert und bleibt konstant -> ruhig. Einmal gestartete Pakete laufen
-   IMMER bis zum Ziel; bei ~0 Durchsatz werden nur keine neuen mehr emittiert.
-   Tempo & Dichte skalieren LINEAR mit der Rate relativ zur GEMEINSAMEN
-   Referenz (schnellster Fluss): 1 Gbit Download neben 20 Mbit Upload wirkt
-   damit sichtbar drastisch schneller/dichter — nicht "etwas" schneller wie
-   bei der frueheren log-Skalierung. */
-const NET_PKT_MAX = 22;         // Deckel aktiver Pakete je Fluss
-let _netFlowMeasure = 0;        // Zaehler fuer gelegentliches Neuvermessen der Geometrie
+/* ---- Paket-Animation (Y-Topologie, Look nach dem Claude-Design-Widget) ----
+   Internet (oben Mitte) -> gerader Trunk -> Split-Punkt -> Bezier-Kurven zu
+   Unraid (unten links) und Netzwerk (unten rechts); Upload laeuft rueckwaerts.
+   Dargestellt wird NUR der WAN-Verkehr: der Unraid-Anteil wird als
+   min(Unraid-NIC, WAN) geschaetzt, der Rest laeuft auf der Netzwerk-Kurve.
+   Pakete sind SVG-Rects im skalierenden 220x250-viewBox: Bloecke rotieren zur
+   Pfadtangente (optional mit Trail; alternativ Dots), leichtes Tempo-Jitter
+   je Paket. Bewegungsmodell: feste Pools je Fluss, Phase 0..1 ueber den
+   GESAMTEN Weg (Trunk = 0..0.5, Kurve = 0.5..1); einmal gestartete Pakete
+   laufen IMMER bis zum Ziel, erst dort wird nachgeregelt (weiterlaufen oder
+   stilllegen) -> ruhig, kein Verschwinden auf der Strecke. Tempo & Dichte
+   skalieren LINEAR mit der Rate relativ zur GEMEINSAMEN Referenz (schnellster
+   Fluss): 1 Gbit Download neben 20 Mbit Upload wirkt sichtbar drastisch
+   schneller/dichter — nicht "etwas" schneller wie bei log-Skalierung. */
+const NF_WAN   = { x: 110, y: 20 };
+const NF_SPLIT = { x: 110, y: 84 };
+const NF_END   = { srv: { x: 45,  y: 216 }, lan: { x: 175, y: 216 } };
+const NF_C1    = { srv: { x: 110, y: 150 }, lan: { x: 110, y: 150 } };
+const NF_C2    = { srv: { x: 72,  y: 216 }, lan: { x: 148, y: 216 } };
+const NF_STREAMS = [
+  { key: 'srvDl', branch: 'srv', up: false, slots: 12 },
+  { key: 'lanDl', branch: 'lan', up: false, slots: 12 },
+  { key: 'srvUl', branch: 'srv', up: true,  slots: 8 },
+  { key: 'lanUl', branch: 'lan', up: true,  slots: 8 },
+];
 
-// Diagonal-Spuren an die Kachelgeometrie anpassen: Laenge + Winkel so, dass
-// beide Spuren vom oberen Mittelpunkt zu den unteren Knoten bei 25%/75% der
-// Breite zeigen (dort zentriert die Flexbox auch die Knoten-Icons). Das
-// lokale "unten" (0,1) einer Spur zeigt nach rotate(phi) auf
-// (-sin phi, cos phi) -> phi = -atan2(dx, dy).
-function layoutNetFlowY() {
-  const wrap = $('netLanesY');
-  if (!wrap || !wrap.clientWidth || !wrap.clientHeight) return;
-  const W = wrap.clientWidth, H = wrap.clientHeight;
-  const place = (lane, frac) => {
-    if (!lane) return;
-    const dx = frac * W - W / 2, dy = H;
-    lane.style.height = Math.hypot(dx, dy).toFixed(1) + 'px';
-    lane.style.transform = `rotate(${(-Math.atan2(dx, dy)).toFixed(4)}rad)`;
+function nfLerp(a, b, t) { return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }; }
+function nfBezier(branch, t) {
+  const mt = 1 - t, p0 = NF_SPLIT, c1 = NF_C1[branch], c2 = NF_C2[branch], p3 = NF_END[branch];
+  return {
+    x: mt * mt * mt * p0.x + 3 * mt * mt * t * c1.x + 3 * mt * t * t * c2.x + t * t * t * p3.x,
+    y: mt * mt * mt * p0.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t * t * t * p3.y,
   };
-  place($('netLaneSrv'), 0.25);
-  place($('netLaneLan'), 0.75);
+}
+function nfBezierAngle(branch, t) {
+  const mt = 1 - t, p0 = NF_SPLIT, c1 = NF_C1[branch], c2 = NF_C2[branch], p3 = NF_END[branch];
+  const dx = 3 * mt * mt * (c1.x - p0.x) + 6 * mt * t * (c2.x - c1.x) + 3 * t * t * (p3.x - c2.x);
+  const dy = 3 * mt * mt * (c1.y - p0.y) + 6 * mt * t * (c2.y - c1.y) + 3 * t * t * (p3.y - c2.y);
+  return Math.atan2(dy, dx) * 180 / Math.PI;
+}
+// Position/Winkel in Download-Richtung; Upload = gespiegelte Phase + 180 Grad.
+function nfPosDown(branch, ph)   { return ph < 0.5 ? nfLerp(NF_WAN, NF_SPLIT, ph / 0.5) : nfBezier(branch, (ph - 0.5) / 0.5); }
+function nfAngleDown(branch, ph) { return ph < 0.5 ? 90 : nfBezierAngle(branch, (ph - 0.5) / 0.5); }
+function nfPos(branch, ph, up)   { return up ? nfPosDown(branch, 1 - ph) : nfPosDown(branch, ph); }
+function nfAngle(branch, ph, up) { return up ? nfAngleDown(branch, 1 - ph) + 180 : nfAngleDown(branch, ph); }
+
+let _nfPools = null;  // key -> { defs:[{rect,trail,phase,initialPhase,speedVar,active,ever}], sRate }
+let _nfLastTs = 0;
+const _nfLbl = {};    // Wertelabel-Cache (nur bei Aenderung ins DOM schreiben)
+function nfInitPools() {
+  const g = $('netPkts'); if (!g) return null;
+  const pools = {};
+  for (const s of NF_STREAMS) {
+    const defs = [];
+    for (let i = 0; i < s.slots; i++) {
+      const mk = () => {
+        const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        r.setAttribute('class', 'net-pkt');
+        r.setAttribute('fill', s.up ? '#3ddc84' : '#4d8dff');
+        r.setAttribute('opacity', '0');
+        g.appendChild(r);
+        return r;
+      };
+      defs.push({
+        rect: mk(), trail: mk(),
+        // Erstaktivierung gestaffelt ueber den Weg verteilen (kein Klumpen)
+        initialPhase: (i + Math.random() * 0.6) / s.slots,
+        phase: 0, speedVar: 0.82 + Math.random() * 0.36,
+        active: false, ever: false,
+      });
+    }
+    pools[s.key] = { defs, sRate: 0 };
+  }
+  return pools;
+}
+function nfHide(r) { if (r.getAttribute('opacity') !== '0') r.setAttribute('opacity', '0'); }
+function nfSetLbl(id, txt) {
+  if (_nfLbl[id] === txt) return;
+  _nfLbl[id] = txt;
+  setText(id, txt);
+}
+function nfDrawRect(r, s, ph, shape, isTrail) {
+  const pos = nfPos(s.branch, ph, s.up);
+  const edge = 0.03; // sanftes Ein-/Ausblenden an den Enden
+  let op = 0.9 * Math.min(1, Math.min(ph / edge, (1 - ph) / edge));
+  if (isTrail) op *= 0.35;
+  let w, h;
+  if (shape === 'dot') {
+    w = isTrail ? 3 : 4; h = w;
+    r.removeAttribute('transform');
+  } else {
+    w = isTrail ? 5 : 7.5; h = isTrail ? 2 : 3;
+    r.setAttribute('transform', `rotate(${nfAngle(s.branch, ph, s.up).toFixed(1)} ${pos.x.toFixed(2)} ${pos.y.toFixed(2)})`);
+  }
+  r.setAttribute('x', (pos.x - w / 2).toFixed(2));
+  r.setAttribute('y', (pos.y - h / 2).toFixed(2));
+  r.setAttribute('width', w);
+  r.setAttribute('height', h);
+  r.setAttribute('rx', h / 2);
+  r.setAttribute('opacity', op.toFixed(2));
 }
 
 function updateNetFlow() {
   if (!state.netFlowOn) return; // Kachel-Option 'flow' aus -> keine rAF-Arbeit
+  const pools = _nfPools || (_nfPools = nfInitPools());
+  if (!pools) return;
   const now = performance.now();
-  const remeasure = (_netFlowMeasure++ % 20) === 0; // ~alle 20 Frames Geometrie neu lesen
-  if (remeasure) layoutNetFlowY();
+  let dt = (now - _nfLastTs) / 1000; _nfLastTs = now;
+  if (dt <= 0) return;
+  if (dt > 0.05) dt = 0.05; // Tab-Wechsel/Ruckler abfangen
 
   // Aufteilung des WAN-Verkehrs auf die beiden Ziele (je Richtung):
   // Unraid-Anteil = min(NIC, WAN) — klemmt auch den Fall "NIC > WAN"
   // (lokaler Traffic) —, der Rest gehoert dem uebrigen Netzwerk.
   const wanFresh = state._wanRxAt > 0 && (now - state._wanRxAt) < 30000;
-  let srvDl, srvUl, lanDl, lanUl;
+  let rates;
   if (wanFresh) {
-    srvDl = Math.min(state.dispDown,  state.dispWanDown);
-    srvUl = Math.min(state.dispUpVal, state.dispWanUp);
-    lanDl = Math.max(0, state.dispWanDown - srvDl);
-    lanUl = Math.max(0, state.dispWanUp   - srvUl);
+    const srvDl = Math.min(state.dispDown,  state.dispWanDown);
+    const srvUl = Math.min(state.dispUpVal, state.dispWanUp);
+    rates = { srvDl, srvUl, lanDl: Math.max(0, state.dispWanDown - srvDl), lanUl: Math.max(0, state.dispWanUp - srvUl) };
   } else {
-    // Ohne WAN-Daten: Legacy-Verhalten — Unraid-Durchsatz auf der Server-Spur.
-    srvDl = state.dispDown; srvUl = state.dispUpVal; lanDl = 0; lanUl = 0;
+    // Ohne WAN-Daten: Legacy-Verhalten — Unraid-Durchsatz auf der Server-Kurve.
+    rates = { srvDl: state.dispDown, srvUl: state.dispUpVal, lanDl: 0, lanUl: 0 };
+  }
+
+  // Wertelabels an den Knoten (laufen auch bei animOn=aus weiter — sind Daten).
+  const fmt = (v) => Math.round(v) + ' Mb/s';
+  nfSetLbl('netFlowWanDl', '↓ ' + fmt(rates.srvDl + rates.lanDl));
+  nfSetLbl('netFlowWanUl', '↑ ' + fmt(rates.srvUl + rates.lanUl));
+  nfSetLbl('netFlowSrvDl', '↓ ' + fmt(rates.srvDl));
+  nfSetLbl('netFlowSrvUl', '↑ ' + fmt(rates.srvUl));
+  nfSetLbl('netFlowLanDl', '↓ ' + fmt(rates.lanDl));
+  nfSetLbl('netFlowLanUl', '↑ ' + fmt(rates.lanUl));
+
+  // Animationen global aus -> Pakete stilllegen (CSS .no-anim versteckt zusaetzlich).
+  if (!state.animOn) {
+    for (const s of NF_STREAMS) {
+      for (const d of pools[s.key].defs) {
+        if (d.active) { d.active = false; nfHide(d.rect); nfHide(d.trail); }
+      }
+    }
+    return;
   }
 
   // Gemeinsame Tempo-/Dichte-Referenz: der schnellste Fluss. Floor 20 Mbit/s,
   // damit Kleinverkehr (nachts) insgesamt gemaechlich wirkt.
-  const ref = Math.max(20, srvDl, srvUl, lanDl, lanUl);
+  const ref = Math.max(20, rates.srvDl, rates.srvUl, rates.lanDl, rates.lanUl);
+  const shape = state.netPktShape;
+  const trailOn = state.netTrailOn && shape !== 'dot';
 
-  const laneSrv = $('netLaneSrv'), laneLan = $('netLaneLan');
-  stepNetLane(laneSrv, 'dl', srvDl, ref, now, +1, remeasure);
-  stepNetLane(laneSrv, 'ul', srvUl, ref, now, -1, remeasure);
-  stepNetLane(laneLan, 'dl', lanDl, ref, now, +1, remeasure);
-  stepNetLane(laneLan, 'ul', lanUl, ref, now, -1, remeasure);
-}
-function stepNetLane(lane, key, mbit, ref, now, dir, remeasure) {
-  if (!lane) return;
-  const flows = lane._flows || (lane._flows = {});
-  const f = flows[key] || (flows[key] = { pkts: [], pool: [], sRate: 0, emitAcc: 0, lastTs: now, h: 0 });
+  for (const s of NF_STREAMS) {
+    const pool = pools[s.key];
+    // Rate glaetten (EMA, tau ~0.8s) -> ruhige Reaktion.
+    pool.sRate += ((rates[s.key] || 0) - pool.sRate) * (1 - Math.exp(-dt / 0.8));
+    const rate = pool.sRate;
 
-  // Animationen aus -> alles raeumen und nichts bewegen.
-  if (!state.animOn) {
-    if (f.pkts.length) { for (const p of f.pkts) p.node.style.opacity = '0'; f.pool.push(...f.pkts.map((p) => p.node)); f.pkts.length = 0; }
-    return;
-  }
+    // Tempo & Dichte LINEAR zur Rate relativ zur gemeinsamen Referenz —
+    // rate/ref statt log: 20 vs. 1000 Mbit sind 2% vs. 100%, nicht fast gleich.
+    const ratio = Math.min(1, rate / ref);
+    const speed = 0.10 + 0.55 * ratio;                                   // Phase/s
+    const desired = rate > 0.05 ? Math.max(1, Math.round(s.slots * ratio)) : 0;
 
-  let dt = (now - f.lastTs) / 1000; f.lastTs = now;
-  if (dt <= 0) return;
-  if (dt > 0.1) dt = 0.1; // Tab-Wechsel/Ruckler abfangen
+    let active = 0;
+    for (const d of pool.defs) if (d.active) active++;
 
-  if (remeasure || !f.h) { const h = lane.clientHeight; if (h) f.h = h; }
-  const H = f.h || 60;
-
-  // Rate glaetten (EMA, tau ~0.8s) -> ruhige Reaktion.
-  f.sRate += ((mbit || 0) - f.sRate) * (1 - Math.exp(-dt / 0.8));
-  const rate = f.sRate;
-
-  // Tempo & Dichte LINEAR zur Rate relativ zur gemeinsamen Referenz —
-  // rate/ref statt log: 20 vs. 1000 Mbit sind 2% vs. 100%, nicht fast gleich.
-  const ratio = Math.min(1, rate / Math.max(1, ref));
-  const pxSpeed    = (0.10 + 0.80 * ratio) * H;              // px/s; Sockel: nie stehenbleiben
-  const emitPerSec = rate > 0.05 ? (0.5 + 9.5 * ratio) : 0;  // Pakete/s: Rinnsal .. dichter Strom
-
-  // Bestehende Pakete bewegen; erst AM ZIEL recyceln.
-  for (let i = f.pkts.length - 1; i >= 0; i--) {
-    const p = f.pkts[i];
-    p.pos += p.speed * dt;
-    if (p.pos >= H) { p.node.style.opacity = '0'; f.pool.push(p.node); f.pkts.splice(i, 1); continue; }
-    const y = dir > 0 ? p.pos : (H - p.pos);
-    p.node.style.transform = `translate3d(0,${y.toFixed(1)}px,0)`;
-    const edge = p.pos < (H - p.pos) ? p.pos : (H - p.pos); // sanftes Ein-/Ausblenden an den Enden
-    p.node.style.opacity = (edge < 9 ? edge / 9 : 1).toFixed(2);
-  }
-
-  // Neue Pakete emittieren (nur bei Traffic).
-  if (emitPerSec > 0 && H > 0) {
-    f.emitAcc += emitPerSec * dt;
-    let guard = 0;
-    while (f.emitAcc >= 1 && f.pkts.length < NET_PKT_MAX && guard++ < 6) {
-      f.emitAcc -= 1;
-      let node = f.pool.pop();
-      if (!node) {
-        node = document.createElement('span');
-        node.className = 'net-pkt ' + (dir > 0 ? 'net-pkt-dl' : 'net-pkt-ul');
-        lane.appendChild(node);
+    // Aktive Pakete weiterbewegen; ERST AM ZIEL weiterlaufen lassen oder
+    // stilllegen (nie mitten auf der Strecke entfernen).
+    for (const d of pool.defs) {
+      if (!d.active) { nfHide(d.rect); nfHide(d.trail); continue; }
+      let p = d.phase + dt * speed * d.speedVar;
+      if (p >= 1) {
+        if (active > desired) { d.active = false; active--; nfHide(d.rect); nfHide(d.trail); continue; }
+        p %= 1;
       }
-      node.style.opacity = '0';
-      node.style.transform = dir > 0 ? 'translate3d(0,0,0)' : `translate3d(0,${H}px,0)`;
-      f.pkts.push({ node, pos: 0, speed: pxSpeed });
+      d.phase = p;
+      nfDrawRect(d.rect, s, p, shape, false);
+      if (trailOn) nfDrawRect(d.trail, s, (p - 0.025 + 1) % 1, shape, true);
+      else nfHide(d.trail);
     }
-  } else {
-    f.emitAcc = 0;
+
+    // Fehlende Pakete aus Idle-Slots aktivieren.
+    if (active < desired) {
+      let need = desired - active;
+      for (const d of pool.defs) {
+        if (need <= 0) break;
+        if (!d.active) { d.active = true; d.phase = d.ever ? 0 : d.initialPhase; d.ever = true; need--; }
+      }
+    }
   }
 }
 

@@ -149,41 +149,20 @@ select { -webkit-appearance: none; appearance: none; }
 @keyframes tdPing  { 0% { transform: scale(0.55); opacity: 0; } 30% { opacity: 1; } 100% { transform: scale(1.15); opacity: 0; } }
 @keyframes tdBlink { 0%,100% { opacity: 0.25; } 50% { opacity: 1; } }
 
-/* ── Network-Throughput: Y-Paket-Topologie (Internet oben, Unraid unten links,
-   Netzwerk unten rechts) + On-Tile-Controls ──
-   Zwei diagonale Spuren vom Internet-Knoten zu den beiden Zielen; jede Spur
-   traegt Gegenverkehr: blaue Pakete laufen abwaerts (Download), gruene
-   aufwaerts (Upload). Die Diagonale entsteht rein per rotate() auf der Spur
-   (JS setzt Laenge + Winkel in layoutNetFlowY); die Pakete bewegt weiterhin
-   das rAF-Partikelsystem 1-dimensional entlang der Spurachse, transform-only.
-   Tempo & Dichte skalieren LINEAR mit der Rate (gemeinsame Referenz aller
-   Spuren), jedes Paket laeuft mit beim Spawn fixiertem Tempo bis zum Ziel. */
+/* ── Network-Throughput: Y-Paket-Topologie nach dem Claude-Design-Widget ──
+   Ein skalierendes SVG (viewBox 220x250): WAN-Knoten oben, gerader Trunk zum
+   Split-Punkt, von dort zwei Bezier-Kurven zu Server (links) und Netzwerk
+   (rechts) - die Leitbahnen sind als dezente Strokes sichtbar. Pakete sind
+   SVG-Rects (Block rotiert zur Pfadtangente, optional mit Trail; oder Dot),
+   Download blau abwaerts, Upload gruen rueckwaerts, mit Glow-Filter auf dem
+   gemeinsamen Paket-Container. Bewegung: rAF-Loop-Modell mit festen Pools
+   (Pakete laufen immer bis zum Ziel, dort wird nachgeregelt); Tempo & Dichte
+   skalieren LINEAR mit der Rate (gemeinsame Referenz aller Fluesse). */
 .net-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.net-flow { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 148px; flex-shrink: 0; }
-.net-node { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 100%; flex-shrink: 0; }
-.net-node-ico { width: 32px; height: 32px; display: block; }
-.net-node-ico img, .net-node-ico svg { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: 7px; }
-.net-node-name {
-  font: 600 9px 'JetBrains Mono', monospace; color: var(--text-3);
-  letter-spacing: .02em; max-width: 90px; text-align: center;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.net-lanes-y { position: relative; flex: 1 1 auto; min-height: 54px; width: 100%; }
-.net-lane-diag {
-  position: absolute; top: 0; left: 50%; width: 14px; margin-left: -7px;
-  transform-origin: 50% 0; /* Laenge (height) + rotate() setzt layoutNetFlowY() */
-  border-radius: 7px; overflow: hidden;
-  background: color-mix(in srgb, var(--text-5) 14%, transparent);
-}
-.net-nodes-bottom { display: flex; width: 100%; flex-shrink: 0; }
-.net-nodes-bottom .net-node { flex: 1 1 0; min-width: 0; }
-.net-pkt {
-  position: absolute; top: 0; width: 6px; height: 6px;
-  margin-left: -3px; border-radius: 2px; opacity: 0; will-change: transform;
-}
-/* Gegenverkehr in einer Spur: Download links, Upload rechts. */
-.net-pkt-dl { left: 35%; background: #5b9dff; box-shadow: 0 0 5px rgba(91,157,255,.8); }
-.net-pkt-ul { left: 65%; background: #3ddc97; box-shadow: 0 0 5px rgba(61,220,151,.7); }
+.net-flow { width: 190px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.net-flow svg { display: block; width: 100%; height: 100%; }
+.net-flow text { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+.nf-node { fill: var(--bg-card-end, #0a0f14); }
 /* Bei abgeschalteten Animationen keine Pakete zeigen. */
 .no-anim .net-pkt { display: none; }
 
