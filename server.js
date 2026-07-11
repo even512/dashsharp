@@ -630,7 +630,7 @@ function startNetSampler() {
    schnell solange SSE-Clients zuschauen, sparsam im Leerlauf (History bleibt
    warm); bei Fehlern exponentielles Backoff (schont das api.ui.com-Limit).
    ============================================================ */
-const WAN_SAMPLE_MS = clampN(parseInt(process.env.WAN_SAMPLE_MS || '3000', 10) || 3000, 2000, 60000);
+const WAN_SAMPLE_MS = clampN(parseInt(process.env.WAN_SAMPLE_MS || '1000', 10) || 1000, 500, 60000);
 const WAN_IDLE_MS   = clampN(parseInt(process.env.WAN_IDLE_MS   || '15000', 10) || 15000, WAN_SAMPLE_MS, 120000);
 
 const wanState = {
@@ -665,7 +665,10 @@ async function sampleWanOnce() {
 function scheduleWanNext() {
   if (!wanState.running) return;
   const base = sseClients.size ? WAN_SAMPLE_MS : WAN_IDLE_MS;
-  const delay = Math.min(60000, base * 2 ** Math.min(4, wanState.failStreak));
+  // Erst ab dem 2. aufeinanderfolgenden Fehler backen (ein transienter Cloud-
+  // Haenger soll die Kachel nicht stallen), Deckel bei 15 s statt 60 s.
+  const steps = Math.min(4, Math.max(0, wanState.failStreak - 1));
+  const delay = Math.min(15000, base * 2 ** steps);
   clearTimeout(wanState.timer);
   wanState.timer = setTimeout(sampleWanOnce, delay);
 }
