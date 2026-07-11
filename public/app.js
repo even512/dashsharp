@@ -733,8 +733,8 @@ function graphFrame() {
     setText('netDown', fmtNet(state.dispDown));
     setText('netUp', fmtNet(state.dispUpVal));
 
-    // WAN-Zeile: langsameres Easing (Samples nur ~alle 3 s -> Wert gleitet dazwischen).
-    const kw = anim ? 0.05 : 1;
+    // WAN-Zeile: Easing wie die LAN-Zeile (Samples jetzt ~alle 1 s).
+    const kw = anim ? 0.12 : 1;
     state.dispWanDown += (state.wanDown - state.dispWanDown) * kw;
     state.dispWanUp   += (state.wanUp   - state.dispWanUp)   * kw;
     if (Math.abs(state.wanDown - state.dispWanDown) < 0.04) state.dispWanDown = state.wanDown;
