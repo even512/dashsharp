@@ -2113,26 +2113,67 @@ function setPlexStatus(text, color) {
    whole tile down via innerHTML every 5s poll — recreating the poster
    <img>s forced image re-decodes and a layout pass, a periodic main-thread
    hitch that dropped animation frames. */
-const PLEX_POSTER_PH_CSS = 'width:52px;height:76px;border-radius:7px;flex-shrink:0;background:repeating-linear-gradient(135deg,rgba(255,138,76,0.18),rgba(255,138,76,0.18) 6px,rgba(255,138,76,0.08) 6px,rgba(255,138,76,0.08) 12px);border:1px solid rgba(255,138,76,0.22);display:flex;align-items:center;justify-content:center;font:600 7px \'JetBrains Mono\',monospace;color:#ff8a4c;text-align:center';
+const PLEX_POSTER_PH_CSS = 'border-radius:7px;flex-shrink:0;background:repeating-linear-gradient(135deg,rgba(255,138,76,0.18),rgba(255,138,76,0.18) 6px,rgba(255,138,76,0.08) 6px,rgba(255,138,76,0.08) 12px);border:1px solid rgba(255,138,76,0.22);display:flex;align-items:center;justify-content:center;font:600 7px \'JetBrains Mono\',monospace;color:#ff8a4c;text-align:center';
 
-function plexPosterEl(thumb) {
+function plexPosterEl(thumb, w = 52, h = 76) {
+  const dim = `width:${w}px;height:${h}px;`;
   if (thumb) {
     const img = document.createElement('img');
     img.src = thumb;
     img.alt = '';
-    img.style.cssText = 'width:52px;height:76px;border-radius:7px;object-fit:cover;flex-shrink:0;background:rgba(255,138,76,0.1)';
+    img.style.cssText = `${dim}border-radius:7px;object-fit:cover;flex-shrink:0;background:rgba(255,138,76,0.1)`;
     img.onerror = function () {
       const ph = document.createElement('div');
-      ph.style.cssText = PLEX_POSTER_PH_CSS;
+      ph.style.cssText = dim + PLEX_POSTER_PH_CSS;
       ph.textContent = 'POSTER';
       this.replaceWith(ph);
     };
     return img;
   }
   const ph = document.createElement('div');
-  ph.style.cssText = PLEX_POSTER_PH_CSS;
+  ph.style.cssText = dim + PLEX_POSTER_PH_CSS;
   ph.textContent = 'POSTER';
   return ph;
+}
+
+/* Zuletzt hinzugefügte Titel als horizontale Poster-Reihe.
+   Wird nur neu aufgebaut, wenn sich die Menge ändert (Signatur der ratingKeys),
+   damit die <img>-Poster nicht bei jedem 5s-Poll neu geladen werden. */
+function renderPlexRecent(container, recent) {
+  if (!container) return;
+  const sig = recent.map((r) => r.key).join(',');
+  if (container._recentSig === sig) return;
+  container._recentSig = sig;
+
+  container.replaceChildren();
+  if (!recent.length) return;
+
+  const label = document.createElement('div');
+  label.style.cssText = "font:600 10px/1 'JetBrains Mono',monospace;letter-spacing:0.12em;color:var(--text-3);text-transform:uppercase;margin-bottom:10px";
+  label.textContent = 'Zuletzt hinzugefügt';
+  container.appendChild(label);
+
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:10px;margin-bottom:18px;overflow-x:auto;padding-bottom:2px';
+
+  recent.forEach((item) => {
+    const cell = document.createElement('div');
+    cell.style.cssText = 'flex-shrink:0;width:60px;display:flex;flex-direction:column;gap:5px';
+
+    const poster = plexPosterEl(item.thumb, 60, 90);
+    poster.classList.add('plex-poster'); // respektiert den Poster-Toggle (cfg-hide-posters)
+    cell.appendChild(poster);
+
+    const title = document.createElement('div');
+    title.style.cssText = "font:600 10px/1.3 'JetBrains Mono',monospace;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+    title.textContent = item.title;
+    title.title = item.year ? `${item.title} (${item.year})` : item.title;
+    cell.appendChild(title);
+
+    row.appendChild(cell);
+  });
+
+  container.appendChild(row);
 }
 
 function createPlexCard(s) {
@@ -2300,6 +2341,8 @@ function renderPlex(d) {
     `${fmtNum(lib.movies)} Movies · ${fmtNum(lib.shows)} Shows · ${fmtNum(lib.episodes)} Eps`
   );
   setPlexStatus('connected', PLEX_COLOR);
+
+  renderPlexRecent($('plexRecent'), d.recent || []);
 
   const container = $('plexSessions');
   if (!container) return;

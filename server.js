@@ -527,6 +527,7 @@ const cache = {
   adguard:  { ts: 0, data: null },
   plexLib:  { ts: 0, data: null },
   plexSess: { ts: 0, data: null },
+  plexRecent: { ts: 0, data: null },
   status:   { ts: 0, data: null },
   weather:  { ts: 0, data: null },
   unifi:    { ts: 0, data: null },
@@ -544,8 +545,9 @@ const GLANCES_TTL   = 500;    // ms – Glances-Metriken hoechstens 2x/s abrufen
                               // sonst bekommen Clients periodisch identische Samples zurueck
 const DOCKER_TTL    = 8000;   // ms – Container-Liste aendert sich selten
 const ADGUARD_TTL   = 30000;  // ms – aggregierte Stats, aendern sich langsam
-const PLEX_LIB_TTL  = 300000; // ms – Bibliothekszahlen (5 min)
-const PLEX_SESS_TTL = 4000;   // ms – aktive Sessions (Frontend pollt alle 5s)
+const PLEX_LIB_TTL    = 300000; // ms – Bibliothekszahlen (5 min)
+const PLEX_SESS_TTL   = 4000;   // ms – aktive Sessions (Frontend pollt alle 5s)
+const PLEX_RECENT_TTL = 300000; // ms – zuletzt hinzugefügte Titel (5 min)
 const STATUS_TTL    = 30000;  // ms – Dienste-Verfügbarkeit (30 s)
 const WEATHER_TTL   = 600000; // ms – Wetterdaten (10 min)
 const UNIFI_TTL     = 10000;  // ms – UniFi-Netzwerkdaten (10 s)
@@ -1589,6 +1591,19 @@ function normSessions(metadata) {
   });
 }
 
+// Zuletzt hinzugefügte Titel (Filme/Serien) auf ein schlankes Poster-Objekt reduzieren.
+function normRecent(metadata) {
+  if (!Array.isArray(metadata)) return [];
+  return metadata.map((m) => ({
+    key:     m.ratingKey,
+    type:    m.type,                 // 'movie' | 'show'
+    title:   m.title || '?',
+    year:    m.year || null,
+    addedAt: m.addedAt || 0,
+    thumb:   m.thumb ? `/api/plex/thumb?path=${encodeURIComponent(m.thumb)}` : null,
+  }));
+}
+
 app.get('/api/plex', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   const { url, token } = plexCfg();
@@ -1648,7 +1663,39 @@ app.get('/api/plex', async (req, res) => {
     }
   }
 
-  res.json({ ok: true, library, sessions });
+  // Zuletzt hinzugefügte Titel – Filme (type=1) und Serien (type=2) gemischt,
+  // nach addedAt absteigend, Top 5. Lange TTL (ändert sich selten).
+  let recent = cache.plexRecent.data || [];
+  if (!cache.plexRecent.data || Date.now() - cache.plexRecent.ts >= PLEX_RECENT_TTL) {
+    try {
+      const secs = await pFetch(url, '/library/sections', token);
+      const dirs = ((secs.MediaContainer || {}).Directory) || [];
+      const movieDirs = dirs.filter((d) => d.type === 'movie');
+      const showDirs  = dirs.filter((d) => d.type === 'show');
+
+      // type=2 liefert bei Serien-Bibliotheken die Serie (Poster + addedAt),
+      // nicht einzelne Episoden. X-Plex-Container-Size begrenzt auf 5 pro Sektion.
+      const recentOf = (dir, type) =>
+        pFetch(url, `/library/sections/${dir.key}/all?type=${type}&sort=addedAt:desc&X-Plex-Container-Start=0&X-Plex-Container-Size=5`, token)
+          .then((r) => ((r.MediaContainer || {}).Metadata) || [])
+          .catch(() => []);
+
+      const chunks = await Promise.all([
+        ...movieDirs.map((d) => recentOf(d, 1)),
+        ...showDirs.map((d)  => recentOf(d, 2)),
+      ]);
+
+      recent = normRecent(chunks.flat())
+        .sort((a, b) => b.addedAt - a.addedAt)
+        .slice(0, 5);
+      cache.plexRecent = { ts: Date.now(), data: recent };
+    } catch (err) {
+      console.error('Plex Recently Added fehlgeschlagen:', err.message);
+      recent = cache.plexRecent.data || [];
+    }
+  }
+
+  res.json({ ok: true, library, sessions, recent });
 });
 
 // Poster-Proxy: Plex-Token bleibt serverseitig.
