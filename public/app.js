@@ -4587,6 +4587,12 @@ async function loadSecrets() {
     set('secretUnifiLocalUrl',  d.UNIFI_LOCAL_URL);
     set('secretUnifiLocalUser', d.UNIFI_LOCAL_USER);
     set('secretUnifiLocalPass', d.UNIFI_LOCAL_PASS);
+    set('secretUnifiGwSshHost', d.UNIFI_GW_SSH_HOST);
+    set('secretUnifiGwSshPort', d.UNIFI_GW_SSH_PORT);
+    set('secretUnifiGwSshUser', d.UNIFI_GW_SSH_USER);
+    set('secretUnifiGwSshPass', d.UNIFI_GW_SSH_PASSWORD);
+    set('secretUnifiGwSshKey',  d.UNIFI_GW_SSH_KEY);
+    set('secretUnifiGwWanIface', d.UNIFI_GW_WAN_IFACE);
     set('secretNextcloudUrl',  d.NEXTCLOUD_URL);
     set('secretNextcloudUser', d.NEXTCLOUD_USER);
     set('secretNextcloudPass', d.NEXTCLOUD_PASS);
@@ -4618,6 +4624,9 @@ async function saveSecrets(card) {
     body = {
       UNIFI_API_KEY: val('secretUnifiApiKey'), UNIFI_HOST_ID: val('secretUnifiHostId'), UNIFI_CAMERA_ID: val('secretUnifiCamId'),
       UNIFI_LOCAL_URL: val('secretUnifiLocalUrl'), UNIFI_LOCAL_USER: val('secretUnifiLocalUser'), UNIFI_LOCAL_PASS: val('secretUnifiLocalPass'),
+      UNIFI_GW_SSH_HOST: val('secretUnifiGwSshHost'), UNIFI_GW_SSH_PORT: val('secretUnifiGwSshPort'),
+      UNIFI_GW_SSH_USER: val('secretUnifiGwSshUser'), UNIFI_GW_SSH_PASSWORD: val('secretUnifiGwSshPass'),
+      UNIFI_GW_SSH_KEY: val('secretUnifiGwSshKey'), UNIFI_GW_WAN_IFACE: val('secretUnifiGwWanIface'),
     };
   } else if (card === 'nextcloud') {
     body = { NEXTCLOUD_URL: val('secretNextcloudUrl'), NEXTCLOUD_USER: val('secretNextcloudUser'), NEXTCLOUD_PASS: val('secretNextcloudPass'), NEXTCLOUD_SHARE_PATH: val('secretNextcloudPath') };
