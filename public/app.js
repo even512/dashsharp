@@ -430,9 +430,9 @@ const state = {
   netMaxDisp: 10, lastSampleTs: 0, glancesTs: null,
   // Network-Throughput-Kachel: anpassbarer Zeitraum & Skala
   netRangeMs: 60000,        // sichtbares Zeitfenster (10s/1m/10m/1h)
-  netScaleMode: 'auto',     // 'auto' | 'line' | 'fixed'
+  netScaleMode: 'auto',     // 'auto' | 'fixed'
   netScaleMax: 100,         // fester Max-Wert (Mbit/s) wenn netScaleMode='fixed'
-  netLineSpeed: 0,          // Link-Speed (Mbit/s) fuer netScaleMode='line'
+  netLineSpeed: 0,          // Link-Speed (Mbit/s), vom Backend gemeldet
   netIfacePref: '',         // gewaehltes Interface ('' = automatisch)
   netIfaces: [],            // zuletzt gemeldete Interface-Liste (fuer Dropdown)
   netSource: null,          // 'ssh' | 'glances'
@@ -626,7 +626,6 @@ function maxInArr(arr) { let m = 0; for (let i = 0; i < arr.length; i++) if (arr
 // alle aktuell GEZEICHNETEN Serien (Unraid und/oder WAN).
 function netScaleTarget(peak) {
   if (state.netScaleMode === 'fixed' && state.netScaleMax > 0) return state.netScaleMax;
-  if (state.netScaleMode === 'line'  && state.netLineSpeed > 0) return state.netLineSpeed;
   return Math.max(10, peak * 1.15); // auto
 }
 function sparkPoints(arr, w, h, max, pad, now, windowMs) {
@@ -705,7 +704,7 @@ function graphFrame() {
       const ulArr  = wantUnraid && state.upHist.length  ? netDrawArr(state.upHist,    now, netWin, NET_DRAW_POINTS) : [];
       const wdlArr = wantWan ? netDrawArr(state.wanHist,   now, netWin, NET_DRAW_POINTS) : [];
       const wulArr = wantWan ? netDrawArr(state.wanUpHist, now, netWin, NET_DRAW_POINTS) : [];
-      // Skala: auto (geglaettet) / fest / Leitung — Peak ueber alle gezeichneten Serien
+      // Skala: auto (geglaettet) / fest — Peak ueber alle gezeichneten Serien
       const peak = Math.max(maxInArr(dlArr), maxInArr(ulArr), maxInArr(wdlArr), maxInArr(wulArr));
       const targetMax = netScaleTarget(peak);
       const ease = state.netScaleMode === 'auto' ? (anim ? 0.08 : 1) : 1;
@@ -3425,27 +3424,37 @@ const WIDGET_OPTIONS = {
     { key: 'chart', label: 'Verlaufs-Chart',                type: 'toggle', default: true },
   ],
   'network-throughput': [
-    { key: 'chart', label: 'Verlaufs-Chart',   type: 'toggle', default: true },
-    { key: 'chartSeries', label: 'Chart-Datenquelle', type: 'select', default: 'unraid',
+    // Gruppe: Animierte Grafik (Flow-SVG rechts)
+    { key: 'flow',  label: 'Animierte Grafik', type: 'toggle', default: true, group: 'Animierte Grafik' },
+    { key: 'flowSize', label: 'Größe', type: 'select', default: 'm', group: 'Animierte Grafik',
+      options: [{ v: 's', l: 'Klein' }, { v: 'm', l: 'Mittel' }, { v: 'l', l: 'Groß' }] },
+    { key: 'packetShape', label: 'Paket-Form', type: 'select', default: 'block', group: 'Animierte Grafik',
+      options: [{ v: 'block', l: 'Block' }, { v: 'dot', l: 'Punkt' }] },
+    { key: 'flowTrail', label: 'Paket-Schweif', type: 'toggle', default: true, group: 'Animierte Grafik' },
+    { key: 'localFlow', label: 'Lokaler Server↔LAN-Verkehr', type: 'toggle', default: true, group: 'Animierte Grafik' },
+    { key: 'flowLabels', label: 'Werte an den Linien', type: 'toggle', default: true, cls: 'cfg-flow-labels-off', group: 'Animierte Grafik' },
+    { key: 'rateFmt', label: 'Werte-Format', type: 'select', default: 'mbit', group: 'Animierte Grafik',
+      options: [{ v: 'mbit', l: 'Mbit/s' }, { v: 'mbyte', l: 'MB/s' }, { v: 'auto', l: 'Auto (Gbit)' }] },
+    // Gruppe: Knoten-Namen
+    { key: 'ispName',  label: 'Internet-Name', type: 'text', default: 'willy.tel', group: 'Knoten-Namen' },
+    { key: 'srvName',  label: 'Server-Name',  type: 'text', default: 'Unraid', group: 'Knoten-Namen' },
+    { key: 'lanName',  label: 'Netzwerk-Name', type: 'text', default: 'Netzwerk', group: 'Knoten-Namen' },
+    // Gruppe: Verlaufs-Chart (Liniendiagramm links)
+    { key: 'chart', label: 'Verlaufs-Chart',   type: 'toggle', default: true, group: 'Verlaufs-Chart' },
+    { key: 'chartSeries', label: 'Chart-Datenquelle', type: 'select', default: 'unraid', group: 'Verlaufs-Chart',
       options: [{ v: 'unraid', l: 'Unraid' }, { v: 'wan', l: 'Internet (WAN)' }, { v: 'both', l: 'Beide' }] },
-    { key: 'flow',  label: 'Paket-Animation',  type: 'toggle', default: true },
-    { key: 'range', label: 'Zeitraum',         type: 'select', default: '1m',
+    { key: 'grid', label: 'Gitternetz', type: 'toggle', default: true, group: 'Verlaufs-Chart' },
+    { key: 'range', label: 'Zeitraum',         type: 'select', default: '1m', group: 'Verlaufs-Chart',
       options: [{ v: '10s', l: '10s' }, { v: '1m', l: '1m' }, { v: '10m', l: '10m' }, { v: '1h', l: '1h' }] },
-    { key: 'scaleMode', label: 'Skala', type: 'select', default: 'auto',
+    { key: 'scaleMode', label: 'Skala', type: 'select', default: 'auto', group: 'Verlaufs-Chart',
       options: [
         { v: 'auto', l: 'Auto' }, { v: '100', l: '100 Mbit/s' }, { v: '250', l: '250 Mbit/s' },
-        { v: '500', l: '500 Mbit/s' }, { v: '1000', l: '1 Gbit/s' }, { v: 'line', l: 'Leitung' },
+        { v: '500', l: '500 Mbit/s' }, { v: '1000', l: '1 Gbit/s' },
         { v: 'custom', l: 'Eigener Wert…' },
       ] },
-    { key: 'scaleMax', label: 'Max (Mbit/s)', type: 'number', default: 0 },
-    { key: 'iface',    label: 'Interface',    type: 'select', default: '', options: 'ifaces' },
-    { key: 'packetShape', label: 'Paket-Form', type: 'select', default: 'block',
-      options: [{ v: 'block', l: 'Block' }, { v: 'dot', l: 'Punkt' }] },
-    { key: 'flowTrail', label: 'Paket-Schweif', type: 'toggle', default: true },
-    { key: 'localFlow', label: 'Lokaler Server↔LAN-Verkehr', type: 'toggle', default: true },
-    { key: 'ispName',  label: 'Internet-Name', type: 'text', default: 'willy.tel' },
-    { key: 'srvName',  label: 'Server-Name',  type: 'text', default: 'Unraid' },
-    { key: 'lanName',  label: 'Netzwerk-Name', type: 'text', default: 'Netzwerk' },
+    { key: 'scaleMax', label: 'Max (Mbit/s)', type: 'number', default: 0, group: 'Verlaufs-Chart' },
+    // Gruppe: Interface
+    { key: 'iface',    label: 'Interface',    type: 'select', default: '', options: 'ifaces', group: 'Interface' },
   ],
   'service-status': [
     { key: 'maxRows', label: 'Max. Einträge', type: 'count', default: 0 },
@@ -4409,7 +4418,17 @@ function _renderTileSettings(widgetId) {
   titleInput.addEventListener('input', () => _setTileCfg(widgetId, 'title', titleInput.value.trim().slice(0, 60)));
   row('Titel', titleInput, 'Leer lassen für den Standardnamen');
 
+  // Optionen können per `group` in übersichtliche Sektionen aufgeteilt werden;
+  // sobald sich die Gruppe ändert, wird eine Zwischenüberschrift eingefügt.
+  let lastGroup = null;
   for (const opt of (WIDGET_OPTIONS[widgetId] || [])) {
+    if (opt.group && opt.group !== lastGroup) {
+      lastGroup = opt.group;
+      const head = document.createElement('div');
+      head.className = 'tile-settings-group';
+      head.textContent = opt.group;
+      body.appendChild(head);
+    }
     if (opt.type === 'toggle') {
       const sw = document.createElement('div');
       sw.className = 'switch' + (_cfgVal(widgetId, opt.key) ? ' on' : '');
@@ -5145,7 +5164,6 @@ function applyNetworkConfig() {
 
   const sm = String(_cfgVal(id, 'scaleMode') || 'auto');
   if (sm === 'auto') state.netScaleMode = 'auto';
-  else if (sm === 'line') state.netScaleMode = 'line';
   else if (sm === 'custom') { state.netScaleMode = 'fixed'; state.netScaleMax = Math.max(1, +_cfgVal(id, 'scaleMax') || 100); }
   else { state.netScaleMode = 'fixed'; state.netScaleMax = Math.max(1, +sm || 100); }
 
@@ -5160,6 +5178,13 @@ function applyNetworkConfig() {
   // Paket-Stil (Design-Optionen): Block/Dot + Trail.
   state.netPktShape = String(_cfgVal(id, 'packetShape') || 'block');
   state.netTrailOn  = _cfgVal(id, 'flowTrail') !== false;
+  // Werte-Format der Durchsatz-Labels im Flow-SVG (Mbit/s | MB/s | Auto).
+  state.netRateFmt  = String(_cfgVal(id, 'rateFmt') || 'mbit');
+  // Groesse der animierten Grafik: Breite des .net-flow-Panels setzen.
+  const NET_FLOW_W = { s: 180, m: 215, l: 255 };
+  const shell = _shellFor(id);
+  const flowEl = shell && shell.querySelector('.net-flow');
+  if (flowEl) flowEl.style.width = (NET_FLOW_W[String(_cfgVal(id, 'flowSize') || 'm')] || 215) + 'px';
   // Lokale Server<->LAN-Linie: Flag + DOM-Gruppe (Linie + Werte-Labels) togglen.
   state.netLocalOn  = _cfgVal(id, 'localFlow') !== false;
   const locGrp = $('netLocGroup'); if (locGrp) locGrp.style.display = state.netLocalOn ? '' : 'none';
@@ -5428,7 +5453,14 @@ function updateNetFlow() {
   }
 
   // Wertelabels an den Knoten (laufen auch bei animOn=aus weiter — sind Daten).
-  const fmt = (v) => Math.round(v) + ' Mb/s';
+  // Format je Kachel-Option: Mbit/s | MB/s (÷8) | Auto (ab 1 Gbit/s in Gbit/s).
+  const fmt = (v) => {
+    switch (state.netRateFmt) {
+      case 'mbyte': return Math.round(v / 8) + ' MB/s';
+      case 'auto':  return v >= 1000 ? (v / 1000).toFixed(1) + ' Gbit/s' : Math.round(v) + ' Mbit/s';
+      default:      return Math.round(v) + ' Mbit/s';
+    }
+  };
   nfSetLbl('netFlowWanDl', '↓ ' + fmt(rates.srvDl + rates.lanDl));
   nfSetLbl('netFlowWanUl', '↑ ' + fmt(rates.srvUl + rates.lanUl));
   nfSetLbl('netFlowSrvDl', '↓ ' + fmt(rates.srvDl));
