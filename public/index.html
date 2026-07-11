@@ -191,24 +191,40 @@
           </svg>
         </div>
         <div data-cfg="flow" class="net-flow" title="Internet ↔ Unraid / Netzwerk">
-          <div class="net-node net-node-top">
-            <span class="net-node-ico" id="netIspIco"></span>
-            <span class="net-node-name" id="netIspName">willy.tel</span>
-          </div>
-          <div class="net-lanes-y" id="netLanesY">
-            <div class="net-lane-diag" id="netLaneSrv" title="Unraid-Anteil (WAN)"></div>
-            <div class="net-lane-diag" id="netLaneLan" title="Netzwerk-Anteil (WAN)"></div>
-          </div>
-          <div class="net-nodes-bottom">
-            <div class="net-node">
-              <span class="net-node-ico" id="netSrvIco"></span>
-              <span class="net-node-name" id="netSrvName">Unraid</span>
-            </div>
-            <div class="net-node">
-              <span class="net-node-ico" id="netLanIco"></span>
-              <span class="net-node-name" id="netLanName">Netzwerk</span>
-            </div>
-          </div>
+          <svg id="netFlowSvg" viewBox="0 0 220 250" preserveAspectRatio="xMidYMid meet">
+            <defs>
+              <filter id="netGlow" x="-60%" y="-60%" width="220%" height="220%">
+                <feGaussianBlur stdDeviation="2.4" result="blur"/>
+                <feMerge>
+                  <feMergeNode in="blur"/>
+                  <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+              </filter>
+            </defs>
+
+            <!-- Leitbahnen: Trunk (WAN -> Split) + zwei Bezier-Aeste (Split -> Server/LAN) -->
+            <path d="M110,25.5 L110,84" stroke="rgba(34,211,238,0.22)" stroke-width="1.5" fill="none"/>
+            <path d="M110,84 C110,150 72,216 45,216" stroke="rgba(34,211,238,0.22)" stroke-width="1.5" fill="none"/>
+            <path d="M110,84 C110,150 148,216 175,216" stroke="rgba(94,163,255,0.22)" stroke-width="1.5" fill="none"/>
+            <circle cx="110" cy="84" r="2.5" fill="rgba(159,180,184,0.5)"/>
+
+            <g id="netPkts" filter="url(#netGlow)"></g>
+
+            <circle cx="110" cy="20" r="5" class="nf-node" stroke="#22d3ee" stroke-width="1.5" filter="url(#netGlow)"/>
+            <text id="netFlowIspLbl" x="110" y="10" text-anchor="middle" font-size="9.5" letter-spacing="1.5" fill="#7fd7e8" font-weight="600">willy.tel</text>
+            <text id="netFlowWanDl" x="104" y="40" text-anchor="end"   font-size="10.5" fill="#4d8dff" font-weight="600">↓ –</text>
+            <text id="netFlowWanUl" x="116" y="40" text-anchor="start" font-size="10.5" fill="#3ddc84" font-weight="600">↑ –</text>
+
+            <circle cx="45" cy="216" r="5" class="nf-node" stroke="#22d3ee" stroke-width="1.5" filter="url(#netGlow)"/>
+            <text id="netFlowSrvLbl" x="45" y="234" text-anchor="middle" font-size="9.5" letter-spacing="1" fill="#7fd7e8" font-weight="600">Unraid</text>
+            <text id="netFlowSrvDl" x="45" y="177" text-anchor="middle" font-size="10" fill="#4d8dff" font-weight="600">↓ –</text>
+            <text id="netFlowSrvUl" x="45" y="189" text-anchor="middle" font-size="10" fill="#3ddc84" font-weight="600">↑ –</text>
+
+            <circle cx="175" cy="216" r="5" class="nf-node" stroke="#5ea3ff" stroke-width="1.5" filter="url(#netGlow)"/>
+            <text id="netFlowLanLbl" x="175" y="234" text-anchor="middle" font-size="9.5" letter-spacing="1" fill="#a9c7ff" font-weight="600">Netzwerk</text>
+            <text id="netFlowLanDl" x="175" y="177" text-anchor="middle" font-size="10" fill="#4d8dff" font-weight="600">↓ –</text>
+            <text id="netFlowLanUl" x="175" y="189" text-anchor="middle" font-size="10" fill="#3ddc84" font-weight="600">↑ –</text>
+          </svg>
         </div>
       </div>
 
