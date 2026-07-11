@@ -746,6 +746,7 @@ const wanState = {
   failStreak: 0,
   running: false,
   timer: null,
+  lastGwTs: 0,     // Zeitpunkt des letzten Gateway-SSH-Samples (Quellen-Arbitrierung)
 };
 
 let _wanSrcLogged = null; // letzte geloggte Quelle (WS/CLOUD) — nur bei Wechsel loggen
@@ -803,6 +804,9 @@ function stopWanPoller() {
    Subscription; schont die Console im Leerlauf).
    ============================================================ */
 const WAN_WS_DEBUG = /^(1|true|yes|on)$/i.test(String(process.env.WAN_WS_DEBUG || ''));
+// Solange die praezisere Gateway-SSH-Quelle innerhalb dieses Fensters frisch
+// geliefert hat, ignorieren wir WS-Werte (WS ueberbrueckt nur SSH-Ausfaelle).
+const WAN_GW_STALE_MS = 3000;
 const wanWs = {
   ws: null,
   running: false,   // sollten wir grundsaetzlich verbunden sein (lokal konfiguriert)?
@@ -811,51 +815,74 @@ const wanWs = {
   hb: null,         // Ping-Heartbeat
   failStreak: 0,
   gotSample: false, // erstes Throughput-Sample geloggt?
+  dumped: false,    // Gateway-Device einmal fuer die Diagnose gedumpt?
+  lastMsgTs: 0,     // fuer die Kadenz-Anzeige im Debug-Log
 };
 
-// Aus einem UniFi-Device-Objekt die WAN-Uplink-Rate (bytes/s) des Gateways
-// lesen. Firmware-abhaengige Shapes werden defensiv abgeklopft.
+function isUnifiGateway(d) {
+  return !!d && typeof d === 'object' && (
+    d.type === 'ugw' || d.type === 'udm' || d.type === 'usg' ||
+    d.type === 'uxg' || d.is_gateway === true);
+}
+
+// Aus einem UniFi-Gateway-Device die WAN-Rate (bytes/s) lesen — ausschliesslich
+// echte WAN-Felder (wan1/wan2/uplink/WAN-Port), NIE das Geraete-Aggregat: das
+// Top-Level `rx_bytes-r` zaehlt alle Ports inkl. LAN-Verteilung und schiesst
+// beim Download ueber die Leitungskapazitaet (Ursache der ~1400-Mbit-Ausreisser).
 function extractWanFromDevice(d) {
-  if (!d || typeof d !== 'object') return null;
-  const isGw = d.type === 'ugw' || d.type === 'udm' || d.type === 'usg' ||
-               d.type === 'uxg' || d.is_gateway === true;
-  const up = d.uplink || {};
-  let rx = null, tx = null;
-  for (const [r, t] of [
-    [up['rx_bytes-r'], up['tx_bytes-r']],
-    [d['rx_bytes-r'],  d['tx_bytes-r']],
-    [up.rx_bytes_r,    up.tx_bytes_r],
-  ]) { if (r != null || t != null) { rx = r; tx = t; break; } }
-  // Port-Tabelle (wan1/wan2) als letzter Ausweg.
-  if (rx == null && tx == null && Array.isArray(d.port_table)) {
-    const wp = d.port_table.find(p => /wan/i.test(p.name || '') && (p['rx_bytes-r'] != null || p['tx_bytes-r'] != null));
-    if (wp) { rx = wp['rx_bytes-r']; tx = wp['tx_bytes-r']; }
+  if (!isUnifiGateway(d)) return null;
+  const rate = (o) => (o && (o['rx_bytes-r'] != null || o['tx_bytes-r'] != null))
+    ? { rx: +o['rx_bytes-r'] || 0, tx: +o['tx_bytes-r'] || 0 } : null;
+  let rx = null, tx = null, from = null;
+  // 1) wan1/wan2 — echte je-WAN-Interface-Rate (aktive WANs summieren).
+  for (const key of ['wan1', 'wan2']) {
+    const r = rate(d[key]);
+    if (r) { rx = (rx || 0) + r.rx; tx = (tx || 0) + r.tx; from = from ? from + '+' + key : key; }
   }
-  if (rx == null && tx == null) return null;
-  // Nur der Gateway-WAN-Uplink zaehlt (nicht AP/Switch-Uplinks).
-  if (!isGw && up.type !== 'wan') return null;
+  // 2) sonst uplink (Internet-Uplink des Gateways).
+  if (from == null) { const r = rate(d.uplink); if (r) { rx = r.rx; tx = r.tx; from = 'uplink'; } }
+  // 3) sonst nur der WAN-/Uplink-Port aus port_table (kein LAN-Port).
+  if (from == null && Array.isArray(d.port_table)) {
+    const wp = d.port_table.find(p =>
+      (p.is_uplink === true || /wan/i.test(p.name || '')) &&
+      (p['rx_bytes-r'] != null || p['tx_bytes-r'] != null));
+    if (wp) { rx = +wp['rx_bytes-r'] || 0; tx = +wp['tx_bytes-r'] || 0; from = 'port:' + (wp.name || '?'); }
+  }
+  if (from == null) return null;
+  const up = d.uplink || {}, w1 = d.wan1 || {};
   return {
-    rxMbit: rx != null ? parseFloat((rx * 8 / 1e6).toFixed(2)) : null,
-    txMbit: tx != null ? parseFloat((tx * 8 / 1e6).toFixed(2)) : null,
+    from,
+    rxMbit: parseFloat((rx * 8 / 1e6).toFixed(2)),
+    txMbit: parseFloat((tx * 8 / 1e6).toFixed(2)),
     status: d.state === 1 ? 'ok' : (d.state != null ? 'unknown' : undefined),
-    ip: up.ip || d.wan_ip || null,
-    latencyMs: up.latency != null ? Number(up.latency) : null,
+    ip: up.ip || w1.ip || d.wan_ip || null,
+    latencyMs: up.latency != null ? Number(up.latency) : (w1.latency != null ? Number(w1.latency) : null),
   };
 }
 
 function handleWanWsMessage(buf) {
+  // Gateway-SSH ist die praezisere Quelle: solange sie frisch liefert, WS-Werte
+  // verwerfen (der WS ueberbrueckt dann nur SSH-Ausfaelle).
+  if (Date.now() - wanState.lastGwTs < WAN_GW_STALE_MS) return;
   let msg;
   try { msg = JSON.parse(buf.toString('utf8')); } catch { return; }
   if (WAN_WS_DEBUG) {
-    const m = msg && msg.meta && msg.meta.message;
-    if (m) console.log(`WAN-WS msg: ${m} (${(buf.length / 1024).toFixed(1)}kB)`);
+    const now = Date.now();
+    const dt = wanWs.lastMsgTs ? now - wanWs.lastMsgTs : 0;
+    wanWs.lastMsgTs = now;
+    const m = (msg && msg.meta && msg.meta.message) || (Array.isArray(msg) ? 'array' : 'unknown');
+    console.log(`WAN-WS msg: ${m} +${dt}ms (${(buf.length / 1024).toFixed(1)}kB)`);
   }
   const list = Array.isArray(msg) ? msg
     : Array.isArray(msg && msg.data) ? msg.data
     : (msg && msg.data) ? [msg.data] : [];
   let best = null;
   for (const item of list) {
-    const dev = item && (item.type || item.uplink || item.port_table) ? item : ((item && item.device) || item);
+    const dev = item && (item.type || item.uplink || item.port_table || item.wan1) ? item : ((item && item.device) || item);
+    if (WAN_WS_DEBUG && !wanWs.dumped && isUnifiGateway(dev)) {
+      wanWs.dumped = true;
+      console.log('WAN-WS Gateway-Device (gekuerzt): ' + JSON.stringify(dev).slice(0, 1500));
+    }
     const w = extractWanFromDevice(dev);
     if (w && (w.rxMbit != null || w.txMbit != null)) { best = w; break; }
   }
@@ -874,7 +901,7 @@ function handleWanWsMessage(buf) {
   broadcast('wan', wanState.latest);
   if (!wanWs.gotSample) {
     wanWs.gotSample = true;
-    console.log(`WAN-WS: erstes Throughput-Sample ↓${wanState.latest.rxMbit} ↑${wanState.latest.txMbit} Mbit/s`);
+    console.log(`WAN-WS: erstes Throughput-Sample (${best.from}) ↓${wanState.latest.rxMbit} ↑${wanState.latest.txMbit} Mbit/s`);
   }
 }
 
@@ -889,6 +916,8 @@ function closeWanWs() {
 function onWanWsDown(reason) {
   closeWanWs();
   wanWs.gotSample = false;
+  wanWs.dumped = false;
+  wanWs.lastMsgTs = 0;
   if (!wanWs.running) return;
   wanWs.failStreak++;
   if (wanWs.failStreak === 1) console.warn(`WAN-WS Fehler: ${reason}`);
@@ -955,18 +984,168 @@ function stopWanWs() {
   closeWanWs();
 }
 
-// Orchestrator: lokal konfiguriert → Live-Websocket (Sekundentakt);
-// sonst Cloud-stat/health-Polling als Fallback. Idempotent, auch nach
-// Creds-Aenderung ohne Neustart aufrufbar.
+/* ============================================================
+   WAN live direkt vom Gateway per SSH (praeziseste Quelle)
+   ------------------------------------------------------------
+   Liest die WAN-Interface-Zaehler aus /proc/net/dev der UniFi-Console und
+   rechnet die Rate selbst aus dem Delta — unabhaengig von der zyklischen
+   Controller-Kadenz, exakt und ohne Ueberschreitung der Leitungskapazitaet.
+   Muster wie der Unraid-Netz-Sampler (sshConnect + Streaming-Loop +
+   parseProcNetDev). Voraussetzung: SSH an der Console aktiviert.
+   ============================================================ */
+function gwSshCfg() {
+  let host = getSecret('UNIFI_GW_SSH_HOST');
+  if (!host) { try { host = new URL(getSecret('UNIFI_LOCAL_URL')).hostname; } catch (_) { host = ''; } }
+  const user = getSecret('UNIFI_GW_SSH_USER') || 'root';
+  const port = parseInt(getSecret('UNIFI_GW_SSH_PORT') || '22', 10) || 22;
+  const password = getSecret('UNIFI_GW_SSH_PASSWORD') || '';
+  const key = getSecret('UNIFI_GW_SSH_KEY') || '';
+  const iface = (getSecret('UNIFI_GW_WAN_IFACE') || '').trim();
+  if (!host || (!password && !key)) return null;
+  return { host, user, port, password, key, iface };
+}
+
+const IFACE_RE = /^[a-z0-9._-]+$/i;
+const gwSsh = {
+  conn: null,
+  running: false,
+  reco: null,
+  iface: null,       // erkanntes/konfiguriertes WAN-Interface
+  buf: '',
+  prev: null,        // { t, raw }  fuer die Delta-Berechnung
+  failStreak: 0,
+  loggedIface: null,
+};
+
+function gwSshTick(text) {
+  const cur = parseProcNetDev(text);
+  const ent = gwSsh.iface ? cur[gwSsh.iface] : null;
+  const now = Date.now();
+  if (ent && gwSsh.prev && gwSsh.prev.raw[gwSsh.iface]) {
+    const dt = (now - gwSsh.prev.t) / 1000;
+    const p = gwSsh.prev.raw[gwSsh.iface];
+    const drx = ent.rx - p.rx, dtx = ent.tx - p.tx;
+    // Zaehler-Reset/Ueberlauf (negativ) auslassen, Delta neu aufsetzen.
+    if (dt > 0.05 && drx >= 0 && dtx >= 0) {
+      const rxMbit = parseFloat((drx * 8 / 1e6 / dt).toFixed(2));
+      const txMbit = parseFloat((dtx * 8 / 1e6 / dt).toFixed(2));
+      const prev = wanState.latest || {};
+      wanState.latest = { ts: now, status: 'ok', rxMbit, txMbit,
+        latencyMs: prev.latencyMs != null ? prev.latencyMs : null,
+        ip: prev.ip || null };
+      wanState.lastGwTs = now;
+      pushHistory(wanState.history, now, rxMbit, txMbit);
+      broadcast('wan', wanState.latest);
+      gwSsh.failStreak = 0;
+    }
+  }
+  if (ent) gwSsh.prev = { t: now, raw: cur };
+}
+
+function gwSshOnChunk(s) {
+  gwSsh.buf += s;
+  let idx;
+  while ((idx = gwSsh.buf.indexOf('__GWTICK__')) >= 0) {
+    const seg = gwSsh.buf.slice(0, idx);
+    gwSsh.buf = gwSsh.buf.slice(idx + 10);
+    gwSshTick(seg);
+  }
+  if (gwSsh.buf.length > 65536) gwSsh.buf = ''; // Sicherheitsnetz
+}
+
+function scheduleGwSshReconnect(cfg) {
+  gwSsh.conn = null;
+  gwSsh.prev = null;
+  gwSsh.buf = '';
+  if (!gwSsh.running) return;
+  const delay = Math.min(30000, 3000 * 2 ** Math.min(3, gwSsh.failStreak));
+  clearTimeout(gwSsh.reco);
+  gwSsh.reco = setTimeout(() => connectGwSsh(cfg), delay);
+}
+
+// WAN-Interface bestimmen: konfiguriert, sonst via Default-Route erkennen
+// (deckt DHCP `ethX`, PPPoE `ppp0`, VLAN-WAN etc. ab).
+async function detectWanIface(conn, cfg) {
+  if (cfg.iface && IFACE_RE.test(cfg.iface)) return cfg.iface;
+  try {
+    const out = await sshExec(conn, 'ip route show default 2>/dev/null', 5000);
+    const m = String(out).match(/\bdev\s+([a-z0-9._-]+)/i);
+    if (m && IFACE_RE.test(m[1])) return m[1];
+  } catch (_) { /* Fallback: unten null */ }
+  return null;
+}
+
+function connectGwSsh(cfg) {
+  sshConnect(cfg, 10000).then(async (conn) => {
+    gwSsh.conn = conn;
+    conn.on('close', () => { gwSsh.failStreak++; scheduleGwSshReconnect(cfg); });
+    conn.on('error', () => { /* close folgt */ });
+    const iface = await detectWanIface(conn, cfg);
+    if (!iface) {
+      if (gwSsh.failStreak === 0)
+        console.warn('GW-SSH: WAN-Interface nicht erkennbar — bitte UNIFI_GW_WAN_IFACE setzen');
+      gwSsh.failStreak++;
+      try { conn.end(); } catch (_) {} // close-Handler plant Reconnect
+      return;
+    }
+    gwSsh.iface = iface;
+    if (gwSsh.loggedIface !== `${iface}@${cfg.host}`) {
+      gwSsh.loggedIface = `${iface}@${cfg.host}`;
+      console.log(`GW-SSH: WAN via ${iface}@${cfg.host}`);
+    }
+    const secs = Math.max(1, Math.round(WAN_SAMPLE_MS / 1000)); // Gateway-sleep: ganze Sekunden
+    const cmd = `sh -c 'while :; do cat /proc/net/dev; echo __GWTICK__; sleep ${secs}; done'`;
+    conn.exec(cmd, (err, stream) => {
+      if (err) { try { conn.end(); } catch (_) {} return; }
+      gwSsh.buf = ''; gwSsh.prev = null;
+      stream.on('data', (d) => gwSshOnChunk(d.toString('utf8')));
+      stream.stderr.on('data', () => { /* ignore */ });
+      stream.on('close', () => { try { conn.end(); } catch (_) {} });
+    });
+  }).catch((e) => {
+    if (gwSsh.failStreak === 0)
+      console.warn(`GW-SSH Verbindung fehlgeschlagen: ${e && e.message ? e.message : e}`);
+    gwSsh.failStreak++;
+    scheduleGwSshReconnect(cfg);
+  });
+}
+
+function startGwSsh() {
+  const cfg = gwSshCfg();
+  if (!cfg) return false;
+  if (gwSsh.running) return true;
+  gwSsh.running = true;
+  gwSsh.failStreak = 0;
+  console.log(`GW-SSH: WAN-Sampler startet → ${cfg.host}`);
+  connectGwSsh(cfg);
+  return true;
+}
+function stopGwSsh() {
+  gwSsh.running = false;
+  clearTimeout(gwSsh.reco); gwSsh.reco = null;
+  gwSsh.prev = null; gwSsh.buf = ''; gwSsh.loggedIface = null;
+  const conn = gwSsh.conn; gwSsh.conn = null;
+  if (conn) { try { conn.end(); } catch (_) {} }
+}
+
+// Orchestrator: praeziseste Quelle zuerst — Gateway-SSH (dauerhaft), dann
+// lokaler Websocket (fuellt SSH-Luecken bzw. primaer ohne SSH), sonst Cloud-
+// stat/health-Polling. Idempotent, auch nach Creds-Aenderung aufrufbar.
 function startWanSampler() {
+  const gw = startGwSsh();     // true, wenn Gateway-SSH konfiguriert/aktiv
+  if (!gw) stopGwSsh();
+
   if (unifiLocalReady()) {
-    stopWanPoller();        // langsames Polling nicht neben dem WS laufen lassen
+    // WS laeuft mit; handleWanWsMessage verwirft Werte, solange SSH frisch ist.
+    stopWanPoller();
     startWanWs();
     return;
   }
   stopWanWs();
+
+  if (gw) { stopWanPoller(); return; } // SSH ist die Quelle; kein Cloud-Poll noetig
   if (!unifiCfg().apiKey) {
-    console.log('WAN-Sampler: UniFi nicht konfiguriert (weder lokal noch Cloud-API-Key)');
+    console.log('WAN-Sampler: UniFi nicht konfiguriert (weder Gateway-SSH, lokal noch Cloud-API-Key)');
     return;
   }
   if (wanState.running) return;
@@ -1653,8 +1832,8 @@ app.post('/api/quicklinks', (req, res) => {
   }
 });
 
-const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'UNIFI_LOCAL_URL', 'UNIFI_LOCAL_USER', 'UNIFI_LOCAL_PASS', 'UNIFI_LOCAL_SITE', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH', 'UNRAID_URL', 'UNRAID_API_KEY', 'UNRAID_SSH_HOST', 'UNRAID_SSH_PORT', 'UNRAID_SSH_USER', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'UNRAID_DANGER_ACTIONS'];
-const SECRETS_MASKED = new Set(['ADGUARD_PASS', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'UNIFI_LOCAL_PASS', 'NEXTCLOUD_PASS', 'UNRAID_API_KEY', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY']);
+const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'UNIFI_LOCAL_URL', 'UNIFI_LOCAL_USER', 'UNIFI_LOCAL_PASS', 'UNIFI_LOCAL_SITE', 'UNIFI_GW_SSH_HOST', 'UNIFI_GW_SSH_PORT', 'UNIFI_GW_SSH_USER', 'UNIFI_GW_SSH_PASSWORD', 'UNIFI_GW_SSH_KEY', 'UNIFI_GW_WAN_IFACE', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH', 'UNRAID_URL', 'UNRAID_API_KEY', 'UNRAID_SSH_HOST', 'UNRAID_SSH_PORT', 'UNRAID_SSH_USER', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'UNRAID_DANGER_ACTIONS'];
+const SECRETS_MASKED = new Set(['ADGUARD_PASS', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'UNIFI_LOCAL_PASS', 'UNIFI_GW_SSH_PASSWORD', 'UNIFI_GW_SSH_KEY', 'NEXTCLOUD_PASS', 'UNRAID_API_KEY', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY']);
 
 app.get('/api/secrets', (req, res) => {
   const out = {};
@@ -1679,6 +1858,7 @@ app.post('/api/secrets', (req, res) => {
     for (const k of Object.keys(cache)) cache[k] = { ts: 0, data: null };
     unifiLocalSession = null; // ggf. geaenderte lokale UniFi-Creds erzwingen Re-Login
     _wanSrcLogged = null;     // Quellenwechsel (lokal<->cloud) beim naechsten Poll loggen
+    stopGwSsh();              // ggf. geaenderte Gateway-SSH-Creds erzwingen Reconnect
     // Frisch gesetzte UniFi-Creds starten den WAN-Sampler ohne Neustart (idempotent).
     startWanSampler();
     res.json({ ok: true });
