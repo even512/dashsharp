@@ -159,10 +159,15 @@ select { -webkit-appearance: none; appearance: none; }
    (Pakete laufen immer bis zum Ziel, dort wird nachgeregelt); Tempo & Dichte
    skalieren LINEAR mit der Rate (gemeinsame Referenz aller Fluesse). */
 .net-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.net-flow { width: 190px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+/* Breite wird per Kachel-Option (flowSize) via JS gesetzt; Wert = Default „Mittel". */
+.net-flow { width: 215px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
 .net-flow svg { display: block; width: 100%; height: 100%; }
 .net-flow text { font-family: 'JetBrains Mono', ui-monospace, monospace; }
 .nf-node { fill: var(--bg-card-end, #0a0f14); }
+/* Durchsatz-Werte an den Flow-Linien per Kachel-Option ausblendbar (Knoten-Namen bleiben). */
+.cfg-flow-labels-off .nf-val { display: none; }
+/* Dezentes Gitternetz hinter dem Verlaufs-Chart. */
+#netGrid line { stroke: var(--text-5, #64748b); stroke-width: 1; opacity: 0.12; vector-effect: non-scaling-stroke; }
 /* Bei abgeschalteten Animationen keine Pakete zeigen. */
 .no-anim .net-pkt { display: none; }
 
@@ -406,6 +411,12 @@ body.design-mode #layoutEditBar { display: flex; flex-wrap: wrap; gap: 12px; }
   padding: 10px 2px; min-height: 40px; border-bottom: 1px solid var(--border-4);
 }
 .tile-settings-row:last-child { border-bottom: none; }
+/* Sektions-Überschrift zum übersichtlichen Aufteilen der Optionen in Gruppen. */
+.tile-settings-group {
+  font: 600 10px 'JetBrains Mono', monospace; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--text-4); margin: 16px 0 2px; padding-bottom: 6px; border-bottom: 1px solid var(--border-3);
+}
+.tile-settings-group:first-of-type { margin-top: 12px; }
 .tile-settings-key { font: 500 12px 'JetBrains Mono', monospace; color: var(--text-2); }
 .tile-settings-hint { font: 500 10px 'JetBrains Mono', monospace; color: var(--text-dim); margin-top: 3px; }
 .tile-settings-row .cfg-input { width: 190px; }
