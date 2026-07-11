@@ -5152,15 +5152,16 @@ async function backfillNetHistory(ms) {
    min(Unraid-NIC, WAN) geschaetzt, der Rest laeuft auf der Netzwerk-Kurve.
    Pakete sind SVG-Rects im skalierenden 220x250-viewBox: Bloecke rotieren zur
    Pfadtangente (optional mit Trail; alternativ Dots), leichtes Tempo-Jitter
-   je Paket. Bewegungsmodell: feste Pools je Fluss, Phase 0..1 ueber den
-   GESAMTEN Weg (Trunk = 0..0.5, Kurve = 0.5..1); einmal gestartete Pakete
+   je Paket. Bewegungsmodell: feste Pools je Fluss, Phase 0..1 BOGENLAENGEN-
+   proportional ueber den GESAMTEN Weg (Trunk + Kurve) -> konstantes Pixel-
+   Tempo, kein Sprung an der Abzweigung; einmal gestartete Pakete
    laufen IMMER bis zum Ziel, erst dort wird nachgeregelt (weiterlaufen oder
    stilllegen) -> ruhig, kein Verschwinden auf der Strecke. Tempo & Dichte
    skalieren LINEAR mit der Rate relativ zur GEMEINSAMEN Referenz (schnellster
    Fluss): 1 Gbit Download neben 20 Mbit Upload wirkt sichtbar drastisch
    schneller/dichter — nicht "etwas" schneller wie bei log-Skalierung. */
 const NF_WAN   = { x: 110, y: 20 };
-const NF_SPLIT = { x: 110, y: 84 };
+const NF_SPLIT = { x: 110, y: 100 };
 const NF_END   = { srv: { x: 45,  y: 216 }, lan: { x: 175, y: 216 } };
 const NF_C1    = { srv: { x: 110, y: 150 }, lan: { x: 110, y: 150 } };
 const NF_C2    = { srv: { x: 72,  y: 216 }, lan: { x: 148, y: 216 } };
@@ -5179,15 +5180,47 @@ function nfBezier(branch, t) {
     y: mt * mt * mt * p0.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t * t * t * p3.y,
   };
 }
-function nfBezierAngle(branch, t) {
-  const mt = 1 - t, p0 = NF_SPLIT, c1 = NF_C1[branch], c2 = NF_C2[branch], p3 = NF_END[branch];
-  const dx = 3 * mt * mt * (c1.x - p0.x) + 6 * mt * t * (c2.x - c1.x) + 3 * t * t * (p3.x - c2.x);
-  const dy = 3 * mt * mt * (c1.y - p0.y) + 6 * mt * t * (c2.y - c1.y) + 3 * t * t * (p3.y - c2.y);
-  return Math.atan2(dy, dx) * 180 / Math.PI;
+// Geometrie des Down-Wegs abtasten: t 0..1 laeuft Trunk (0..0.5) + Bezier
+// (0.5..1). Dient NUR dem Aufbau der Bogenlaengen-LUT, nicht dem Tempo.
+function nfSampleDown(branch, t) {
+  return t < 0.5 ? nfLerp(NF_WAN, NF_SPLIT, t / 0.5) : nfBezier(branch, (t - 0.5) / 0.5);
+}
+// Bogenlaengen-LUT je Ast: Phase 0..1 laeuft mit KONSTANTER Pixel-Geschwindig-
+// keit ueber den GESAMTEN Weg. Ohne dies kriechen Pakete auf dem kurzen Trunk
+// (Strang zum Internet) und springen an der Abzweigung auf ~2.5x Pixel-Tempo,
+// obwohl 'speed' (Phase/s) gleich ist -> Internet-Strang wirkt langsamer.
+const NF_LUT = {};  // branch -> { xs, ys, cum, total, n }
+function nfLut(branch) {
+  const cached = NF_LUT[branch];
+  if (cached) return cached;
+  const n = 240, xs = [], ys = [], cum = [0];
+  let px = 0, py = 0;
+  for (let i = 0; i <= n; i++) {
+    const p = nfSampleDown(branch, i / n);
+    xs.push(p.x); ys.push(p.y);
+    if (i > 0) cum.push(cum[i - 1] + Math.hypot(p.x - px, p.y - py));
+    px = p.x; py = p.y;
+  }
+  return (NF_LUT[branch] = { xs, ys, cum, total: cum[n], n });
+}
+// Position + Tangentenwinkel beim Bogen-Anteil ph (0..1) -> gleichmaessiges Tempo.
+function nfArcPos(branch, ph) {
+  const L = nfLut(branch);
+  const target = Math.max(0, Math.min(1, ph)) * L.total;
+  let lo = 1, hi = L.n;  // kleinster Index i mit cum[i] >= target
+  while (lo < hi) { const m = (lo + hi) >> 1; if (L.cum[m] < target) lo = m + 1; else hi = m; }
+  const i = lo;
+  const seg = L.cum[i] - L.cum[i - 1] || 1;
+  const f = (target - L.cum[i - 1]) / seg;
+  return {
+    x: L.xs[i - 1] + (L.xs[i] - L.xs[i - 1]) * f,
+    y: L.ys[i - 1] + (L.ys[i] - L.ys[i - 1]) * f,
+    ang: Math.atan2(L.ys[i] - L.ys[i - 1], L.xs[i] - L.xs[i - 1]) * 180 / Math.PI,
+  };
 }
 // Position/Winkel in Download-Richtung; Upload = gespiegelte Phase + 180 Grad.
-function nfPosDown(branch, ph)   { return ph < 0.5 ? nfLerp(NF_WAN, NF_SPLIT, ph / 0.5) : nfBezier(branch, (ph - 0.5) / 0.5); }
-function nfAngleDown(branch, ph) { return ph < 0.5 ? 90 : nfBezierAngle(branch, (ph - 0.5) / 0.5); }
+function nfPosDown(branch, ph)   { return nfArcPos(branch, ph); }
+function nfAngleDown(branch, ph) { return nfArcPos(branch, ph).ang; }
 function nfPos(branch, ph, up)   { return up ? nfPosDown(branch, 1 - ph) : nfPosDown(branch, ph); }
 function nfAngle(branch, ph, up) { return up ? nfAngleDown(branch, 1 - ph) + 180 : nfAngleDown(branch, ph); }
 
