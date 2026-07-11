@@ -2157,23 +2157,48 @@ function renderPlexRecent(container, recent) {
   row.style.cssText = 'display:flex;gap:10px;margin-bottom:18px;overflow-x:auto;padding-bottom:2px';
 
   recent.forEach((item) => {
-    const cell = document.createElement('div');
-    cell.style.cssText = 'flex-shrink:0;width:60px;display:flex;flex-direction:column;gap:5px';
-
     const poster = plexPosterEl(item.thumb, 60, 90);
     poster.classList.add('plex-poster'); // respektiert den Poster-Toggle (cfg-hide-posters)
-    cell.appendChild(poster);
-
-    const title = document.createElement('div');
-    title.style.cssText = "font:600 10px/1.3 'JetBrains Mono',monospace;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
-    title.textContent = item.title;
-    title.title = item.year ? `${item.title} (${item.year})` : item.title;
-    cell.appendChild(title);
-
-    row.appendChild(cell);
+    // Klick öffnet das Poster vergrößert. Titel dient als Tooltip/Alt-Text.
+    const alt = item.year ? `${item.title} (${item.year})` : item.title;
+    poster.title = alt;
+    if (item.thumb) {
+      poster.alt = item.title;
+      poster.style.cursor = 'pointer';
+      poster.addEventListener('click', () => openPlexPoster(item.thumb, alt));
+    }
+    row.appendChild(poster);
   });
 
   container.appendChild(row);
+}
+
+/* Lightbox: zeigt ein Plex-Poster vergrößert. Klick/Esc schließt.
+   Nutzt die vorhandene .picker-modal-Overlay-Optik (Backdrop + Fade). */
+function openPlexPoster(thumb, alt) {
+  let modal = $('plexPosterLightbox');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'plexPosterLightbox';
+    modal.className = 'picker-modal';
+    modal.innerHTML = '<img alt="" style="max-width:min(80vw,520px);max-height:86vh;border-radius:12px;box-shadow:0 24px 80px rgba(0,0,0,.7);object-fit:contain">';
+    modal.addEventListener('click', closePlexPoster);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && modal.classList.contains('open')) closePlexPoster();
+    });
+    document.body.appendChild(modal);
+  }
+  const img = modal.querySelector('img');
+  img.src = thumb;
+  img.alt = alt || '';
+  modal.style.display = 'flex';
+  requestAnimationFrame(() => modal.classList.add('open'));
+}
+function closePlexPoster() {
+  const modal = $('plexPosterLightbox');
+  if (!modal) return;
+  modal.classList.remove('open');
+  setTimeout(() => { modal.style.display = 'none'; }, 180);
 }
 
 function createPlexCard(s) {
