@@ -832,6 +832,16 @@
                   <input id="secretUnifiHostId" placeholder="Host ID (auto)" class="cfg-input" style="width:200px" />
                   <input id="secretUnifiCamId" placeholder="Camera ID (auto)" class="cfg-input" style="width:150px" />
                 </div>
+                <div style="font:400 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:4px;text-align:right;max-width:280px">
+                  Live-WAN direkt aus dem LAN (umgeht die Cloud). Read-only Konto empfohlen.
+                </div>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input id="secretUnifiLocalUrl" placeholder="Console-URL, z.B. https://192.168.1.1" class="cfg-input" style="width:280px" />
+                </div>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input id="secretUnifiLocalUser" placeholder="Lokaler User (read-only)" class="cfg-input" style="width:150px" />
+                  <input id="secretUnifiLocalPass" type="password" placeholder="Passwort" class="cfg-input" style="width:124px" />
+                </div>
                 <button onclick="saveSecrets('unifi')" class="cfg-btn">↵ Save</button>
               </div>
             </div>

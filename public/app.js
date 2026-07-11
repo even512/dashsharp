@@ -4584,6 +4584,9 @@ async function loadSecrets() {
     set('secretUnifiApiKey', d.UNIFI_API_KEY);
     set('secretUnifiHostId', d.UNIFI_HOST_ID);
     set('secretUnifiCamId',  d.UNIFI_CAMERA_ID);
+    set('secretUnifiLocalUrl',  d.UNIFI_LOCAL_URL);
+    set('secretUnifiLocalUser', d.UNIFI_LOCAL_USER);
+    set('secretUnifiLocalPass', d.UNIFI_LOCAL_PASS);
     set('secretNextcloudUrl',  d.NEXTCLOUD_URL);
     set('secretNextcloudUser', d.NEXTCLOUD_USER);
     set('secretNextcloudPass', d.NEXTCLOUD_PASS);
@@ -4612,7 +4615,10 @@ async function saveSecrets(card) {
   } else if (card === 'weather') {
     body = { WEATHER_CITY: val('secretWeatherCity'), WEATHER_UNIT: _weatherUnit };
   } else if (card === 'unifi') {
-    body = { UNIFI_API_KEY: val('secretUnifiApiKey'), UNIFI_HOST_ID: val('secretUnifiHostId'), UNIFI_CAMERA_ID: val('secretUnifiCamId') };
+    body = {
+      UNIFI_API_KEY: val('secretUnifiApiKey'), UNIFI_HOST_ID: val('secretUnifiHostId'), UNIFI_CAMERA_ID: val('secretUnifiCamId'),
+      UNIFI_LOCAL_URL: val('secretUnifiLocalUrl'), UNIFI_LOCAL_USER: val('secretUnifiLocalUser'), UNIFI_LOCAL_PASS: val('secretUnifiLocalPass'),
+    };
   } else if (card === 'nextcloud') {
     body = { NEXTCLOUD_URL: val('secretNextcloudUrl'), NEXTCLOUD_USER: val('secretNextcloudUser'), NEXTCLOUD_PASS: val('secretNextcloudPass'), NEXTCLOUD_SHARE_PATH: val('secretNextcloudPath') };
   } else if (card === 'unraid') {
