@@ -21,7 +21,7 @@ function readConfig() {
 const http  = require('http');
 const https = require('https');
 const { Client: SSHClient } = require('ssh2');
-const { WebSocketServer } = require('ws');
+const { WebSocket, WebSocketServer } = require('ws');
 
 /* ============================================================
    UniFi Cloud API — api.ui.com, X-API-Key, kein lokaler Zugriff nötig
@@ -748,23 +748,18 @@ const wanState = {
   timer: null,
 };
 
-let _wanSrcLogged = null; // letzte geloggte Quelle (LOCAL/CLOUD) — nur bei Wechsel loggen
+let _wanSrcLogged = null; // letzte geloggte Quelle (WS/CLOUD) — nur bei Wechsel loggen
+
+/* ---- Cloud-Fallback: stat/health-Polling (grob, ~5-10s) ----
+   Nur wenn KEIN lokaler Zugang konfiguriert ist. Die Cloud-Connector-API
+   liefert keinen lokalen Websocket, daher bleibt hier das grobe Polling. */
 async function sampleWanOnce() {
-  const localCfg = unifiLocalCfg();
   const cfg = unifiCfg();
-  const useLocal = unifiLocalReady(localCfg);
-  if (!useLocal && !cfg.apiKey) return;
-  // Effektive Quelle bei Wechsel einmal loggen (Diagnose).
-  const srcLabel = useLocal ? `LOCAL ${localCfg.url}` : 'CLOUD api.ui.com';
-  if (srcLabel !== _wanSrcLogged) { _wanSrcLogged = srcLabel; console.log(`WAN-Sampler: Quelle = ${srcLabel}`); }
+  if (!cfg.apiKey) return;
+  if (_wanSrcLogged !== 'CLOUD') { _wanSrcLogged = 'CLOUD'; console.log('WAN-Sampler: Quelle = CLOUD api.ui.com (stat/health)'); }
   try {
-    let healthRaw;
-    if (useLocal) {
-      healthRaw = await unifiLocalFetch(localCfg, '/stat/health', 5000);
-    } else {
-      const hostId = await getConsoleId(cfg);
-      healthRaw = await unifiFetch(cfg, `/v1/connector/consoles/${hostId}/proxy/network/api/s/default/stat/health`, 5000);
-    }
+    const hostId = await getConsoleId(cfg);
+    const healthRaw = await unifiFetch(cfg, `/v1/connector/consoles/${hostId}/proxy/network/api/s/default/stat/health`, 5000);
     const wan = parseWanHealth(healthRaw);
     const ts = Date.now();
     wanState.latest = { ts, status: wan.status, rxMbit: wan.rxRate, txMbit: wan.txRate, latencyMs: wan.latencyMs, ip: wan.ip };
@@ -773,11 +768,8 @@ async function sampleWanOnce() {
     broadcast('wan', wanState.latest);
   } catch (err) {
     wanState.failStreak++;
-    // Ersten Fehler klar loggen (Diagnose: Login/URL/Zertifikat), danach still.
     if (wanState.failStreak === 1)
-      console.warn(`WAN-Sampler Fehler (${useLocal ? 'lokal' : 'cloud'}): ${err.message}`);
-    // Clients einmalig informieren, damit die Kachel degradieren kann;
-    // wanState.latest bleibt fuer Backfill/Stale-Anzeige erhalten.
+      console.warn(`WAN-Sampler Fehler (cloud): ${err.message}`);
     if (wanState.failStreak === 3)
       broadcast('wan', { ts: Date.now(), status: 'error', rxMbit: null, txMbit: null });
   }
@@ -793,14 +785,193 @@ function scheduleWanNext() {
   clearTimeout(wanState.timer);
   wanState.timer = setTimeout(sampleWanOnce, delay);
 }
+function stopWanPoller() {
+  wanState.running = false;
+  clearTimeout(wanState.timer);
+  wanState.timer = null;
+}
+
+/* ============================================================
+   WAN live via lokalem UniFi-OS Event-Websocket (echter Sekundentakt)
+   ------------------------------------------------------------
+   Die `-r`-Ratenfelder der Console werden nur dann im Sekundentakt neu
+   berechnet, wenn eine aktive Websocket-Session zuschaut — genau wie das
+   native Panel. Wir halten daher selbst eine dauerhafte Subscription offen
+   (dieselbe Login-Session/Cookie wie unifiLocalFetch) und lesen die WAN-
+   Uplink-Rate des Gateways direkt aus den gepushten device-Nachrichten.
+   Verbindung nur solange SSE-Clients zuschauen (Realtime nur bei aktiver
+   Subscription; schont die Console im Leerlauf).
+   ============================================================ */
+const WAN_WS_DEBUG = /^(1|true|yes|on)$/i.test(String(process.env.WAN_WS_DEBUG || ''));
+const wanWs = {
+  ws: null,
+  running: false,   // sollten wir grundsaetzlich verbunden sein (lokal konfiguriert)?
+  connecting: false,
+  reco: null,       // Reconnect-Timer
+  hb: null,         // Ping-Heartbeat
+  failStreak: 0,
+  gotSample: false, // erstes Throughput-Sample geloggt?
+};
+
+// Aus einem UniFi-Device-Objekt die WAN-Uplink-Rate (bytes/s) des Gateways
+// lesen. Firmware-abhaengige Shapes werden defensiv abgeklopft.
+function extractWanFromDevice(d) {
+  if (!d || typeof d !== 'object') return null;
+  const isGw = d.type === 'ugw' || d.type === 'udm' || d.type === 'usg' ||
+               d.type === 'uxg' || d.is_gateway === true;
+  const up = d.uplink || {};
+  let rx = null, tx = null;
+  for (const [r, t] of [
+    [up['rx_bytes-r'], up['tx_bytes-r']],
+    [d['rx_bytes-r'],  d['tx_bytes-r']],
+    [up.rx_bytes_r,    up.tx_bytes_r],
+  ]) { if (r != null || t != null) { rx = r; tx = t; break; } }
+  // Port-Tabelle (wan1/wan2) als letzter Ausweg.
+  if (rx == null && tx == null && Array.isArray(d.port_table)) {
+    const wp = d.port_table.find(p => /wan/i.test(p.name || '') && (p['rx_bytes-r'] != null || p['tx_bytes-r'] != null));
+    if (wp) { rx = wp['rx_bytes-r']; tx = wp['tx_bytes-r']; }
+  }
+  if (rx == null && tx == null) return null;
+  // Nur der Gateway-WAN-Uplink zaehlt (nicht AP/Switch-Uplinks).
+  if (!isGw && up.type !== 'wan') return null;
+  return {
+    rxMbit: rx != null ? parseFloat((rx * 8 / 1e6).toFixed(2)) : null,
+    txMbit: tx != null ? parseFloat((tx * 8 / 1e6).toFixed(2)) : null,
+    status: d.state === 1 ? 'ok' : (d.state != null ? 'unknown' : undefined),
+    ip: up.ip || d.wan_ip || null,
+    latencyMs: up.latency != null ? Number(up.latency) : null,
+  };
+}
+
+function handleWanWsMessage(buf) {
+  let msg;
+  try { msg = JSON.parse(buf.toString('utf8')); } catch { return; }
+  if (WAN_WS_DEBUG) {
+    const m = msg && msg.meta && msg.meta.message;
+    if (m) console.log(`WAN-WS msg: ${m} (${(buf.length / 1024).toFixed(1)}kB)`);
+  }
+  const list = Array.isArray(msg) ? msg
+    : Array.isArray(msg && msg.data) ? msg.data
+    : (msg && msg.data) ? [msg.data] : [];
+  let best = null;
+  for (const item of list) {
+    const dev = item && (item.type || item.uplink || item.port_table) ? item : ((item && item.device) || item);
+    const w = extractWanFromDevice(dev);
+    if (w && (w.rxMbit != null || w.txMbit != null)) { best = w; break; }
+  }
+  if (!best) return;
+  const ts = Date.now();
+  const prev = wanState.latest || {};
+  wanState.latest = {
+    ts,
+    status: best.status || prev.status || 'ok',
+    rxMbit: best.rxMbit != null ? best.rxMbit : 0,
+    txMbit: best.txMbit != null ? best.txMbit : 0,
+    latencyMs: best.latencyMs != null ? best.latencyMs : (prev.latencyMs != null ? prev.latencyMs : null),
+    ip: best.ip || prev.ip || null,
+  };
+  pushHistory(wanState.history, ts, wanState.latest.rxMbit, wanState.latest.txMbit);
+  broadcast('wan', wanState.latest);
+  if (!wanWs.gotSample) {
+    wanWs.gotSample = true;
+    console.log(`WAN-WS: erstes Throughput-Sample ↓${wanState.latest.rxMbit} ↑${wanState.latest.txMbit} Mbit/s`);
+  }
+}
+
+function closeWanWs() {
+  clearInterval(wanWs.hb); wanWs.hb = null;
+  const ws = wanWs.ws;
+  wanWs.ws = null;
+  wanWs.connecting = false;
+  if (ws) { try { ws.removeAllListeners(); ws.terminate(); } catch (_) {} }
+}
+
+function onWanWsDown(reason) {
+  closeWanWs();
+  wanWs.gotSample = false;
+  if (!wanWs.running) return;
+  wanWs.failStreak++;
+  if (wanWs.failStreak === 1) console.warn(`WAN-WS Fehler: ${reason}`);
+  // Nach wiederholten Fehlern die Session verwerfen (evtl. abgelaufenes Cookie).
+  if (wanWs.failStreak >= 2) unifiLocalSession = null;
+  // Kein Zuschauer? nicht reconnecten — verbindet neu, sobald ein Client kommt.
+  if (sseClients.size === 0) return;
+  const delay = Math.min(15000, 1000 * 2 ** Math.min(4, wanWs.failStreak - 1));
+  clearTimeout(wanWs.reco);
+  wanWs.reco = setTimeout(ensureWanWsConn, delay);
+}
+
+async function ensureWanWsConn() {
+  if (!wanWs.running || wanWs.ws || wanWs.connecting) return;
+  if (sseClients.size === 0) return; // nur bei aktiven Zuschauern verbinden
+  const cfg = unifiLocalCfg();
+  if (!unifiLocalReady(cfg)) return;
+  wanWs.connecting = true;
+  try {
+    const sess = unifiLocalSession || await unifiLocalLogin(cfg);
+    // Nach dem await kann sich der Zustand geaendert haben.
+    if (!wanWs.running || sseClients.size === 0) { wanWs.connecting = false; return; }
+    const wsUrl = cfg.url.replace(/^http/i, 'ws') + `/proxy/network/wss/s/${cfg.site}/events`;
+    const ws = new WebSocket(wsUrl, {
+      rejectUnauthorized: false, // Console nutzt self-signed Zertifikat (LAN)
+      handshakeTimeout: 8000,
+      headers: {
+        Cookie: sess.cookie,
+        ...(sess.csrf ? { 'X-CSRF-Token': sess.csrf } : {}),
+        Origin: cfg.url,
+      },
+    });
+    wanWs.ws = ws;
+    ws.on('open', () => {
+      wanWs.connecting = false;
+      wanWs.failStreak = 0;
+      if (_wanSrcLogged !== 'LOCAL-WS') { _wanSrcLogged = 'LOCAL-WS'; console.log(`WAN-WS: verbunden → ${wsUrl}`); }
+      clearInterval(wanWs.hb);
+      wanWs.hb = setInterval(() => { try { ws.ping(); } catch (_) {} }, 25000);
+    });
+    ws.on('message', (data) => handleWanWsMessage(data));
+    ws.on('close', (code) => onWanWsDown(`close ${code}`));
+    ws.on('error', (err) => onWanWsDown(err && err.message ? err.message : String(err)));
+  } catch (err) {
+    onWanWsDown(err && err.message ? err.message : String(err));
+  }
+}
+
+// Auf Aenderung der SSE-Client-Zahl reagieren (verbinden/trennen).
+function wanWsOnClientsChanged() {
+  if (!wanWs.running) return;
+  if (sseClients.size > 0) ensureWanWsConn();
+  else { clearTimeout(wanWs.reco); wanWs.reco = null; closeWanWs(); }
+}
+
+function startWanWs() {
+  wanWs.running = true;
+  wanWs.failStreak = 0;
+  wanWsOnClientsChanged();
+}
+function stopWanWs() {
+  wanWs.running = false;
+  clearTimeout(wanWs.reco); wanWs.reco = null;
+  closeWanWs();
+}
+
+// Orchestrator: lokal konfiguriert → Live-Websocket (Sekundentakt);
+// sonst Cloud-stat/health-Polling als Fallback. Idempotent, auch nach
+// Creds-Aenderung ohne Neustart aufrufbar.
 function startWanSampler() {
-  if (wanState.running) return;
-  if (!unifiLocalReady() && !unifiCfg().apiKey) {
+  if (unifiLocalReady()) {
+    stopWanPoller();        // langsames Polling nicht neben dem WS laufen lassen
+    startWanWs();
+    return;
+  }
+  stopWanWs();
+  if (!unifiCfg().apiKey) {
     console.log('WAN-Sampler: UniFi nicht konfiguriert (weder lokal noch Cloud-API-Key)');
     return;
   }
+  if (wanState.running) return;
   wanState.running = true;
-  console.log(`WAN-Sampler: UniFi stat/health @ ${WAN_SAMPLE_MS}ms (idle ${WAN_IDLE_MS}ms)`);
+  console.log(`WAN-Sampler: UniFi stat/health (Cloud) @ ${WAN_SAMPLE_MS}ms (idle ${WAN_IDLE_MS}ms)`);
   sampleWanOnce();
 }
 
@@ -830,6 +1001,8 @@ app.get('/api/glances/stream', (req, res) => {
   // Sobald ein Client zuschaut, das WAN-Idle-Intervall sofort verlassen
   // (einzelner Timer, clearTimeout in scheduleWanNext verhindert Doppelung).
   if (wanState.running) scheduleWanNext();
+  // Lokaler WAN-Websocket verbindet nur solange jemand zuschaut.
+  wanWsOnClientsChanged();
 
   if (netState.latest) sseSend(res, 'net', netState.latest);
   if (wanState.latest) sseSend(res, 'wan', wanState.latest);
@@ -837,7 +1010,7 @@ app.get('/api/glances/stream', (req, res) => {
   ensureGlancesStream();
 
   const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch (_) {} }, 20000);
-  req.on('close', () => { clearInterval(hb); sseClients.delete(res); });
+  req.on('close', () => { clearInterval(hb); sseClients.delete(res); wanWsOnClientsChanged(); });
 });
 
 // ---- Backfill fuer den gewaehlten Zeitraum (10m/1h) ----
