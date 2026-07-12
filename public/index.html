@@ -329,6 +329,29 @@
         <div id="adguardTopList" data-cfg="toplist" style="display:flex;flex-direction:column;gap:6px;flex:1;min-height:0;overflow-y:auto;padding-right:4px;margin-right:-4px;margin-top:8px"></div>
       </div>
 
+      <div data-widget-id="jdownloader" style="grid-column:span 4;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden;display:flex;flex-direction:column">
+        <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('jdownloader')">✕</button></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-shrink:0">
+          <div style="font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:0.14em;color:var(--text-3);text-transform:uppercase"><span data-tile-title>JDownloader</span></div>
+          <div id="jdownloaderStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">● –</div>
+        </div>
+        <div data-cfg="speed" style="display:flex;align-items:baseline;gap:10px;margin-bottom:16px;flex-shrink:0">
+          <span id="jdSpeed" style="font:600 34px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</span>
+          <span id="jdStateLabel" style="font:500 12px 'JetBrains Mono',monospace;color:var(--text-3)">–</span>
+        </div>
+        <div data-cfg="queue" style="display:flex;gap:22px;margin-bottom:14px;flex-shrink:0">
+          <div><div id="jdActive" style="font:600 20px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</div><div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">aktiv</div></div>
+          <div><div id="jdWaiting" style="font:600 20px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</div><div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">wartend</div></div>
+          <div><div id="jdLinkgrabber" style="font:600 20px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</div><div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">Linkgrabber</div></div>
+        </div>
+        <div data-cfg="totals" style="display:flex;gap:22px;margin-bottom:4px;flex-shrink:0">
+          <div><div id="jdFinished" style="font:600 20px/1 'Space Grotesk',sans-serif;color:#3ddc97">–</div><div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">fertig</div></div>
+          <div><div id="jdRemaining" style="font:600 20px/1 'Space Grotesk',sans-serif;color:var(--text-1)">–</div><div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);margin-top:3px">verbleibend</div></div>
+        </div>
+        <div data-cfg="downloads" style="font:600 9px/1 'JetBrains Mono',monospace;letter-spacing:0.1em;color:var(--text-3);text-transform:uppercase;padding-top:14px;margin-top:2px;border-top:1px solid rgba(120,150,200,0.08);flex-shrink:0">Downloads</div>
+        <div id="jdownloaderList" data-cfg="downloads" style="display:flex;flex-direction:column;gap:9px;flex:1;min-height:0;overflow-y:auto;padding-right:4px;margin-right:-4px;margin-top:10px"></div>
+      </div>
+
       <div data-widget-id="unraid-vms" style="grid-column:span 4;background:linear-gradient(180deg,var(--bg-card),var(--bg-card-end));border:1px solid var(--border-2);border-radius:16px;padding:22px;position:relative;overflow:hidden;display:flex;flex-direction:column">
         <div class="tile-controls"><span class="tile-drag-handle" title="Move"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="16" cy="18" r="2"/></svg></span><button class="tile-hide-btn" title="Hide tile" onclick="hideTileNow('unraid-vms')">✕</button></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-shrink:0">
@@ -754,6 +777,32 @@
                 <input id="secretAdguardUrl" placeholder="URL" class="cfg-input" />
                 <input id="secretAdguardUser" placeholder="Username" class="cfg-input" />
                 <input id="secretAdguardPass" type="password" placeholder="Password" class="cfg-input" />
+              </div>
+            </div>
+          </div>
+
+          <!-- TAB: JDOWNLOADER -->
+          <div class="tab" data-tab="jdownloader">
+            <div class="cfg-section">JDownloader</div>
+            <div style="padding:4px 0 12px">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span style="font:700 11px 'JetBrains Mono',monospace;color:#3ddc97;min-width:22px;background:rgba(61,220,151,0.1);border-radius:4px;padding:2px 5px;text-align:center">JD</span>
+                  <div>
+                    <div class="cfg-key">JDownloader</div>
+                    <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">MyJDownloader (my.jdownloader.org) · Downloads &amp; Status</div>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span id="jdownloaderSettingsStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-status)">● –</span>
+                  <button onclick="saveSecrets('jdownloader')" class="cfg-btn">↵ Save</button>
+                </div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;padding-left:32px">
+                <input id="secretJdownloaderEmail" placeholder="MyJDownloader E-Mail" class="cfg-input" />
+                <input id="secretJdownloaderPass" type="password" placeholder="MyJDownloader Passwort" class="cfg-input" />
+                <input id="secretJdownloaderDevice" placeholder="Gerätename (optional)" class="cfg-input" />
+                <input id="secretJdownloaderAppkey" placeholder="App-Key (optional)" class="cfg-input" />
               </div>
             </div>
           </div>

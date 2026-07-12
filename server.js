@@ -20,6 +20,7 @@ function readConfig() {
 
 const http  = require('http');
 const https = require('https');
+const crypto = require('crypto');
 const { Client: SSHClient } = require('ssh2');
 const { WebSocket, WebSocketServer } = require('ws');
 
@@ -539,6 +540,7 @@ const cache = {
   unraidNotif:  { ts: 0, data: null },
   unraidSystem: { ts: 0, data: null },
   unraidUps:    { ts: 0, data: null },
+  jdownloader:  { ts: 0, data: null },
 };
 const GLANCES_TTL   = 500;    // ms – Glances-Metriken hoechstens 2x/s abrufen; muss unter dem
                               // kleinsten Client-Poll-Intervall (400 ms Slider-Minimum) liegen,
@@ -552,6 +554,7 @@ const STATUS_TTL    = 30000;  // ms – Dienste-Verfügbarkeit (30 s)
 const WEATHER_TTL   = 600000; // ms – Wetterdaten (10 min)
 const UNIFI_TTL     = 10000;  // ms – UniFi-Netzwerkdaten (10 s)
 const NEXTCLOUD_TTL = 60000;  // ms – Nextcloud-Speicher/Nutzer (60 s)
+const JDOWNLOADER_TTL = 4000; // ms – Downloads bewegen sich schnell, kurz cachen
 
 /* ============================================================
    Live-Netzwerk-Sampler + SSE-Push
@@ -1483,6 +1486,223 @@ app.get('/api/adguard', async (req, res) => {
 });
 
 /* ============================================================
+   JDownloader-Integration (MyJDownloader Cloud-API)
+   ------------------------------------------------------------
+   Anmeldung laeuft ueber my.jdownloader.org: E-Mail + Passwort leiten
+   loginSecret/deviceSecret ab (SHA256), /my/connect liefert einen
+   sessiontoken, daraus werden server-/device-Encryption-Tokens gebildet.
+   Server-Calls (/my/*) sind HMAC-SHA256-signiert; Geraete-Calls tragen
+   einen AES-128-CBC-verschluesselten JSON-Body. Alles mit node:crypto,
+   kein zusaetzliches Paket. Session wird gecacht (analog UniFi lokal),
+   bei Fehler einmal neu verbunden.
+   ============================================================ */
+const JD_API = 'api.jdownloader.org';
+const JD_CONTENT_TYPE = 'application/aesjson-jd; charset=utf-8';
+// Felder, die queryLinks je Download liefern soll.
+const JD_LINK_QUERY = {
+  bytesLoaded: true, bytesTotal: true, speed: true, eta: true,
+  status: true, finished: true, host: true, enabled: true, running: true,
+  url: false, maxResults: -1, startAt: 0,
+};
+
+let jdSession = null;         // { sessionToken, serverEnc, deviceEnc } — nach /my/connect
+let _jdRid = Date.now();
+function jdNextRid() { return ++_jdRid; }
+
+function jdownloaderCfg() {
+  return {
+    email:  (getSecret('JDOWNLOADER_EMAIL')  || '').trim(),
+    pass:    getSecret('JDOWNLOADER_PASS')   || '',
+    device: (getSecret('JDOWNLOADER_DEVICE') || '').trim(),
+    appkey: (getSecret('JDOWNLOADER_APPKEY') || '').trim() || 'dashsharp',
+  };
+}
+function jdownloaderReady(cfg = jdownloaderCfg()) {
+  return !!(cfg.email && cfg.pass);
+}
+
+// --- Krypto-Helfer (SHA256-Token = 32 Byte → IV = erste 16, Key = zweite 16) ---
+function jdSecret(email, pass, domain) {
+  return crypto.createHash('sha256')
+    .update(Buffer.from(email.toLowerCase() + pass + domain, 'utf8')).digest();
+}
+function jdSign(key, data) {
+  return crypto.createHmac('sha256', key).update(data, 'utf8').digest('hex');
+}
+function jdEncrypt(token, str) {
+  const c = crypto.createCipheriv('aes-128-cbc', token.subarray(16, 32), token.subarray(0, 16));
+  return Buffer.concat([c.update(Buffer.from(str, 'utf8')), c.final()]).toString('base64');
+}
+function jdDecrypt(token, b64) {
+  const d = crypto.createDecipheriv('aes-128-cbc', token.subarray(16, 32), token.subarray(0, 16));
+  return Buffer.concat([d.update(Buffer.from(b64, 'base64')), d.final()]).toString('utf8');
+}
+// URL-Encoding wie Pythons urllib.quote (safe='/') — die signierte Query muss
+// zeichengenau der gesendeten entsprechen.
+function jdQuote(s) {
+  return String(s).replace(/[^A-Za-z0-9_.\-~/]/g,
+    (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'));
+}
+
+// Roh-HTTPS gegen api.jdownloader.org — sendet den Pfad zeichengenau, damit
+// Signatur und Wire-Format identisch bleiben (fetch wuerde ggf. normalisieren).
+function jdHttp(method, pathQuery, body = null, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    const payload = body != null ? Buffer.from(body, 'utf8') : null;
+    let settled = false;
+    const req = https.request({
+      hostname: JD_API, port: 443, path: pathQuery, method,
+      headers: payload
+        ? { 'Content-Type': JD_CONTENT_TYPE, 'Content-Length': payload.length }
+        : {},
+    }, (res) => {
+      let raw = '';
+      res.on('data', (c) => raw += c);
+      res.on('end', () => {
+        if (settled) return; settled = true; clearTimeout(timer);
+        resolve({ status: res.statusCode, text: raw });
+      });
+    });
+    const timer = setTimeout(() => {
+      if (settled) return; settled = true; req.destroy(); reject(new Error('timeout'));
+    }, timeoutMs);
+    req.on('error', (e) => { if (settled) return; settled = true; clearTimeout(timer); reject(e); });
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+// /my/connect → { sessionToken, serverEnc, deviceEnc }
+async function jdConnect(cfg) {
+  const loginSecret  = jdSecret(cfg.email, cfg.pass, 'server');
+  const deviceSecret = jdSecret(cfg.email, cfg.pass, 'device');
+  const q = `/my/connect?email=${jdQuote(cfg.email)}&appkey=${jdQuote(cfg.appkey)}&rid=${jdNextRid()}`;
+  const r = await jdHttp('GET', `${q}&signature=${jdSign(loginSecret, q)}`);
+  if (r.status !== 200) throw new Error(`connect HTTP ${r.status}`);
+  const json = JSON.parse(jdDecrypt(loginSecret, r.text));
+  const st = Buffer.from(json.sessiontoken, 'hex');
+  return {
+    sessionToken: json.sessiontoken,
+    serverEnc: crypto.createHash('sha256').update(Buffer.concat([loginSecret, st])).digest(),
+    deviceEnc: crypto.createHash('sha256').update(Buffer.concat([deviceSecret, st])).digest(),
+  };
+}
+
+// /my/listdevices → [{ id, name, ... }]
+async function jdListDevices(sess) {
+  const q = `/my/listdevices?sessiontoken=${jdQuote(sess.sessionToken)}&rid=${jdNextRid()}`;
+  const r = await jdHttp('GET', `${q}&signature=${jdSign(sess.serverEnc, q)}`);
+  if (r.status !== 200) throw new Error(`listdevices HTTP ${r.status}`);
+  return JSON.parse(jdDecrypt(sess.serverEnc, r.text)).list || [];
+}
+
+// Geraete-Aktion (POST, AES-Body) → response.data
+async function jdAction(sess, deviceId, actionPath, params = []) {
+  const bodyObj = {
+    apiVer: 1,
+    url: actionPath,
+    params: params.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))),
+    rid: jdNextRid(),
+  };
+  const enc = jdEncrypt(sess.deviceEnc, JSON.stringify(bodyObj).replace(/"null"/g, 'null'));
+  const r = await jdHttp('POST', `/t_${sess.sessionToken}_${deviceId}${actionPath}`, enc);
+  if (r.status !== 200) throw new Error(`${actionPath} HTTP ${r.status}`);
+  return JSON.parse(jdDecrypt(sess.deviceEnc, r.text)).data;
+}
+
+// Aus den Roh-Antworten das normalisierte Envelope bauen.
+function buildJdResult(dev, state, speedBps, links, lgLinks) {
+  const list = Array.isArray(links) ? links : [];
+  let remaining = 0, active = 0, waiting = 0, finished = 0, sumSpeed = 0;
+  const downloads = list.map((l) => {
+    const total = l.bytesTotal || 0;
+    const loaded = l.bytesLoaded || 0;
+    const isFin = l.finished === true || (total > 0 && loaded >= total);
+    if (isFin) finished++;
+    else { remaining += Math.max(0, total - loaded); if (l.running === true) active++; else waiting++; }
+    if (l.running === true) sumSpeed += (l.speed || 0);
+    return {
+      uuid: l.uuid != null ? String(l.uuid) : (l.name || '') + '|' + total,
+      name: l.name || '—',
+      host: l.host || '',
+      bytesLoaded: loaded,
+      bytesTotal: total,
+      pct: total > 0 ? Math.min(100, Math.round(loaded / total * 100)) : (isFin ? 100 : 0),
+      speedBps: l.running === true ? (l.speed || 0) : 0,
+      etaSec: (typeof l.eta === 'number' && l.eta >= 0) ? l.eta : null,
+      status: l.status || '',
+      finished: isFin,
+      running: l.running === true,
+    };
+  });
+  // Laufende zuerst (schnellste oben), dann wartende, fertige zuletzt.
+  const rank = (d) => (d.running ? 0 : d.finished ? 2 : 1);
+  downloads.sort((a, b) => (rank(a) - rank(b)) || (b.speedBps - a.speedBps));
+
+  const stateStr = typeof state === 'string' ? state : '';
+  return {
+    ok: true,
+    deviceName: dev.name || '',
+    state: stateStr,
+    running: /RUNNING/i.test(stateStr) || active > 0,
+    paused: /PAUSE/i.test(stateStr),
+    speedBps: typeof speedBps === 'number' ? speedBps : sumSpeed,
+    activeCount: active,
+    waitingCount: waiting,
+    finishedCount: finished,
+    totalCount: list.length,
+    linkgrabberCount: Array.isArray(lgLinks) ? lgLinks.length : null,
+    remainingBytes: remaining,
+    downloads,
+  };
+}
+
+async function jdownloaderFetch(cfg) {
+  const run = async () => {
+    if (!jdSession) jdSession = await jdConnect(cfg);
+    const devices = await jdListDevices(jdSession);
+    let dev = cfg.device
+      ? devices.find((d) => (d.name || '').trim().toLowerCase() === cfg.device.toLowerCase())
+      : null;
+    if (!dev) dev = devices[0];
+    if (!dev) { const e = new Error('device_offline'); e.jdOffline = true; throw e; }
+    const [state, speed, links, lg] = await Promise.all([
+      jdAction(jdSession, dev.id, '/downloadcontroller/getCurrentState').catch(() => null),
+      jdAction(jdSession, dev.id, '/downloadcontroller/getSpeedInBps').catch(() => null),
+      jdAction(jdSession, dev.id, '/downloadsV2/queryLinks', [JD_LINK_QUERY]).catch(() => []),
+      jdAction(jdSession, dev.id, '/linkgrabberv2/queryLinks', [{ maxResults: -1, startAt: 0 }]).catch(() => null),
+    ]);
+    return buildJdResult(dev, state, speed, links, lg);
+  };
+  try {
+    return await run();
+  } catch (err) {
+    if (err.jdOffline) throw err;          // Geraet offline → kein Reconnect noetig
+    jdSession = null;                      // Session vermutlich abgelaufen → einmal neu verbinden
+    return await run();
+  }
+}
+
+app.get('/api/jdownloader', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const cfg = jdownloaderCfg();
+  if (!jdownloaderReady(cfg)) return res.json({ ok: false, error: 'not_configured' });
+
+  if (cache.jdownloader.data && Date.now() - cache.jdownloader.ts < JDOWNLOADER_TTL) {
+    return res.json(cache.jdownloader.data);
+  }
+  try {
+    const result = await jdownloaderFetch(cfg);
+    cache.jdownloader = { ts: Date.now(), data: result };
+    res.json(result);
+  } catch (err) {
+    if (err.jdOffline) return res.json({ ok: false, error: 'device_offline' });
+    console.error('JDownloader-Abruf fehlgeschlagen:', err.message);
+    res.json({ ok: false, error: 'fetch_failed', message: err.message });
+  }
+});
+
+/* ============================================================
    Plex Media Server Integration
    Token bleibt serverseitig; Poster werden per Proxy geliefert.
    ============================================================ */
@@ -1879,8 +2099,8 @@ app.post('/api/quicklinks', (req, res) => {
   }
 });
 
-const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'UNIFI_LOCAL_URL', 'UNIFI_LOCAL_USER', 'UNIFI_LOCAL_PASS', 'UNIFI_LOCAL_SITE', 'UNIFI_GW_SSH_HOST', 'UNIFI_GW_SSH_PORT', 'UNIFI_GW_SSH_USER', 'UNIFI_GW_SSH_PASSWORD', 'UNIFI_GW_SSH_KEY', 'UNIFI_GW_WAN_IFACE', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH', 'UNRAID_URL', 'UNRAID_API_KEY', 'UNRAID_SSH_HOST', 'UNRAID_SSH_PORT', 'UNRAID_SSH_USER', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'UNRAID_DANGER_ACTIONS'];
-const SECRETS_MASKED = new Set(['ADGUARD_PASS', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'UNIFI_LOCAL_PASS', 'UNIFI_GW_SSH_PASSWORD', 'UNIFI_GW_SSH_KEY', 'NEXTCLOUD_PASS', 'UNRAID_API_KEY', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY']);
+const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'UNIFI_LOCAL_URL', 'UNIFI_LOCAL_USER', 'UNIFI_LOCAL_PASS', 'UNIFI_LOCAL_SITE', 'UNIFI_GW_SSH_HOST', 'UNIFI_GW_SSH_PORT', 'UNIFI_GW_SSH_USER', 'UNIFI_GW_SSH_PASSWORD', 'UNIFI_GW_SSH_KEY', 'UNIFI_GW_WAN_IFACE', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH', 'UNRAID_URL', 'UNRAID_API_KEY', 'UNRAID_SSH_HOST', 'UNRAID_SSH_PORT', 'UNRAID_SSH_USER', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'UNRAID_DANGER_ACTIONS', 'JDOWNLOADER_EMAIL', 'JDOWNLOADER_PASS', 'JDOWNLOADER_DEVICE', 'JDOWNLOADER_APPKEY'];
+const SECRETS_MASKED = new Set(['ADGUARD_PASS', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'UNIFI_LOCAL_PASS', 'UNIFI_GW_SSH_PASSWORD', 'UNIFI_GW_SSH_KEY', 'NEXTCLOUD_PASS', 'UNRAID_API_KEY', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'JDOWNLOADER_PASS']);
 
 app.get('/api/secrets', (req, res) => {
   const out = {};
@@ -1904,6 +2124,7 @@ app.post('/api/secrets', (req, res) => {
     // Caches invalidieren damit naechster Poll sofort mit neuen Creds laeuft
     for (const k of Object.keys(cache)) cache[k] = { ts: 0, data: null };
     unifiLocalSession = null; // ggf. geaenderte lokale UniFi-Creds erzwingen Re-Login
+    jdSession = null;         // ggf. geaenderte MyJDownloader-Creds erzwingen Reconnect
     _wanSrcLogged = null;     // Quellenwechsel (lokal<->cloud) beim naechsten Poll loggen
     stopGwSsh();              // ggf. geaenderte Gateway-SSH-Creds erzwingen Reconnect
     // Frisch gesetzte UniFi-Creds starten den WAN-Sampler ohne Neustart (idempotent).
