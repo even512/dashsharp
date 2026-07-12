@@ -39,6 +39,7 @@ and no build step.
 - 🎛️ **Per-tile settings** — hover a tile, open ⋯ → Einstellungen: rename the tile, toggle its building blocks (rings, charts, summaries, posters, columns …) and cap list lengths; stored with the dashboard layout
 - ⚡ **Live widgets** — System (via [Glances](https://nicolargo.github.io/glances/)), Docker, AdGuard Home, Plex, UniFi Network & Protect, Nextcloud, Unraid, weather
 - 🖥️ **Unraid suite** — eight tiles on the official GraphQL API: VMs (incl. VNC console), Docker containers (start/stop/restart), array & parity (status, capacity, check control), per-disk health, shares, notifications (incl. archive), system info (live CPU/RAM, versions, reboot/shutdown via SSH) and UPS — risky actions locked behind a server-side opt-in
+- 🟢 **Service monitoring** — the Service Status tile checks your services and shows online/offline + latency; the check method is picked automatically from what you enter: a URL (`http(s)://…`) → HTTP, `host:port` → TCP connect, a bare hostname or IP → ICMP ping
 - ⚙️ **Configure in the browser** — everything under `/settings`, no config files to hand-edit
 - 🔒 **Private by design** — no telemetry, no tracking; secrets stay in your mounted config volume
 - 🐳 **One container** — `node:20-alpine`, multi-arch (amd64/arm64), healthcheck, ~48 MB
@@ -190,7 +191,7 @@ config/
 
 `services.yaml` holds title, search and quicklinks and is auto-created on first run. `secrets.json`
 holds your API keys/tokens, set via the UI. The rest track dashboard state: tile order and visibility,
-quick-access tiles, custom disk names, and health-check URLs.
+quick-access tiles, custom disk names, and health-check targets (URL, `host:port` or a bare host/IP).
 
 Back up that folder and you've backed up everything. Image updates never touch it.
 

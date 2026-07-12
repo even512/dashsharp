@@ -20,6 +20,8 @@ function readConfig() {
 
 const http  = require('http');
 const https = require('https');
+const net   = require('net');
+const { execFile } = require('child_process');
 const { Client: SSHClient } = require('ssh2');
 const { WebSocket, WebSocketServer } = require('ws');
 
@@ -348,7 +350,23 @@ function readStatusCfg() {
   catch { return { services: [] }; }
 }
 
+// Prueft einen Dienst und liefert immer die gleiche Form
+// { name, online, statusCode, responseMs, error? }. Die Pruefmethode wird aus
+// dem Ziel abgeleitet, damit ein reiner Hostname/IP „angepingt" werden kann:
+//   http(s)://…   -> HTTP-GET (wie bisher)
+//   host:port     -> TCP-Connect-Reachability
+//   host / IP     -> ICMP-Ping (System-`ping`-Binary)
 function checkService(name, url) {
+  const target = String(url || '').trim();
+  if (/^https?:\/\//i.test(target)) return checkHttp(name, target);
+  const { host, port } = parseHostPort(target);
+  if (!isValidHost(host)) {
+    return Promise.resolve({ name, online: false, statusCode: null, responseMs: null, error: 'invalid' });
+  }
+  return port != null ? checkTcp(name, host, port) : checkPing(name, host);
+}
+
+function checkHttp(name, url) {
   return new Promise((resolve) => {
     const t0  = Date.now();
     const lib = url.startsWith('https://') ? https : http;
@@ -364,6 +382,73 @@ function checkService(name, url) {
     } catch {
       finish({ name, online: false, statusCode: null, responseMs: null, error: 'unreachable' });
     }
+  });
+}
+
+// Zerlegt „host", „host:port" und „[ipv6]:port". Ohne Port ist port === null.
+// Ein evtl. vorangestelltes Schema (z.B. tcp://) und Pfad werden entfernt.
+function parseHostPort(target) {
+  const s = target.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split('/')[0];
+  const v6 = s.match(/^\[([^\]]+)\](?::(\d{1,5}))?$/);   // [ipv6](:port)
+  if (v6) return { host: v6[1], port: v6[2] ? +v6[2] : null };
+  if ((s.match(/:/g) || []).length === 1) {              // host:port (nicht nackte IPv6)
+    const [h, p] = s.split(':');
+    if (/^\d{1,5}$/.test(p)) return { host: h, port: +p };
+  }
+  return { host: s, port: null };
+}
+
+// Nur harmlose Hostnamen/IPs zulassen; insbesondere nichts, was `ping` als Flag
+// lesen koennte (fuehrendes „-"). execFile nutzt ohnehin ein Args-Array (keine
+// Shell), das ist die zusaetzliche Absicherung gegen Argument-Injection.
+function isValidHost(host) {
+  return typeof host === 'string'
+    && host.length > 0 && host.length <= 255
+    && host[0] !== '-'
+    && /^[A-Za-z0-9.:_-]+$/.test(host);
+}
+
+function pingArgs(host) {
+  if (process.platform === 'win32')  return ['-n', '1', '-w', '2000', host];
+  if (process.platform === 'darwin') return ['-c', '1', '-t', '2', host];
+  return ['-c', '1', '-W', '2', host]; // Linux (iputils & busybox/alpine)
+}
+
+// ICMP-Ping ueber das System-`ping`-Binary. online = Exit-Code 0. Fehlt das
+// Binary (ENOENT) oder verweigert der Kernel den Raw-Socket -> offline.
+function checkPing(name, host) {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    execFile('ping', pingArgs(host), { timeout: 6000, windowsHide: true }, (err, stdout) => {
+      if (err) {
+        const error = err.code === 'ENOENT' ? 'ping_unavailable'
+                    : err.killed             ? 'timeout'
+                    :                          'unreachable';
+        return resolve({ name, online: false, statusCode: null, responseMs: null, error });
+      }
+      const m = /time[=<]\s*([\d.]+)/i.exec(stdout || '');
+      const responseMs = m ? Math.round(parseFloat(m[1])) : (Date.now() - t0);
+      resolve({ name, online: true, statusCode: null, responseMs });
+    });
+  });
+}
+
+// TCP-Connect-Reachability: online, sobald der Handshake steht.
+function checkTcp(name, host, port) {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    let done = false;
+    const socket = net.createConnection({ host, port });
+    const finish = (result) => {
+      if (done) return;
+      done = true;
+      try { socket.destroy(); } catch { /* ignore */ }
+      resolve(result);
+    };
+    socket.setTimeout(5000);
+    socket.on('connect', () => finish({ name, online: true,  statusCode: null, responseMs: Date.now() - t0 }));
+    socket.on('timeout', () => finish({ name, online: false, statusCode: null, responseMs: null, error: 'timeout' }));
+    socket.on('error',   () => finish({ name, online: false, statusCode: null, responseMs: null, error: 'unreachable' }));
   });
 }
 

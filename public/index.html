@@ -951,10 +951,10 @@
           <!-- TAB: SERVICE MONITORING -->
           <div class="tab" data-tab="monitoring">
             <div class="cfg-section">Service Monitoring</div>
-            <div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-dim);margin-bottom:10px">URLs that are periodically checked for availability</div>
+            <div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-dim);margin-bottom:10px">Periodically checked for availability &middot; URL (http/https) &rarr; HTTP &nbsp;|&nbsp; host:port &rarr; TCP &nbsp;|&nbsp; hostname / IP &rarr; Ping</div>
             <div style="display:grid;grid-template-columns:1fr 1.4fr auto;gap:6px;margin-bottom:8px;align-items:center">
               <input id="statusServiceName" placeholder="Name" class="cfg-input" />
-              <input id="statusServiceUrl" placeholder="http://10.0.0.1:8080" class="cfg-input" />
+              <input id="statusServiceUrl" placeholder="192.168.1.10 &middot; host:port &middot; http://10.0.0.1:8080" class="cfg-input" />
               <button id="statusAddBtn" class="cfg-btn">+ Add</button>
             </div>
             <div id="statusServiceList" style="display:flex;flex-direction:column;gap:4px"></div>

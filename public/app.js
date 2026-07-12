@@ -3740,12 +3740,13 @@ const WIDGET_REFRESH = {
   'unifi-aps':            () => pollUnifi(),
 };
 
-// Außerhalb des Design-Modus gibt es kein „✓ Fertig" → Änderungen verzögert
-// (leise) speichern; im Design-Modus greift die Snapshot-Logik und
-// gespeichert wird erst über „✓ Fertig".
+// Änderungen werden immer verzögert (leise) gespeichert — auch im Design-Modus,
+// damit Layout-Anpassungen (Größe/Position, Ein-/Ausblenden, Kachel-Optionen)
+// einen Reload überleben, ohne dass zwingend „✓ Fertig" geklickt werden muss.
+// „Verwerfen" macht die Auto-Saves anhand des beim Betreten gezogenen Snapshots
+// wieder rückgängig (siehe exitDesignMode/saveDashboard).
 let _cfgSaveTimer = null;
 function _saveIfLive() {
-  if (_designOn) return;
   clearTimeout(_cfgSaveTimer);
   _cfgSaveTimer = setTimeout(() => saveDashboard({ silent: true }), 600);
 }
@@ -3821,7 +3822,7 @@ function buildGridForPage(pageId) {
   }, gridEl);
   // Zellhöhe als CSS-Variable → Rasterlinien im Design-Modus (styles.css).
   gridEl.style.setProperty('--gs-cell-h', GRID_CELL_HEIGHT + 'px');
-  grid.on('change', () => { if (_designOn) _syncGridToModel(pageId); });
+  grid.on('change', () => { if (_designOn) { _syncGridToModel(pageId); _saveIfLive(); } });
   // Schmales Fenster: selbst auf 1 Spalte stapeln (siehe Resize-Listener).
   // Gridstacks columnOpts/moveScale rundete beim Zurückschalten Breiten auf
   // und ließ Kacheln breiter werden als eingestellt — daher kein columnOpts.
@@ -3969,7 +3970,10 @@ async function saveDashboard(opts) {
       body: JSON.stringify(_dashboard),
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    _designSnapshot = _clone(_dashboard);
+    // Den „Verwerfen"-Bezugspunkt nur außerhalb des Design-Modus fortschreiben,
+    // sonst würden die Auto-Saves während des Bearbeitens den Snapshot
+    // überschreiben und „Verwerfen" käme nicht mehr auf den Ausgangsstand zurück.
+    if (!_designOn) _designSnapshot = _clone(_dashboard);
     if (!opts || !opts.silent) toast('Layout gespeichert');
   } catch (err) {
     console.error('Failed to save dashboard:', err.message);
@@ -4077,12 +4081,14 @@ function exitDesignMode(save) {
   if (save) {
     saveDashboard();
   } else if (_designSnapshot) {
+    clearTimeout(_cfgSaveTimer);          // ausstehende Auto-Saves nicht mehr feuern lassen
     _dashboard = _designSnapshot;
     _designSnapshot = null;
     if (!_dashboard.pages.some((p) => p.id === _activePage)) _activePage = _dashboard.pages[0].id;
     _rebuildAllGrids();
     applyAllTileConfigs(); // verworfene Kachel-Einstellungen zurücknehmen
     renderPageTabs();
+    saveDashboard({ silent: true }); // während des Bearbeitens Auto-Gespeichertes serverseitig zurücksetzen
   }
   _designOn = false;
   document.body.classList.remove('design-mode');
@@ -4137,6 +4143,7 @@ function hideTile(tileId) {
   t._wasPlaced = true; // Geometrie merken → „Rückgängig" stellt die Position wieder her
   _rebuildActivePage();
   renderCatalogIfOpen();
+  _saveIfLive();
   toast(`${WIDGET_BY_ID.get(tileId)?.label || 'Kachel'} ausgeblendet`, {
     actionLabel: 'Rückgängig', action: () => addWidgetToActivePage(tileId),
   });
@@ -4196,6 +4203,7 @@ function setTileSize(tileId, w, h) {
   if (grid && item) grid.update(item, { w, h });
   const t = _tileById(tileId, _activePage);
   if (t) { t.w = w; t.h = h; }
+  _saveIfLive();
 }
 
 /* ---------- Tile options menu (popup) ---------- */
