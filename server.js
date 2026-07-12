@@ -1589,6 +1589,15 @@ const JD_LINK_QUERY = {
   status: true, finished: true, host: true, enabled: true, running: true,
   url: false, maxResults: -1, startAt: 0,
 };
+// Felder, die queryPackages je Paket liefern soll — die Kachelliste zeigt
+// Paketnamen statt Einzeldateien.
+const JD_PACKAGE_QUERY = {
+  bytesLoaded: true, bytesTotal: true, speed: true, eta: true,
+  status: true, finished: true, enabled: true, running: true,
+  maxResults: -1, startAt: 0,
+};
+// Wie viele der zuletzt hinzugefuegten Pakete die Download-Liste anzeigt.
+const JD_RECENT_PACKAGES = 5;
 
 let jdSession = null;         // { sessionToken, serverEnc, deviceEnc } — nach /my/connect
 let _jdRid = Date.now();
@@ -1696,33 +1705,44 @@ async function jdAction(sess, deviceId, actionPath, params = []) {
 }
 
 // Aus den Roh-Antworten das normalisierte Envelope bauen.
-function buildJdResult(dev, state, speedBps, links, lgLinks) {
+function buildJdResult(dev, state, speedBps, links, lgLinks, packages) {
+  // Aggregat-Zahlen (aktiv/wartend/fertig/verbleibend/Speed) werden weiter aus
+  // den einzelnen Links gebildet — sie zaehlen genauer als auf Paketebene.
   const list = Array.isArray(links) ? links : [];
   let remaining = 0, active = 0, waiting = 0, finished = 0, sumSpeed = 0;
-  const downloads = list.map((l) => {
+  for (const l of list) {
     const total = l.bytesTotal || 0;
     const loaded = l.bytesLoaded || 0;
     const isFin = l.finished === true || (total > 0 && loaded >= total);
     if (isFin) finished++;
     else { remaining += Math.max(0, total - loaded); if (l.running === true) active++; else waiting++; }
     if (l.running === true) sumSpeed += (l.speed || 0);
-    return {
-      uuid: l.uuid != null ? String(l.uuid) : (l.name || '') + '|' + total,
-      name: l.name || '—',
-      host: l.host || '',
-      bytesLoaded: loaded,
-      bytesTotal: total,
-      pct: total > 0 ? Math.min(100, Math.round(loaded / total * 100)) : (isFin ? 100 : 0),
-      speedBps: l.running === true ? (l.speed || 0) : 0,
-      etaSec: (typeof l.eta === 'number' && l.eta >= 0) ? l.eta : null,
-      status: l.status || '',
-      finished: isFin,
-      running: l.running === true,
-    };
-  });
-  // Laufende zuerst (schnellste oben), dann wartende, fertige zuletzt.
-  const rank = (d) => (d.running ? 0 : d.finished ? 2 : 1);
-  downloads.sort((a, b) => (rank(a) - rank(b)) || (b.speedBps - a.speedBps));
+  }
+
+  // Download-Liste: Pakete statt Einzeldateien, nur die zuletzt hinzugefuegten.
+  // Die Paket-UUID steigt monoton mit der Anlagezeit → absteigend = neueste zuerst.
+  const pkgs = Array.isArray(packages) ? packages : [];
+  const downloads = pkgs
+    .slice()
+    .sort((a, b) => (Number(b.uuid) || 0) - (Number(a.uuid) || 0))
+    .slice(0, JD_RECENT_PACKAGES)
+    .map((p) => {
+      const total = p.bytesTotal || 0;
+      const loaded = p.bytesLoaded || 0;
+      const isFin = p.finished === true || (total > 0 && loaded >= total);
+      return {
+        uuid: p.uuid != null ? String(p.uuid) : (p.name || '') + '|' + total,
+        name: p.name || '—',
+        bytesLoaded: loaded,
+        bytesTotal: total,
+        pct: total > 0 ? Math.min(100, Math.round(loaded / total * 100)) : (isFin ? 100 : 0),
+        speedBps: p.running === true ? (p.speed || 0) : 0,
+        etaSec: (typeof p.eta === 'number' && p.eta >= 0) ? p.eta : null,
+        status: p.status || '',
+        finished: isFin,
+        running: p.running === true,
+      };
+    });
 
   const stateStr = typeof state === 'string' ? state : '';
   return {
@@ -1751,13 +1771,14 @@ async function jdownloaderFetch(cfg) {
       : null;
     if (!dev) dev = devices[0];
     if (!dev) { const e = new Error('device_offline'); e.jdOffline = true; throw e; }
-    const [state, speed, links, lg] = await Promise.all([
+    const [state, speed, links, lg, packages] = await Promise.all([
       jdAction(jdSession, dev.id, '/downloadcontroller/getCurrentState').catch(() => null),
       jdAction(jdSession, dev.id, '/downloadcontroller/getSpeedInBps').catch(() => null),
       jdAction(jdSession, dev.id, '/downloadsV2/queryLinks', [JD_LINK_QUERY]).catch(() => []),
       jdAction(jdSession, dev.id, '/linkgrabberv2/queryLinks', [{ maxResults: -1, startAt: 0 }]).catch(() => null),
+      jdAction(jdSession, dev.id, '/downloadsV2/queryPackages', [JD_PACKAGE_QUERY]).catch(() => []),
     ]);
-    return buildJdResult(dev, state, speed, links, lg);
+    return buildJdResult(dev, state, speed, links, lg, packages);
   };
   try {
     return await run();
