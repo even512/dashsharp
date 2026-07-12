@@ -37,7 +37,7 @@ and no build step.
 
 - 🧩 **Design mode** — freely place & resize tiles on a grid, add/hide them from a catalog, rename section headings, and spread widgets across multiple pages; the layout is saved server-side
 - 🎛️ **Per-tile settings** — hover a tile, open ⋯ → Einstellungen: rename the tile, toggle its building blocks (rings, charts, summaries, posters, columns …) and cap list lengths; stored with the dashboard layout
-- ⚡ **Live widgets** — System (via [Glances](https://nicolargo.github.io/glances/)), Docker, AdGuard Home, Plex, UniFi Network & Protect, Nextcloud, Unraid, weather
+- ⚡ **Live widgets** — System (via [Glances](https://nicolargo.github.io/glances/)), Docker, AdGuard Home, JDownloader, Plex, UniFi Network & Protect, Nextcloud, Unraid, weather
 - 🖥️ **Unraid suite** — eight tiles on the official GraphQL API: VMs (incl. VNC console), Docker containers (start/stop/restart), array & parity (status, capacity, check control), per-disk health, shares, notifications (incl. archive), system info (live CPU/RAM, versions, reboot/shutdown via SSH) and UPS — risky actions locked behind a server-side opt-in
 - 🟢 **Service monitoring** — the Service Status tile checks your services and shows online/offline + latency; the check method is picked automatically from what you enter: a URL (`http(s)://…`) → HTTP, `host:port` → TCP connect, a bare hostname or IP → ICMP ping
 - ⚙️ **Configure in the browser** — everything under `/settings`, no config files to hand-edit
@@ -89,6 +89,7 @@ Everything is configured from the web UI under **Settings → Integrations** and
 |---|---|
 | System / Docker | Glances URL (`http://host:61208`) |
 | AdGuard Home | URL, user, password |
+| JDownloader | MyJDownloader email + password (+ optional device name) |
 | Plex | URL, X-Plex-Token |
 | UniFi | Cloud API key (api.ui.com) |
 | Nextcloud | URL, user, app password |

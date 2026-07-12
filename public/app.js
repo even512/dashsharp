@@ -461,6 +461,7 @@ let clockTimer = null;
 let dataTimer = null;
 let dockerTimer = null;
 let adguardTimer = null;
+let jdownloaderTimer = null;
 let plexTimer = null;
 let statusTimer = null;
 let weatherTimer = null;
@@ -2019,6 +2020,107 @@ function startAdGuard() {
   adguardTimer = setInterval(pollAdGuard, ADGUARD_POLL_MS);
 }
 
+/* ---------- JDownloader (MyJDownloader) ---------- */
+const JDOWNLOADER_POLL_MS = 4000;
+
+function jdFmtBytes(b) {
+  b = b || 0;
+  if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
+  if (b >= 1e6) return (b / 1e6).toFixed(0) + ' MB';
+  if (b >= 1e3) return (b / 1e3).toFixed(0) + ' KB';
+  return Math.round(b) + ' B';
+}
+function jdFmtSpeed(bps) {
+  bps = bps || 0;
+  if (bps >= 1e6) return (bps / 1e6).toFixed(1) + ' MB/s';
+  if (bps >= 1e3) return (bps / 1e3).toFixed(0) + ' KB/s';
+  return Math.round(bps) + ' B/s';
+}
+function jdFmtEta(sec) {
+  if (sec == null || sec < 0) return '';
+  if (sec >= 3600) return Math.floor(sec / 3600) + 'h ' + Math.floor((sec % 3600) / 60) + 'm';
+  if (sec >= 60) return Math.floor(sec / 60) + 'm ' + (sec % 60) + 's';
+  return sec + 's';
+}
+function setJdownloaderStatus(text, color) {
+  ['jdownloaderStatus', 'jdownloaderSettingsStatus'].forEach((id) => {
+    const el = $(id);
+    if (el) { el.textContent = '● ' + text; el.style.color = color; }
+  });
+}
+function createJdRow() {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;flex-direction:column;gap:5px';
+  row.innerHTML =
+    `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;font:500 11px 'JetBrains Mono',monospace">` +
+      `<span class="jd-name" style="color:var(--text-15);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>` +
+      `<span class="jd-meta" style="color:var(--text-3);flex-shrink:0;white-space:nowrap"></span>` +
+    `</div>` +
+    `<div style="height:4px;border-radius:2px;background:rgba(120,150,200,0.12);overflow:hidden">` +
+      `<div class="jd-bar" style="height:100%;width:0;border-radius:2px;transition:width .6s ease"></div>` +
+    `</div>`;
+  row._name = row.querySelector('.jd-name');
+  row._meta = row.querySelector('.jd-meta');
+  row._bar  = row.querySelector('.jd-bar');
+  return row;
+}
+function updateJdRow(row, d, prev) {
+  if (!prev || prev.name !== d.name) row._name.textContent = d.name;
+  const color = d.running ? '#3ddc97' : (d.finished ? 'rgba(120,150,200,0.4)' : '#ffb454');
+  let meta;
+  if (d.finished)      meta = 'fertig · ' + jdFmtBytes(d.bytesTotal);
+  else if (d.running)  meta = d.pct + '% · ' + jdFmtSpeed(d.speedBps) + (jdFmtEta(d.etaSec) ? ' · ' + jdFmtEta(d.etaSec) : '');
+  else                 meta = d.pct + '% · wartet';
+  if (row._meta.textContent !== meta) row._meta.textContent = meta;
+  if (row._bar._pct !== d.pct)   { row._bar.style.width = d.pct + '%'; row._bar._pct = d.pct; }
+  if (row._bar._col !== color)   { row._bar.style.background = color;  row._bar._col = color; }
+}
+function renderJDownloader(d) {
+  const color = d.paused ? '#ffb454' : '#3ddc97';
+  const label = d.paused ? 'pausiert' : (d.running ? 'läuft' : 'bereit');
+  setJdownloaderStatus(label, color);
+  setText('jdSpeed', jdFmtSpeed(d.speedBps));
+  setText('jdStateLabel', label);
+  setText('jdActive', fmtNum(d.activeCount));
+  setText('jdWaiting', fmtNum(d.waitingCount));
+  setText('jdLinkgrabber', d.linkgrabberCount != null ? fmtNum(d.linkgrabberCount) : '–');
+  setText('jdFinished', fmtNum(d.finishedCount));
+  setText('jdRemaining', jdFmtBytes(d.remainingBytes));
+
+  const list = $('jdownloaderList');
+  if (list) {
+    const dls = d.downloads || [];
+    if (!dls.length) {
+      list._diffMap = null; // Platzhalter clobbert den Diff-State
+      list.innerHTML = `<div style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)">Keine Downloads</div>`;
+    } else {
+      diffList(list, _cfgLimit('jdownloader', 'maxRows', dls), (x) => x.uuid, createJdRow, updateJdRow);
+    }
+  }
+}
+async function pollJDownloader() {
+  if (!state.liveOn) return;
+  try {
+    const res = await fetch('/api/jdownloader', { cache: 'no-store' });
+    const d = await res.json();
+    if (!d || !d.ok) {
+      const msg = d && d.error === 'not_configured' ? 'not configured'
+                : d && d.error === 'device_offline'  ? 'device offline' : 'offline';
+      setJdownloaderStatus(msg, '#f43f5e');
+      return;
+    }
+    renderJDownloader(d);
+  } catch (err) {
+    setJdownloaderStatus('offline', '#f43f5e');
+    console.warn('JDownloader poll failed:', err.message);
+  }
+}
+function startJDownloader() {
+  clearInterval(jdownloaderTimer);
+  pollJDownloader();
+  jdownloaderTimer = setInterval(pollJDownloader, JDOWNLOADER_POLL_MS);
+}
+
 /* ---------- Plex Media Server ---------- */
 const PLEX_POLL_MS = 5000;
 const PLEX_COLOR   = '#ff8a4c';
@@ -3131,6 +3233,7 @@ function startLive() {
   startGlances();
   startDocker();
   startAdGuard();
+  startJDownloader();
   startPlex();
   startServiceStatus();
   startWeather();
@@ -3151,6 +3254,7 @@ function pauseLive() {
   clearInterval(dataTimer);      dataTimer = null;
   clearInterval(dockerTimer);    dockerTimer = null;
   clearInterval(adguardTimer);   adguardTimer = null;
+  clearInterval(jdownloaderTimer); jdownloaderTimer = null;
   clearInterval(plexTimer);      plexTimer = null;
   clearInterval(statusTimer);    statusTimer = null;
   clearInterval(weatherTimer);   weatherTimer = null;
@@ -3393,6 +3497,7 @@ const DASHBOARD_WIDGETS = [
   { id: 'service-status',     section: 'dienste',         label: 'Service Status',        defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
   { id: 'docker',             section: 'dienste',         label: 'Docker',                defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
   { id: 'adguard',            section: 'dienste',         label: 'AdGuard Home',          defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 4 } },
+  { id: 'jdownloader',        section: 'dienste',         label: 'JDownloader',           defaultSize: { w: 4,  h: 6 }, minSize: { w: 3, h: 4 } },
   { id: 'unraid-vms',         section: 'dienste',         label: 'Unraid VMs',            defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
   // Unraid-Suite: Sektion 'unraid' liegt bewusst nicht in LEGACY_SECTION_ORDER,
   // damit die Kacheln nur im Katalog erscheinen (reconcileDashboard legt sie
@@ -3467,6 +3572,13 @@ const WIDGET_OPTIONS = {
   'adguard': [
     { key: 'toplist', label: 'Top-Blocked-Liste', type: 'toggle', default: true },
     { key: 'topN',    label: 'Top-Einträge',      type: 'count',  default: 0 },
+  ],
+  'jdownloader': [
+    { key: 'speed',     label: 'Speed & Status',        type: 'toggle', default: true },
+    { key: 'queue',     label: 'Queue-Zahlen',          type: 'toggle', default: true },
+    { key: 'totals',    label: 'Fertige / Verbleibend', type: 'toggle', default: true },
+    { key: 'downloads', label: 'Download-Liste',        type: 'toggle', default: true },
+    { key: 'maxRows',   label: 'Max. Downloads',        type: 'count',  default: 0 },
   ],
   'unraid-vms': [
     { key: 'summary', label: 'Zusammenfassung (Anzahl)', type: 'toggle', default: true },
@@ -3728,6 +3840,7 @@ const WIDGET_REFRESH = {
   'service-status':       () => pollServiceStatus(),
   'docker':               () => pollDocker(),
   'adguard':              () => pollAdGuard(),
+  'jdownloader':          () => pollJDownloader(),
   'unraid-vms':           () => pollVms(),
   'unraid-docker':        () => pollUnraidDocker(),
   'unraid-array':         () => pollUnraidArray(),
@@ -4670,6 +4783,10 @@ async function loadSecrets() {
     set('secretAdguardUrl',  d.ADGUARD_URL);
     set('secretAdguardUser', d.ADGUARD_USER);
     set('secretAdguardPass', d.ADGUARD_PASS);
+    set('secretJdownloaderEmail',  d.JDOWNLOADER_EMAIL);
+    set('secretJdownloaderPass',   d.JDOWNLOADER_PASS);
+    set('secretJdownloaderDevice', d.JDOWNLOADER_DEVICE);
+    set('secretJdownloaderAppkey', d.JDOWNLOADER_APPKEY);
     set('secretPlexUrl',     d.PLEX_URL);
     set('secretPlexToken',   d.PLEX_TOKEN);
     set('secretWeatherCity', d.WEATHER_CITY);
@@ -4713,6 +4830,13 @@ async function saveSecrets(card) {
     body = { GLANCES_URL: val('secretGlancesUrl'), GLANCES_LABEL: val('secretGlancesLabel') };
   } else if (card === 'adguard') {
     body = { ADGUARD_URL: val('secretAdguardUrl'), ADGUARD_USER: val('secretAdguardUser'), ADGUARD_PASS: val('secretAdguardPass') };
+  } else if (card === 'jdownloader') {
+    body = {
+      JDOWNLOADER_EMAIL:  val('secretJdownloaderEmail'),
+      JDOWNLOADER_PASS:   val('secretJdownloaderPass'),
+      JDOWNLOADER_DEVICE: val('secretJdownloaderDevice'),
+      JDOWNLOADER_APPKEY: val('secretJdownloaderAppkey'),
+    };
   } else if (card === 'plex') {
     body = { PLEX_URL: val('secretPlexUrl'), PLEX_TOKEN: val('secretPlexToken') };
   } else if (card === 'weather') {
@@ -4741,7 +4865,7 @@ async function saveSecrets(card) {
     const r = await fetch('/api/secrets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     await loadSecrets();
-    if (card === 'glances' || card === 'adguard' || card === 'plex' || card === 'unifi' || card === 'nextcloud' || card === 'unraid') startLive();
+    if (card === 'glances' || card === 'adguard' || card === 'jdownloader' || card === 'plex' || card === 'unifi' || card === 'nextcloud' || card === 'unraid') startLive();
     if (card === 'weather') startWeather();
   } catch (err) {
     console.error('Failed to save secrets:', err.message);
@@ -4767,6 +4891,7 @@ const SETTINGS_TREE = [
       { id: 'glances',    label: 'Glances',           badge: 'GL', color: '#5b9dff', statusEl: 'glancesSettingsStatus' },
       { id: 'disks',      label: 'Disks',              icon: '▥' },
       { id: 'adguard',    label: 'AdGuard Home',       badge: 'AG', color: '#3ddc97', statusEl: 'adguardSettingsStatus' },
+      { id: 'jdownloader', label: 'JDownloader',       badge: 'JD', color: '#3ddc97', statusEl: 'jdownloaderSettingsStatus' },
       { id: 'plex',       label: 'Plex',               badge: 'PX', color: '#ff8a4c', statusEl: 'plexSettingsStatus' },
       { id: 'nextcloud',  label: 'Nextcloud',          badge: 'NC', color: '#0082c9', statusEl: 'nextcloudSettingsStatus' },
       { id: 'weather',    label: 'Weather',            badge: 'WT', color: '#ffb454', statusEl: 'weatherSettingsStatus' },
@@ -5118,6 +5243,10 @@ const WIDGET_DECOR = {
   'adguard': { color: 'var(--green)', svg: () => _td(
     `<path class="td-pulse" d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/>` +
     `<path d="M9 12l2 2 4-4"/>`) },
+  // Download-Pfeil in eine Ablage (JDownloader)
+  'jdownloader': { color: 'var(--green)', svg: () => _td(
+    `<path class="td-down" d="M12 4v9M8.5 9.5L12 13l3.5-3.5"/>` +
+    `<path d="M5 16v2a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2"/>`) },
   // Plex-Chevron mit sanftem Puls/Glow
   'plex': { color: 'var(--yellow)', svg: () => _td(
     `<path class="td-pulse" d="M9 5l7 7-7 7" stroke-width="2.4"/>`) },
