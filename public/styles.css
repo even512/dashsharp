@@ -84,6 +84,54 @@
   --red:            #cc2038;
 }
 
+/* ── Win9x (Windows 95/98) — Retro-Design ──────────────────
+   Bildet die vorhandenen Tokens auf die klassische Grau/Teal/Navy-Palette
+   ab; die restlichen Retro-Overrides (eckige Ecken, Bevel-Kanten, Pixel-
+   Schrift, Fenster-Chrome) stehen gesammelt am Dateiende. */
+[data-theme="win9x"] {
+  --bg-base:        var(--desktop-bg, #008080);
+  --bg-card:        #c0c0c0;
+  --bg-card-end:    #c0c0c0;
+  --bg-glass:       #c0c0c0;
+  --bg-modal:       #c0c0c0;
+  --bg-modal-side:  #c0c0c0;
+  --bg-info-card:   #ffffff;
+  --bg-panel:       #ffffff;
+  --overlay:        rgba(0,0,0,0.35);
+  --glow-1:         transparent;
+  --glow-2:         transparent;
+  --grid-line:      transparent;
+  --grid-line-design: rgba(0,0,0,0.18);
+  --border-1:       #808080;
+  --border-2:       #808080;
+  --border-3:       #808080;
+  --border-4:       #9a9a9a;
+  --border-modal:   #0a0a0a;
+  --track:          #808080;
+  --accent-subtle:  rgba(0,0,128,0.14);
+  --accent-border:  #000080;
+  --switch-off:     #808080;
+  --text-1:         #000000;
+  --text-15:        #000000;
+  --text-2:         #000000;
+  --text-3:         #555555;
+  --text-4:         #555555;
+  --text-5:         #000080;
+  --text-dim:       #555555;
+  --text-status:    #555555;
+  --sep:            #808080;
+  --accent:         #000080;
+  --green:          #007000;
+  --orange:         #a05000;
+  --purple:         #000080;
+  --yellow:         #808000;
+  --red:            #a00000;
+  /* Klassische Bevel-Kanten als wiederverwendbare Schatten */
+  --w9-raised: inset -1px -1px #0a0a0a, inset 1px 1px #ffffff, inset -2px -2px #808080, inset 2px 2px #dfdfdf;
+  --w9-sunken: inset 1px 1px #0a0a0a, inset -1px -1px #ffffff, inset 2px 2px #808080;
+  --w9-group:  inset -1px -1px #ffffff, inset 1px 1px #808080, inset -2px -2px #808080, inset 2px 2px #ffffff;
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; background: var(--bg-base); }
 
@@ -809,3 +857,176 @@ body.design-mode #layoutEditBar { display: flex; flex-wrap: wrap; gap: 12px; }
   }
   .ql-row > input.cfg-input { flex: 1 1 120px !important; min-width: 0 !important; }
 }
+
+/* =========================================================================
+   Win9x-Design — Overrides (Windows 95/98 Retro-Look)
+   Das Layout kommt weiterhin aus den Inline-Styles; hier werden nur die
+   Design-relevanten Eigenschaften (Ecken, Kanten, Flächen, Schrift)
+   überschrieben. Reihenfolge: Grundlagen → Fenster-Chrome → Kacheln → Rest.
+   ========================================================================= */
+
+/* MS-Sans-Serif-Pixelfont (wie im Referenz-Design, aus dem 98.css-Paket) */
+@font-face {
+  font-family: 'Pixelated MS Sans Serif';
+  src: url('https://cdn.jsdelivr.net/npm/98.css@0.1.20/dist/ms_sans_serif.woff2') format('woff2');
+  font-weight: normal; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'Pixelated MS Sans Serif';
+  src: url('https://cdn.jsdelivr.net/npm/98.css@0.1.20/dist/ms_sans_serif_bold.woff2') format('woff2');
+  font-weight: bold; font-style: normal; font-display: swap;
+}
+
+/* Desktop: flaches Wallpaper statt Radial-Gradient, kompaktes Padding,
+   Pixelschrift + hartes (nicht geglättetes) Rendering. */
+[data-theme="win9x"] body > div:first-of-type {
+  background: var(--desktop-bg, #008080) !important;
+  font-family: 'Pixelated MS Sans Serif', Tahoma, 'MS Sans Serif', Geneva, sans-serif !important;
+  font-size: 11px !important;
+  color: #000 !important;
+  padding: 10px !important;
+  -webkit-font-smoothing: none;
+}
+[data-theme="win9x"] #gridOverlay { display: none !important; }
+
+/* Alles im Fenster erbt die Pixelschrift (schlägt die Inline-font-Kurzform). */
+[data-theme="win9x"] #appShell * {
+  font-family: 'Pixelated MS Sans Serif', Tahoma, 'MS Sans Serif', Geneva, sans-serif !important;
+}
+/* Display-/Zahlenschrift (im Original 'Space Grotesk') → VT323-Terminal-Font. */
+[data-theme="win9x"] #appShell [style*="Space Grotesk"] {
+  font-family: 'VT323', 'Courier New', monospace !important;
+  letter-spacing: 0 !important;
+}
+
+/* CRT-Scanlines-Overlay (per Einstellung ein-/ausschaltbar) */
+#win9xScanlines {
+  position: fixed; inset: 0; pointer-events: none; z-index: 999;
+  background: repeating-linear-gradient(0deg, rgba(0,0,0,0.08) 0, rgba(0,0,0,0.08) 1px, transparent 1px, transparent 3px);
+  mix-blend-mode: multiply;
+}
+
+/* ── Fenster-Rahmen + Chrome (Titel-/Menü-/Statusleiste) ── */
+.w9-chrome { display: none; }
+[data-theme="win9x"] #appShell {
+  background: #c0c0c0;
+  box-shadow: var(--w9-raised);
+  padding: 3px;
+}
+[data-theme="win9x"] .w9-titlebar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  height: 20px; padding: 2px 3px 2px 6px; box-sizing: border-box;
+  background: linear-gradient(90deg, #000080, #1084d0); color: #fff;
+  font-weight: bold; font-size: 11px;
+}
+[data-theme="win9x"] .w9-tb-btns { display: flex; gap: 2px; }
+[data-theme="win9x"] .w9-tb-btn {
+  width: 16px; height: 14px; text-align: center; font-size: 10px; line-height: 13px;
+  background: #c0c0c0; color: #000; box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #ffffff;
+}
+[data-theme="win9x"] .w9-menubar {
+  display: flex; gap: 2px; padding: 2px; margin-bottom: 6px;
+  border-bottom: 1px solid #808080; box-shadow: 0 1px 0 #ffffff; color: #000;
+}
+[data-theme="win9x"] .w9-menubar span { padding: 2px 7px; font-size: 11px; }
+[data-theme="win9x"] .w9-statusbar {
+  display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin: 6px 0 0; color: #444;
+}
+[data-theme="win9x"] .w9-statusbar > span {
+  box-shadow: inset 1px 1px #808080, inset -1px -1px #ffffff; padding: 3px 10px;
+}
+[data-theme="win9x"] .w9-statusbar > span:first-child { flex: 1; min-width: 160px; }
+
+/* ── Kacheln als Group-Boxes: eckig, grau, geätzte Kante ── */
+[data-theme="win9x"] [data-widget-id] {
+  background: #c0c0c0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: var(--w9-group) !important;
+  color: #000 !important;
+}
+[data-theme="win9x"] .card:hover { box-shadow: var(--w9-group) !important; }
+[data-theme="win9x"] .grid-stack > .grid-stack-placeholder > .placeholder-content {
+  border-radius: 0; border-style: dotted;
+}
+[data-theme="win9x"] .gs-heading { color: #000080; }
+[data-theme="win9x"] .gs-heading-rule { background: #808080; }
+body.design-mode[data-theme="win9x"] .grid-stack-item:hover > .grid-stack-item-content { border-radius: 0; }
+
+/* ── Kopfbereich, Suche, Chips, Icon-Buttons ── */
+[data-theme="win9x"] .dash-header { align-items: center !important; margin-bottom: 8px !important; }
+[data-theme="win9x"] #time { color: #000080 !important; }
+[data-theme="win9x"] #searchBar {
+  background: #ffffff !important; border: 0 !important; border-radius: 0 !important;
+  box-shadow: var(--w9-sunken) !important; backdrop-filter: none !important;
+}
+[data-theme="win9x"] .dash-header-icons > div {
+  background: #ffffff !important; border: 0 !important; border-radius: 0 !important;
+  box-shadow: var(--w9-sunken) !important; color: #000 !important;
+}
+[data-theme="win9x"] .icon-btn {
+  background: #c0c0c0 !important; border: 0 !important; border-radius: 0 !important;
+  box-shadow: var(--w9-raised) !important; color: #000 !important;
+}
+[data-theme="win9x"] .icon-btn:hover { color: #000 !important; }
+[data-theme="win9x"] .icon-btn:active { box-shadow: var(--w9-sunken) !important; }
+
+/* ── Schnellzugriff als Toolbar aus Bevel-Buttons ── */
+[data-theme="win9x"] #quicklinks {
+  display: flex !important; flex-wrap: wrap !important; gap: 4px !important;
+}
+[data-theme="win9x"] .ql-tile {
+  background: #c0c0c0 !important; border: 0 !important; border-radius: 0 !important;
+  box-shadow: var(--w9-raised) !important; color: #000 !important; transform: none !important;
+}
+[data-theme="win9x"] .ql-tile:hover {
+  transform: none !important; background: #c0c0c0 !important; box-shadow: var(--w9-raised) !important;
+}
+[data-theme="win9x"] .ql-tile:active { box-shadow: var(--w9-sunken) !important; }
+[data-theme="win9x"] .ql-name { color: #000 !important; }
+
+/* ── Fortschritts-/Disk-Balken: weißes Inset-Well, schraffierte Navy-Füllung ── */
+[data-theme="win9x"] .disk-track {
+  background: #ffffff !important; border-radius: 0 !important;
+  box-shadow: var(--w9-sunken); height: 14px !important; padding: 2px;
+}
+[data-theme="win9x"] .disk-fill {
+  border-radius: 0 !important;
+  background: repeating-linear-gradient(90deg, #000080 0, #000080 8px, #ffffff 8px, #ffffff 10px) !important;
+}
+
+/* ── SVG-Linien/Ringe auf Navy vereinheitlichen ── */
+[data-theme="win9x"] #cpuArc,
+[data-theme="win9x"] #ramArc,
+[data-theme="win9x"] #cpuLine,
+[data-theme="win9x"] #ramLine,
+[data-theme="win9x"] #netLine,
+[data-theme="win9x"] #upLine,
+[data-theme="win9x"] #adguardArc { stroke: #000080 !important; filter: none !important; }
+
+/* ── Modale, Popups, Buttons, Tabs, Toasts ── */
+[data-theme="win9x"] #settingsPanel,
+[data-theme="win9x"] .picker-panel,
+[data-theme="win9x"] .tile-menu,
+[data-theme="win9x"] .toast {
+  background: #c0c0c0 !important; border: 0 !important; border-radius: 0 !important;
+  box-shadow: var(--w9-raised) !important;
+}
+[data-theme="win9x"] .tile-menu-item.active { color: #000080 !important; font-weight: bold; }
+[data-theme="win9x"] .tile-menu-item:hover { background: #000080 !important; color: #ffffff !important; }
+[data-theme="win9x"] .cfg-btn,
+[data-theme="win9x"] .vm-btn,
+[data-theme="win9x"] .dash-tab,
+[data-theme="win9x"] .picker-close,
+[data-theme="win9x"] .cfg-input {
+  border-radius: 0 !important; border: 0 !important;
+  background: #c0c0c0 !important; color: #000 !important; box-shadow: var(--w9-raised) !important;
+}
+[data-theme="win9x"] .cfg-input { background: #ffffff !important; box-shadow: var(--w9-sunken) !important; }
+[data-theme="win9x"] .cfg-btn:hover,
+[data-theme="win9x"] .vm-btn:hover,
+[data-theme="win9x"] .dash-tab:hover { color: #000 !important; background: #c0c0c0 !important; }
+[data-theme="win9x"] .cfg-btn:active,
+[data-theme="win9x"] .vm-btn:active,
+[data-theme="win9x"] .dash-tab:active { box-shadow: var(--w9-sunken) !important; }
+[data-theme="win9x"] .dash-tab.active { box-shadow: var(--w9-sunken) !important; color: #000080 !important; }

@@ -8,7 +8,7 @@
 <link rel="alternate icon" href="favicon.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=VT323&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="vendor/gridstack/gridstack.min.css">
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -17,7 +17,15 @@
 
   <div id="gridOverlay" style="position:absolute;inset:0;background-image:linear-gradient(var(--grid-line) 1px,transparent 1px),linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);background-size:42px 42px;pointer-events:none;mask-image:radial-gradient(1000px 700px at 50% 0%,#000,transparent 90%)"></div>
 
-  <div style="max-width:1440px;margin:0 auto;position:relative">
+  <div id="appShell" style="max-width:1440px;margin:0 auto;position:relative">
+
+    <div class="w9-chrome w9-titlebar" aria-hidden="true">
+      <div class="w9-tb-title">EvenCore — Systemsteuerung</div>
+      <div class="w9-tb-btns"><span class="w9-tb-btn">_</span><span class="w9-tb-btn">□</span><span class="w9-tb-btn">×</span></div>
+    </div>
+    <div class="w9-chrome w9-menubar" aria-hidden="true">
+      <span><u>D</u>atei</span><span><u>A</u>nsicht</span><span>D<u>i</u>enste</span><span>E<u>x</u>tras</span><span>?</span>
+    </div>
 
     <div class="dash-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap;margin-bottom:30px">
       <div class="dash-header-time" style="min-width:240px">
@@ -53,8 +61,8 @@
           </div>
         </div>
 
-        <button id="themeToggle" class="icon-btn" title="Light Mode" onclick="toggleTheme()" style="width:46px;height:46px;border-radius:12px;background:var(--bg-glass);border:1px solid var(--border-1);color:var(--text-4);cursor:pointer;display:flex;align-items:center;justify-content:center">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <button id="designBtn" class="icon-btn" title="Design wechseln" style="width:46px;height:46px;border-radius:12px;background:var(--bg-glass);border:1px solid var(--border-1);color:var(--text-4);cursor:pointer;display:flex;align-items:center;justify-content:center">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".8" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".8" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".8" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".8" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
         </button>
         <button id="layoutEditBtn" class="icon-btn" title="Design-Modus (Dashboard anpassen)" onclick="toggleLayoutEditMode()" style="width:46px;height:46px;border-radius:12px;background:var(--bg-glass);border:1px solid var(--border-1);color:var(--text-4);cursor:pointer;display:flex;align-items:center;justify-content:center">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
@@ -72,6 +80,11 @@
     <div id="dashPages" class="dash-pages"></div>
     <!-- Dashboard-Raster: pro Seite ein GridStack-Grid (per app.js aufgebaut) -->
     <div id="dashGrids"></div>
+
+    <!-- Win9x-Statusleiste (nur im Win9x-Design sichtbar) -->
+    <div class="w9-chrome w9-statusbar" aria-hidden="true">
+      <span>Bereit</span><span>Dash#</span><span>EvenCore</span>
+    </div>
 
     <!-- Kachel-Vorrat: die statisch ausgelieferten Kachel-Shells. app.js zieht
          sie beim Laden in die GridStack-Items der aktiven Seite. Bleibt
