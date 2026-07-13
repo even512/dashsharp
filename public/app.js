@@ -675,6 +675,43 @@ function maxOfTwo(a, b) {
   return m;
 }
 
+/* ---------- Win9x: Verlauf als Block-Balken (statt Linien-/Flächenchart) ----------
+   Klassische Win2000-Optik: diskrete vertikale Balken, gespeist aus demselben
+   Verlaufspuffer wie die Linien. Nur aktiv, wenn das Win9x-Design gewählt ist. */
+const W9_SVG_NS = 'http://www.w3.org/2000/svg';
+function _w9BarsGroup(siblingId) {
+  const sib = $(siblingId);
+  const svg = sib && sib.ownerSVGElement;
+  if (!svg) return null;
+  let g = svg.querySelector('g.w9-bars');
+  if (!g) { g = document.createElementNS(W9_SVG_NS, 'g'); g.setAttribute('class', 'w9-bars'); svg.appendChild(g); }
+  return g;
+}
+// Zeichnet `arr` ({t,v}[]) als vertikale Balken in das SVG, das `siblingId` enthält.
+function w9DrawBars(siblingId, arr, w, h, max, color) {
+  const g = _w9BarsGroup(siblingId);
+  if (!g) return;
+  const n = arr.length;
+  if (!n) { g.textContent = ''; return; }
+  const mx = max || 1;
+  const slot = w / n;
+  const bw = Math.max(1, slot * 0.66);
+  let s = '';
+  for (let i = 0; i < n; i++) {
+    const v = Math.max(0, Math.min(1, arr[i].v / mx));
+    const bh = v > 0 ? Math.max(1, v * (h - 1)) : 0;
+    const x = (i * slot + (slot - bw) / 2).toFixed(2);
+    s += `<rect x="${x}" y="${(h - bh).toFixed(2)}" width="${bw.toFixed(2)}" height="${bh.toFixed(2)}" fill="${color}"/>`;
+  }
+  g.innerHTML = s;
+}
+function w9ClearBars(siblingId) {
+  const sib = $(siblingId);
+  const svg = sib && sib.ownerSVGElement;
+  const g = svg && svg.querySelector('g.w9-bars');
+  if (g) g.textContent = '';
+}
+
 let graphRafStarted = false;
 let _graphFrameHandle = null;
 let _graphDirty = false; // set on new sample / animOn or updateMs change
@@ -686,12 +723,21 @@ function graphFrame() {
     // so the newest point sits exactly on the right edge.
     const now = anim ? performance.now() : state.lastSampleTs;
 
+    const isW9 = document.documentElement.dataset.theme === 'win9x';
+
     // System: CPU + RAM (feste Skala 0..100) – abgeleitetes Fenster wie bisher
     if (state.cpuHist.length) {
       const cpuWin = histWindowMs(CPU_HIST_N);
-      setAttr('cpuArea', 'points', areaPoints(state.cpuHist, 460, 64, 100, 0, now, cpuWin));
-      setAttr('cpuLine', 'points', sparkPoints(state.cpuHist, 460, 64, 100, 0, now, cpuWin));
-      setAttr('ramLine', 'points', sparkPoints(state.ramHist, 460, 64, 100, 0, now, cpuWin));
+      if (isW9) {
+        // Win9x: CPU-Verlauf als Navy-Block-Balken statt Linien/Fläche.
+        setAttr('cpuArea', 'points', ''); setAttr('cpuLine', 'points', ''); setAttr('ramLine', 'points', '');
+        w9DrawBars('cpuLine', netDrawArr(state.cpuHist, now, cpuWin, 26), 460, 64, 100, '#000080');
+      } else {
+        w9ClearBars('cpuLine');
+        setAttr('cpuArea', 'points', areaPoints(state.cpuHist, 460, 64, 100, 0, now, cpuWin));
+        setAttr('cpuLine', 'points', sparkPoints(state.cpuHist, 460, 64, 100, 0, now, cpuWin));
+        setAttr('ramLine', 'points', sparkPoints(state.ramHist, 460, 64, 100, 0, now, cpuWin));
+      }
     }
 
     // Network: eigenes, umschaltbares Zeitfenster + Downsampling auf NET_DRAW_POINTS.
@@ -712,17 +758,27 @@ function graphFrame() {
       const ease = state.netScaleMode === 'auto' ? (anim ? 0.08 : 1) : 1;
       state.netMaxDisp += (targetMax - state.netMaxDisp) * ease;
       const nm = state.netMaxDisp || targetMax;
-      // Flaeche folgt der Download-Linie der fuehrenden Serie (Unraid, sonst WAN).
-      if (dlArr.length) {
-        setAttr('netArea', 'points', areaPoints(dlArr, 380, 80, nm, 6, now, netWin));
-        setAttr('netLine', 'points', sparkPoints(dlArr, 380, 80, nm, 6, now, netWin));
+      if (isW9) {
+        // Win9x: Verlauf als grüne Block-Balken auf schwarzem Grund (Win2000-Stil),
+        // keine Flächen-/Linienkurven.
+        setAttr('netArea', 'points', ''); setAttr('netLine', 'points', '');
+        setAttr('upLine', 'points', ''); setAttr('wanLine', 'points', ''); setAttr('wanUpLine', 'points', '');
+        const barSeries = dlArr.length ? state.netHist : state.wanHist;
+        w9DrawBars('netLine', netDrawArr(barSeries, now, netWin, 30), 380, 80, nm, '#00ff00');
       } else {
-        setAttr('netArea', 'points', wdlArr.length ? areaPoints(wdlArr, 380, 80, nm, 6, now, netWin) : '');
-        setAttr('netLine', 'points', '');
+        w9ClearBars('netLine');
+        // Flaeche folgt der Download-Linie der fuehrenden Serie (Unraid, sonst WAN).
+        if (dlArr.length) {
+          setAttr('netArea', 'points', areaPoints(dlArr, 380, 80, nm, 6, now, netWin));
+          setAttr('netLine', 'points', sparkPoints(dlArr, 380, 80, nm, 6, now, netWin));
+        } else {
+          setAttr('netArea', 'points', wdlArr.length ? areaPoints(wdlArr, 380, 80, nm, 6, now, netWin) : '');
+          setAttr('netLine', 'points', '');
+        }
+        setAttr('upLine',    'points', ulArr.length  ? sparkPoints(ulArr,  380, 80, nm, 6, now, netWin) : '');
+        setAttr('wanLine',   'points', wdlArr.length ? sparkPoints(wdlArr, 380, 80, nm, 6, now, netWin) : '');
+        setAttr('wanUpLine', 'points', wulArr.length ? sparkPoints(wulArr, 380, 80, nm, 6, now, netWin) : '');
       }
-      setAttr('upLine',    'points', ulArr.length  ? sparkPoints(ulArr,  380, 80, nm, 6, now, netWin) : '');
-      setAttr('wanLine',   'points', wdlArr.length ? sparkPoints(wdlArr, 380, 80, nm, 6, now, netWin) : '');
-      setAttr('wanUpLine', 'points', wulArr.length ? sparkPoints(wulArr, 380, 80, nm, 6, now, netWin) : '');
       setText('netScaleMax', fmtNet(nm));
     }
 
@@ -754,8 +810,9 @@ function graphFrame() {
       setText('wanUp',   fmtNet(state.dispWanUp));
     }
 
-    // Paket-Animation (Y-Topologie) an die aktuellen Durchsaetze koppeln
-    updateNetFlow();
+    // Paket-Animation (Y-Topologie) an die aktuellen Durchsaetze koppeln.
+    // In Win9x ist der Flow ausgeblendet → Animation überspringen.
+    if (!isW9) updateNetFlow();
   }
 
   _graphFrameHandle = requestAnimationFrame(graphFrame);
@@ -5219,6 +5276,7 @@ function setDesign(id) {
   _applyTheme(id);
   try { localStorage.setItem('theme', id); } catch { /* localStorage evtl. nicht verfügbar */ }
   applyWin9xExtras();
+  _graphDirty = true; // Chart sofort neu zeichnen (Linien ↔ Block-Balken)
 }
 
 // Rückwärtskompatibel: zyklisch durch die Designs (früher Hell/Dunkel-Toggle).
