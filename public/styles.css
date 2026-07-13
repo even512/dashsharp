@@ -1004,6 +1004,26 @@ body.design-mode[data-theme="win9x"] .grid-stack-item:hover > .grid-stack-item-c
 [data-theme="win9x"] #upLine,
 [data-theme="win9x"] #adguardArc { stroke: #000080 !important; filter: none !important; }
 
+/* ── Netzwerk: animierte Y-Topologie ausblenden, Verlauf als Block-Balken ──
+   Die Balken selbst zeichnet app.js (g.w9-bars); hier nur die Retro-Rahmen. */
+[data-theme="win9x"] .net-flow { display: none !important; }
+[data-theme="win9x"] #netGrid { display: none !important; }
+[data-theme="win9x"] [data-widget-id="network-throughput"] svg[data-cfg="chart"] {
+  background: #000000 !important; box-shadow: var(--w9-sunken);
+}
+[data-theme="win9x"] [data-widget-id="system-load"] [data-cfg="chart"] svg {
+  background: #ffffff !important; box-shadow: var(--w9-sunken);
+}
+[data-theme="win9x"] .net-seg {
+  background: #c0c0c0 !important; border-radius: 0 !important; box-shadow: var(--w9-sunken);
+}
+[data-theme="win9x"] .net-seg button { color: #000 !important; border-radius: 0 !important; }
+[data-theme="win9x"] .net-seg button.active { background: #000080 !important; color: #fff !important; }
+[data-theme="win9x"] .net-scale-sel {
+  background: #ffffff !important; border: 0 !important; border-radius: 0 !important;
+  box-shadow: var(--w9-sunken); color: #000 !important;
+}
+
 /* ── Modale, Popups, Buttons, Tabs, Toasts ── */
 [data-theme="win9x"] #settingsPanel,
 [data-theme="win9x"] .picker-panel,
