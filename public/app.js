@@ -451,6 +451,7 @@ const state = {
   netLocalOn: true,                 // Server<->LAN-Linie (lokaler Verkehr) in der Flow-Animation
   liveOn: true, gridOn: true, animOn: true, glassOn: true, searchOn: true,
   updateMs: 1600, accent: '#5b9dff',
+  win9xWallpaper: 'teal', win9xScanlines: false,
   settingsCategory: 'general',
   settingsTab: null,
   layoutEditOn: false,
@@ -5073,7 +5074,7 @@ function applySearchVisible() {
 }
 
 /* ---------- UI prefs (localStorage) — persist appearance settings ---------- */
-const UI_PREF_KEYS = ['accent', 'gridOn', 'glassOn', 'animOn', 'liveOn', 'updateMs', 'searchOn'];
+const UI_PREF_KEYS = ['accent', 'gridOn', 'glassOn', 'animOn', 'liveOn', 'updateMs', 'searchOn', 'win9xWallpaper', 'win9xScanlines'];
 function saveUiPrefs() {
   try {
     const out = {};
@@ -5099,6 +5100,7 @@ function applyUiPrefs() {
   applySearchVisible();
   _applyAccent(state.accent);
   renderAccents();
+  applyWin9xExtras();
   const range = $('updateRange');
   if (range) range.value = state.updateMs;
   setText('updateSec', (state.updateMs / 1000).toFixed(1));
@@ -5145,6 +5147,8 @@ function setUpdateMs(v) {
 function setupSettings() {
   const btn = $('settingsBtn');
   if (btn) btn.addEventListener('click', openSettings);
+  const dbtn = $('designBtn');
+  if (dbtn) dbtn.addEventListener('click', (e) => { e.stopPropagation(); openDesignMenu(dbtn); });
   const modal = $('settingsModal');
   if (modal) modal.addEventListener('click', closeSettings);
   const panel = $('settingsPanel');
@@ -5185,23 +5189,115 @@ async function loadVersionInfo() {
   } catch { /* stays '–' */ }
 }
 
-/* ---------- Theme (Light / Dark) ---------- */
-const MOON_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
-const SUN_SVG  = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`;
+/* ---------- Design / Theme (Modern Dark · Modern White · Win9x) ---------- */
+// Verfügbare Designs (Reihenfolge = Reihenfolge im Dropdown).
+// „Modern Dark"/„Modern White" sind die bisherigen Dunkel-/Hell-Modi,
+// „Win9x" das neue Windows-95/98-Retro-Design.
+const DESIGNS = [
+  { id: 'dark',  label: 'Modern Dark' },
+  { id: 'light', label: 'Modern White' },
+  { id: 'win9x', label: 'Win9x' },
+];
+const WIN9X_WALLPAPERS = [
+  { id: 'teal', label: 'Teal',       color: '#008080' },
+  { id: 'dark', label: 'Dunkel',     color: '#3a3a3a' },
+  { id: 'sand', label: 'Wüstensand', color: '#9c8468' },
+];
+function _validDesign(id) { return DESIGNS.some((d) => d.id === id) ? id : 'dark'; }
+function _designLabel(id) { return (DESIGNS.find((d) => d.id === id) || DESIGNS[0]).label; }
 
-function _applyTheme(theme) {
-  document.documentElement.dataset.theme = theme;
-  const btn = $('themeToggle');
-  if (!btn) return;
-  const isLight = theme === 'light';
-  btn.innerHTML = isLight ? MOON_SVG : SUN_SVG;
-  btn.title     = isLight ? 'Dark Mode' : 'Light Mode';
+// Wendet ein Design an (Attribut auf <html>); der Rest der Oberfläche liest
+// alles über CSS-Variablen bzw. [data-theme="…"]-Regeln.
+function _applyTheme(design) {
+  document.documentElement.dataset.theme = design;
+  const btn = $('designBtn');
+  if (btn) btn.title = 'Design: ' + _designLabel(design);
 }
 
+function setDesign(id) {
+  id = _validDesign(id);
+  _applyTheme(id);
+  try { localStorage.setItem('theme', id); } catch { /* localStorage evtl. nicht verfügbar */ }
+  applyWin9xExtras();
+}
+
+// Rückwärtskompatibel: zyklisch durch die Designs (früher Hell/Dunkel-Toggle).
 function toggleTheme() {
-  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-  _applyTheme(next);
-  localStorage.setItem('theme', next);
+  const cur = document.documentElement.dataset.theme || 'dark';
+  const i = DESIGNS.findIndex((d) => d.id === cur);
+  setDesign(DESIGNS[(i + 1) % DESIGNS.length].id);
+}
+
+/* ---------- Win9x-Extras: Wallpaper-Farbe + CRT-Scanlines ---------- */
+function applyWin9xExtras() {
+  const isWin9x = document.documentElement.dataset.theme === 'win9x';
+  const wp = WIN9X_WALLPAPERS.find((w) => w.id === state.win9xWallpaper) || WIN9X_WALLPAPERS[0];
+  document.documentElement.style.setProperty('--desktop-bg', wp.color);
+  let sc = $('win9xScanlines');
+  if (isWin9x && state.win9xScanlines) {
+    if (!sc) {
+      sc = document.createElement('div');
+      sc.id = 'win9xScanlines';
+      document.body.appendChild(sc);
+    }
+    sc.style.display = 'block';
+  } else if (sc) {
+    sc.style.display = 'none';
+  }
+}
+function setWin9xWallpaper(id) {
+  state.win9xWallpaper = id;
+  applyWin9xExtras();
+  saveUiPrefs();
+}
+function toggleWin9xScanlines() {
+  state.win9xScanlines = !state.win9xScanlines;
+  applyWin9xExtras();
+  saveUiPrefs();
+}
+
+/* ---------- Design-Dropdown (nutzt die Kachel-Menü-Primitives wieder) ---------- */
+function _buildDesignMenu(menu) {
+  menu.innerHTML = '';
+  const cur = document.documentElement.dataset.theme || 'dark';
+  const item = (active, label, fn) => {
+    const b = document.createElement('button');
+    b.className = 'tile-menu-item' + (active ? ' active' : '');
+    b.textContent = (active ? '✓ ' : '  ') + label;
+    b.addEventListener('click', (e) => { e.stopPropagation(); fn(); _buildDesignMenu(menu); });
+    menu.appendChild(b);
+  };
+  const label = (txt) => {
+    const l = document.createElement('div');
+    l.className = 'tile-menu-label';
+    l.textContent = txt;
+    menu.appendChild(l);
+  };
+  const sep = () => {
+    const s = document.createElement('div');
+    s.className = 'tile-menu-sep';
+    menu.appendChild(s);
+  };
+  label('Design');
+  DESIGNS.forEach((d) => item(cur === d.id, d.label, () => setDesign(d.id)));
+  if (cur === 'win9x') {
+    sep(); label('Hintergrund');
+    WIN9X_WALLPAPERS.forEach((w) => item(state.win9xWallpaper === w.id, w.label, () => setWin9xWallpaper(w.id)));
+    sep();
+    item(state.win9xScanlines, 'CRT-Scanlines', () => toggleWin9xScanlines());
+  }
+}
+
+function openDesignMenu(anchor) {
+  closeTileMenu();
+  const menu = document.createElement('div');
+  menu.id = 'tileMenu';
+  menu.className = 'tile-menu design-menu';
+  _buildDesignMenu(menu);
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  _placeMenuAt(menu, r.right - menu.offsetWidth, r.bottom + 6);
+  setTimeout(() => document.addEventListener('mousedown', _tileMenuOutside), 0);
 }
 
 /* ---------- Widget-Kachel-Deko: dezente animierte Ecken-Akzente ----------
@@ -5676,7 +5772,7 @@ function updateNetFlow() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  _applyTheme(localStorage.getItem('theme') || 'dark');
+  _applyTheme(_validDesign(localStorage.getItem('theme')));
   loadUiPrefs();
   await loadDashboard();
   setupGridContextMenu();
