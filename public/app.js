@@ -1900,8 +1900,21 @@ function startUnraidNotifications() {
   unoTimer = setInterval(pollUnraidNotifications, UNO_POLL_MS);
 }
 
-/* --- System-Info --- */
+/* --- System-Info (Hero-Kachel, Design 2a) --- */
 const USY_POLL_MS = 10000;
+const USY_HIST_MAX_MS = 300000; // Ringpuffer = groesstes Zeitfenster (5m)
+
+// Lokaler Zustand der System-Kachel (getrennt vom globalen `state`, damit der
+// gemeinsame rAF-Graph-Loop unberuehrt bleibt).
+const usy = {
+  cpuHist: [],       // { t, v } — t = performance.now()
+  cores: null,       // letztes per-Core-Auslastungs-Array oder null
+  winMs: 60000,      // sichtbares Zeitfenster (aus dem <select>)
+  view: 'hist',      // 'hist' | 'cores'
+  bootMs: null,      // Boot-Zeitpunkt (Date.now-Basis) fuer die Live-Uptime
+  uptimeTimer: null, // 1s-Ticker
+  wired: false,      // Graph-Events einmalig verdrahtet
+};
 
 function unraidSystemAction(action, btn) {
   const verb = action === 'reboot' ? 'NEU STARTEN' : 'HERUNTERFAHREN';
@@ -1910,27 +1923,153 @@ function unraidSystemAction(action, btn) {
   if (!confirm(`Letzte Rückfrage: „OK" ${action === 'reboot' ? 'startet den Server jetzt neu' : 'fährt den Server jetzt herunter'}.`)) return;
   unraidAction('/api/unraid/system/action', { action }, btn, null, pollUnraidSystem);
 }
+
+function usyEsc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function usyGiB(bytes) { return (bytes / 1073741824).toLocaleString('de-DE', { maximumFractionDigits: 1 }) + ' GiB'; }
+function usySetWidth(id, pct) { const el = $(id); if (el) el.style.width = Math.max(0, Math.min(100, pct)) + '%'; }
+function usyShowChip(id, show) { const el = $(id); if (el) el.style.display = show ? '' : 'none'; }
+
+// Uptime live „3d 10h 42m 15s" — sekuendlich aus dem Boot-Zeitpunkt.
+function fmtUptimeLong(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  const p = []; if (d) p.push(d + 'd'); p.push(h + 'h'); p.push(m + 'm'); p.push(s + 's');
+  return p.join(' ');
+}
+function usyTick() {
+  const pill = $('usyUp'), el = $('usyUpText');
+  if (usy.bootMs == null) { if (pill) pill.style.display = 'none'; return; }
+  if (pill) pill.style.display = '';
+  if (el) el.textContent = fmtUptimeLong((Date.now() - usy.bootMs) / 1000);
+}
+
+// Durchschnitt der CPU-Auslastung im sichtbaren Fenster (fuer den Graph-Titel).
+function usyAvg() {
+  const now = performance.now(), start = now - usy.winMs;
+  let sum = 0, n = 0;
+  for (const p of usy.cpuHist) if (p.t >= start) { sum += p.v; n++; }
+  if (n) return Math.round(sum / n);
+  return usy.cpuHist.length ? Math.round(usy.cpuHist[usy.cpuHist.length - 1].v) : 0;
+}
+function drawUsyHist() {
+  const line = $('usyCpuLine'), area = $('usyCpuArea');
+  if (!line || !area) return;
+  if (!usy.cpuHist.length) { line.setAttribute('points', ''); area.setAttribute('points', '0,44 300,44'); return; }
+  const now = performance.now();
+  const draw = netDrawArr(usy.cpuHist, now, usy.winMs, NET_DRAW_POINTS);
+  line.setAttribute('points', sparkPoints(draw, 300, 44, 100, 0, now, usy.winMs));
+  area.setAttribute('points', areaPoints(draw, 300, 44, 100, 0, now, usy.winMs));
+}
+function drawUsyCores() {
+  const c = $('usyCores');
+  if (!c) return;
+  if (!usy.cores || !usy.cores.length) { c.innerHTML = ''; return; }
+  c.innerHTML = usy.cores.map((v) => {
+    const h = Math.max(2, Math.min(100, v));
+    return `<div class="usy-core" style="height:${h}%" title="${Math.round(v)}%"></div>`;
+  }).join('');
+}
+function usyRedraw() {
+  const hist = $('usyHist'), cores = $('usyCores'), title = $('usyGraphTitle'), tlab = $('usyToggleLabel');
+  const coresView = usy.view === 'cores' && usy.cores && usy.cores.length;
+  if (hist) hist.style.display = coresView ? 'none' : 'block';
+  if (cores) cores.style.display = coresView ? 'flex' : 'none';
+  if (coresView) { drawUsyCores(); if (title) title.textContent = `Kerne · ${usy.cores.length}`; }
+  else { drawUsyHist(); if (title) title.textContent = `Verlauf · Ø ${usyAvg()}%`; }
+  if (tlab) tlab.textContent = usy.view === 'hist' ? 'Kerne' : 'Verlauf';
+}
+function usyWireGraph() {
+  if (usy.wired) return;
+  const sel = $('usyRange'), tog = $('usyGraphToggle');
+  if (sel) { sel.value = String(usy.winMs); sel.addEventListener('change', () => { usy.winMs = +sel.value || 60000; usyRedraw(); }); }
+  if (tog) { tog.addEventListener('click', (e) => { e.stopPropagation(); usy.view = usy.view === 'cores' ? 'hist' : 'cores'; usyRedraw(); }); }
+  usy.wired = !!(sel || tog);
+}
+
 function renderUnraidSystem(d) {
+  // Versions-Pill (Badge). setUnraidBadge faerbt Text+Dot; die Pill-Flaeche
+  // leitet Rahmen/BG per color-mix aus currentColor ab (siehe CSS).
   const badge = d._stale ? 'stale' : d.online ? (d.unraidVersion ? 'v' + d.unraidVersion : 'online') : 'offline';
   setUnraidBadge('usyBadge', badge, d._stale ? '#ffb454' : d.online ? '#3ddc97' : '#f43f5e');
+
+  // Live-Uptime: bevorzugt aus dem Boot-Zeitstempel, sonst aus uptimeSec.
+  const bt = d.bootTime ? Date.parse(d.bootTime) : NaN;
+  usy.bootMs = Number.isFinite(bt) ? bt : (d.uptimeSec != null ? Date.now() - d.uptimeSec * 1000 : null);
+  usyTick();
+
+  // Hero: Host + CPU-Marke (@ Takt, falls vorhanden)
+  setText('usyHost', d.hostname || '–');
+  setText('usyCpuBrand', d.cpuBrand ? (d.cpuSpeedMhz ? `${d.cpuBrand} @ ${d.cpuSpeedMhz} MHz` : d.cpuBrand) : '');
+
+  // CPU-Meter
   setText('usyCpu', d.cpuPct != null ? Math.round(d.cpuPct) : '–');
+  usySetWidth('usyCpuBar', d.cpuPct != null ? d.cpuPct : 0);
+
+  // Chips — nur wenn die API den Wert liefert
+  usyShowChip('usyChipWatt', d.cpuWatts != null);
+  if (d.cpuWatts != null) setText('usyCpuWatt', Math.round(d.cpuWatts * 100) / 100);
+  usyShowChip('usyChipTemp', d.cpuTemp != null);
+  if (d.cpuTemp != null) setText('usyCpuTemp', Math.round(d.cpuTemp));
+  const coresTxt = d.cores ? `${d.cores}C / ${d.threads || d.cores}T` : '';
+  usyShowChip('usyChipCores', !!coresTxt);
+  if (coresTxt) setText('usyCpuCoresTxt', coresTxt);
+
+  // Verlaufspuffer + per-Core
+  if (d.cpuPct != null) pushSample(usy.cpuHist, performance.now(), d.cpuPct, USY_HIST_MAX_MS);
+  usy.cores = Array.isArray(d.cpuCores) && d.cpuCores.length ? d.cpuCores : null;
+  const tog = $('usyGraphToggle');
+  if (tog) tog.style.display = usy.cores ? '' : 'none';
+  if (!usy.cores && usy.view === 'cores') usy.view = 'hist';
+  usyWireGraph();
+  usyRedraw();
+
+  // RAM-Meter
   setText('usyRam', d.ramPct != null ? Math.round(d.ramPct) : '–');
-  const up = [];
-  if (d.uptimeSec != null) up.push('Uptime ' + fmtUptime(d.uptimeSec));
-  if (d.ramUsed != null && d.ramTotal) up.push(`RAM ${fmtSize(d.ramUsed)} / ${fmtSize(d.ramTotal)}`);
-  setText('usyUptime', up.join(' · ') || '–');
-  const meta = $('usyMeta');
-  if (meta) {
-    const rowHtml = (k, v) => v
-      ? `<div style="display:flex;justify-content:space-between;gap:10px;font:500 10px 'JetBrains Mono',monospace"><span style="color:var(--text-3);flex-shrink:0">${k}</span><span style="color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${v}">${v}</span></div>`
-      : '';
-    setHtmlIfChanged(meta,
-      rowHtml('Host', d.hostname) +
-      rowHtml('Unraid', d.unraidVersion) +
-      rowHtml('API', d.apiVersion) +
-      rowHtml('Kernel', d.kernel) +
-      rowHtml('CPU', d.cpuBrand ? `${d.cpuBrand}${d.cores ? ` · ${d.cores}C/${d.threads || d.cores}T` : ''}` : null));
+  usySetWidth('usyRamBar', d.ramPct != null ? d.ramPct : 0);
+  const ramGiB = d.ramTotal ? Math.round(d.ramTotal / 1073741824) : null;
+  setText('usyRamLabel', 'RAM' + (ramGiB ? ` · ${ramGiB} GiB` : '') + (d.ramType ? ` ${d.ramType}` : ''));
+  const leg = $('usyRamLegend');
+  if (leg) {
+    const used = d.ramUsed;
+    const free = d.ramFree != null ? d.ramFree : (d.ramTotal != null && d.ramUsed != null ? d.ramTotal - d.ramUsed : null);
+    const item = (color, txt) => `<span><i style="background:${color}"></i>${txt}</span>`;
+    const rows = [];
+    if (used != null) rows.push(item('var(--u-accent)', 'Belegt ' + usyGiB(used)));
+    if (free != null) rows.push(item('var(--u-dim)', 'Frei ' + usyGiB(free)));
+    setHtmlIfChanged(leg, rows.join(''));
   }
+
+  // Disk-Raster (Boot/Log-FS/Docker) — nur befuellte Zellen
+  const disksEl = $('usyDisks');
+  if (disksEl) {
+    const cell = (label, pct) => `<div><div class="usy-disk-head"><span class="usy-disk-lbl">${label}</span><span class="usy-disk-val">${Math.round(pct)}<small>%</small></span></div><div class="usy-disk-bar"><div style="width:${Math.max(0, Math.min(100, pct))}%"></div></div></div>`;
+    const cells = [];
+    [['Boot', d.boot], ['Log-FS', d.log], ['Docker', d.docker]].forEach(([label, fs]) => {
+      if (fs && fs.pctUsed != null) cells.push(cell(label, fs.pctUsed));
+    });
+    if (cells.length) {
+      disksEl.style.display = 'grid';
+      disksEl.style.gridTemplateColumns = `repeat(${cells.length},1fr)`;
+      setHtmlIfChanged(disksEl, cells.join(''));
+    } else { disksEl.style.display = 'none'; disksEl._lastHtml = ''; }
+  }
+
+  // Info-Box
+  const info = $('usyInfo');
+  if (info) {
+    const row = (k, v) => v ? `<div class="usy-info-row"><span>${k}</span><span title="${usyEsc(v)}">${usyEsc(v)}</span></div>` : '';
+    const ramMaxGiB = d.ramMax ? Math.round(d.ramMax / 1073741824) : null;
+    const ausbau = (ramGiB || ramMaxGiB)
+      ? `${ramGiB ? ramGiB + ' nutzbar' : ''}${ramGiB && ramMaxGiB ? ' · ' : ''}${ramMaxGiB ? 'max. ' + ramMaxGiB + ' GiB' : ''}`
+      : '';
+    setHtmlIfChanged(info,
+      row('Unraid', d.unraidVersion) +
+      row('API', d.apiVersion) +
+      row('Kernel', d.kernel) +
+      row('RAM-Ausbau', ausbau));
+  }
+
+  // Aktions-Buttons (unveraenderte Gate-Logik)
   const act = $('usyActions');
   if (act) {
     const sig = [d.dangerEnabled, d.sshEnabled].join('|');
@@ -1941,9 +2080,9 @@ function renderUnraidSystem(d) {
         act.appendChild(makeVmBtn('↻ Neustart', '', (b) => unraidSystemAction('reboot', b)));
         act.appendChild(makeVmBtn('⏻ Herunterfahren', 'stop', (b) => unraidSystemAction('shutdown', b)));
       } else if (d.dangerEnabled) {
-        act.innerHTML = '<span style="font:500 10px \'JetBrains Mono\',monospace;color:var(--text-dim)">Neustart/Shutdown benötigt SSH · Einstellungen → Unraid</span>';
+        act.innerHTML = '<span class="vm-btn-note">Neustart/Shutdown benötigt SSH · Einstellungen → Unraid</span>';
       } else {
-        act.innerHTML = '<span style="font:500 10px \'JetBrains Mono\',monospace;color:var(--text-dim)">Steuerung gesperrt · Einstellungen → Unraid</span>';
+        act.innerHTML = '<span class="vm-btn-note">Steuerung gesperrt · Einstellungen → Unraid</span>';
       }
     }
   }
@@ -1951,8 +2090,10 @@ function renderUnraidSystem(d) {
 function pollUnraidSystem() { return pollUnraid('/api/unraid/system', 'usyBadge', renderUnraidSystem); }
 function startUnraidSystem() {
   clearInterval(usyTimer);
+  clearInterval(usy.uptimeTimer);
   pollUnraidSystem();
   usyTimer = setInterval(pollUnraidSystem, USY_POLL_MS);
+  usy.uptimeTimer = setInterval(usyTick, 1000); // Live-Uptime tickt unabhaengig vom Poll
 }
 
 /* --- USV (UPS) --- */
@@ -3565,7 +3706,7 @@ const DASHBOARD_WIDGETS = [
   { id: 'unraid-disks',         section: 'unraid',        label: 'Unraid Disks',          defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
   { id: 'unraid-shares',        section: 'unraid',        label: 'Unraid Shares',         defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
   { id: 'unraid-notifications', section: 'unraid',        label: 'Unraid Meldungen',      defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
-  { id: 'unraid-system',        section: 'unraid',        label: 'Unraid System',         defaultSize: { w: 4,  h: 4 }, minSize: { w: 3, h: 3 } },
+  { id: 'unraid-system',        section: 'unraid',        label: 'Unraid System',         defaultSize: { w: 5,  h: 11 }, minSize: { w: 4, h: 8 } },
   { id: 'unraid-ups',           section: 'unraid',        label: 'Unraid USV',            defaultSize: { w: 3,  h: 4 }, minSize: { w: 3, h: 3 } },
   { id: 'plex',               section: 'media',           label: 'Plex',                  defaultSize: { w: 7,  h: 5 }, minSize: { w: 4, h: 3 } },
   { id: 'nextcloud',          section: 'media',           label: 'Nextcloud',             defaultSize: { w: 5,  h: 5 }, minSize: { w: 3, h: 4 } },
