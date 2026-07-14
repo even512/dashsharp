@@ -583,6 +583,19 @@ body.design-mode #layoutEditBar { display: flex; flex-wrap: wrap; gap: 12px; }
 .usy-hist-max { top: 3px; } .usy-hist-min { bottom: 2px; }
 .usy-cores { position: absolute; inset: 0; display: none; align-items: flex-end; gap: 2px; padding: 6px 8px; }
 .usy-core { flex: 1; min-height: 2px; border-radius: 2px 2px 0 0; background: linear-gradient(180deg, var(--u-accent-lt), var(--u-accent)); transition: height .8s cubic-bezier(.4,0,.2,1); }
+.usy-core.ht { opacity: .42; } /* HT-Thread gedimmt */
+/* Kerne gruppiert (P | E) */
+.usy-cores.grouped { align-items: stretch; gap: 12px; padding: 5px 9px 3px; }
+.usy-core-group { display: flex; flex-direction: column; min-width: 0; }
+.usy-core-bars { flex: 1; display: flex; align-items: flex-end; gap: 3px; min-height: 0; }
+.usy-core-cell { display: flex; align-items: flex-end; gap: 1px; min-width: 0; }
+.usy-core-grp-lbl { font: 700 7px 'JetBrains Mono', monospace; letter-spacing: .12em; color: var(--u-dim); text-align: center; margin-top: 3px; }
+/* RAM-Segmentbalken (System | Docker | Frei) */
+.usy-bar-seg { display: flex; }
+.usy-seg { height: 100%; transition: width 1s cubic-bezier(.4,0,.2,1); }
+.usy-seg-sys { background: var(--u-green); }
+.usy-seg-sys.solo { background: linear-gradient(90deg, var(--u-accent), var(--u-accent-lt)); } /* ohne Docker-Split */
+.usy-seg-docker { background: linear-gradient(90deg, var(--u-accent2), var(--u-accent)); }
 /* RAM-Legende */
 .usy-legend { display: flex; gap: 14px; margin-top: 9px; flex-wrap: wrap; font: 600 10px 'JetBrains Mono', monospace; color: var(--u-label); }
 .usy-legend > span { display: inline-flex; align-items: center; gap: 5px; }

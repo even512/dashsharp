@@ -3183,6 +3183,162 @@ function applyUnraidMetrics(result, m) {
   }
 }
 
+// CPU-/Package-Sensor aus metrics.temperature picken, sonst der heißeste Sensor.
+function pickUnraidCpuTemp(temp) {
+  if (!temp) return null;
+  const sensors = Array.isArray(temp.sensors) ? temp.sensors : [];
+  const isCpu = (s) => /cpu|package|core|coretemp|tctl|tdie|k10temp/i.test(`${(s && s.name) || ''} ${(s && s.type) || ''}`);
+  const s = sensors.find((x) => isCpu(x) && x.current && Number.isFinite(+x.current.value));
+  if (s) return Math.round(+s.current.value * 10) / 10;
+  const h = temp.summary && temp.summary.hottest && temp.summary.hottest.current;
+  if (h && Number.isFinite(+h.value)) return Math.round(+h.value * 10) / 10;
+  return null;
+}
+
+// Topologie {p:[[cpu,cpu],…], e:[[cpu],…]} + per-Core-% -> Gruppen für die Kachel.
+function buildCoresGroups(topo, cpuCores) {
+  if (!topo || !Array.isArray(cpuCores) || !cpuCores.length) return null;
+  const pct = (i) => (Number.isFinite(+cpuCores[i]) ? +cpuCores[i] : 0);
+  const grp = (arr) => arr.map((cpus) => cpus.map(pct)); // je Core [haupt, ht?]
+  const groups = [];
+  if (topo.p && topo.p.length) groups.push({ label: 'P', cores: grp(topo.p) });
+  if (topo.e && topo.e.length) groups.push({ label: 'E', cores: grp(topo.e) });
+  return groups.length ? groups : null;
+}
+
+/* ---- SSH-gestützte Zusatzmetriken (was die GraphQL-API nicht liefert) ----
+   Ein kombiniertes Read-only-Kommando; eigener Memo-Cache, damit der 10s-Poll
+   den SSH-Kanal nicht überrennt. Alles best effort — Fehler => null. */
+const USY_SSH_TTL = 12000;
+const _usySshMemo = { ts: 0, data: null };
+const USY_SSH_SCRIPT = [
+  'echo @DF',
+  'df -kP /boot /var/log /var/lib/docker 2>/dev/null',
+  'echo @DOCKERMEM',
+  "awk '{s+=$1} END{if(s>0)print s}' /sys/fs/cgroup/docker/*/memory.current 2>/dev/null || cat /sys/fs/cgroup/docker/memory.current 2>/dev/null || true",
+  'echo @RAPL',
+  'E0=$(cat /sys/class/powercap/intel-rapl:0/energy_uj 2>/dev/null); T0=$(date +%s%N); sleep 0.3; ' +
+    'E1=$(cat /sys/class/powercap/intel-rapl:0/energy_uj 2>/dev/null); T1=$(date +%s%N); ' +
+    'if [ -n "$E0" ] && [ -n "$E1" ]; then echo "$((E1-E0)) $((T1-T0))"; else echo ""; fi',
+  'echo @LSCPU',
+  'lscpu -p 2>/dev/null',
+  'echo @TEMP',
+  'sensors -u 2>/dev/null',
+  'echo @END',
+].join('\n');
+
+async function getUnraidSshMetrics() {
+  if (Date.now() - _usySshMemo.ts < USY_SSH_TTL) return _usySshMemo.data;
+  _usySshMemo.ts = Date.now(); // vorab setzen -> Back-off bei Fehler/parallelen Aufrufen
+  const sshCfg = unraidSshCfg();
+  if (!sshCfg) { _usySshMemo.data = null; return null; }
+  let conn;
+  try {
+    conn = await sshConnect(sshCfg, 5000);
+    const out = await sshExec(conn, USY_SSH_SCRIPT, 5000);
+    _usySshMemo.data = parseUnraidSshMetrics(out);
+  } catch (err) {
+    console.warn('Unraid SSH-Metriken fehlgeschlagen:', err.message);
+    _usySshMemo.data = null;
+  } finally { try { conn && conn.end(); } catch (_) {} }
+  return _usySshMemo.data;
+}
+
+function parseUnraidSshMetrics(out) {
+  const sec = {};
+  let cur = null;
+  for (const line of String(out).split('\n')) {
+    const m = /^@(\w+)\s*$/.exec(line);
+    if (m) { cur = m[1]; sec[cur] = []; continue; }
+    if (cur) sec[cur].push(line);
+  }
+  return {
+    fs:        parseDfSection(sec.DF || []),
+    dockerMem: parseFirstInt(sec.DOCKERMEM || []),
+    watts:     parseRapl(sec.RAPL || []),
+    coresTopo: parseLscpu(sec.LSCPU || []),
+    tempC:     parseSensors(sec.TEMP || []),
+  };
+}
+function parseDfSection(lines) {
+  const byMount = { '/boot': 'boot', '/var/log': 'log', '/var/lib/docker': 'docker' };
+  const res = {};
+  for (const ln of lines) {
+    const p = ln.trim().split(/\s+/);
+    if (p.length < 6) continue;
+    const key = byMount[p[p.length - 1]];
+    if (!key) continue;
+    const sizeKb = +p[1], usedKb = +p[2];
+    if (!Number.isFinite(sizeKb) || sizeKb <= 0) continue;
+    res[key] = {
+      sizeKb, usedKb: Number.isFinite(usedKb) ? usedKb : null,
+      pctUsed: Number.isFinite(usedKb) ? Math.round((usedKb / sizeKb) * 1000) / 10 : null,
+    };
+  }
+  return res;
+}
+function parseFirstInt(lines) {
+  for (const ln of lines) { const n = parseInt(String(ln).trim(), 10); if (Number.isFinite(n) && n > 0) return n; }
+  return null;
+}
+function parseRapl(lines) {
+  const ln = lines.map((s) => s.trim()).find((s) => s) || '';
+  const p = ln.split(/\s+/).map(Number);
+  if (p.length < 2 || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return null;
+  const de = p[0], dt = p[1]; // ΔµJ, Δns (bash-64bit, exakt)
+  if (de <= 0 || dt <= 0) return null; // Zähler-Wraparound oder keine Änderung
+  const w = de / (dt / 1e9) / 1e6; // µJ/s -> W
+  return (Number.isFinite(w) && w > 0 && w < 2000) ? Math.round(w * 100) / 100 : null;
+}
+// lscpu -p: col0=CPU (logisch), col1=Core (physisch). 2 Threads/Core = P (Haupt+HT), 1 = E.
+function parseLscpu(lines) {
+  const cores = new Map();
+  for (const ln of lines) {
+    const s = ln.trim();
+    if (!s || s.startsWith('#')) continue;
+    const p = s.split(',');
+    const cpu = parseInt(p[0], 10), core = parseInt(p[1], 10);
+    if (!Number.isFinite(cpu) || !Number.isFinite(core)) continue;
+    if (!cores.has(core)) cores.set(core, []);
+    cores.get(core).push(cpu);
+  }
+  if (!cores.size) return null;
+  const list = [...cores.entries()].map(([core, cpus]) => ({ core, cpus: cpus.sort((a, b) => a - b) }));
+  list.sort((a, b) => a.core - b.core);
+  const p = [], e = [];
+  for (const c of list) (c.cpus.length >= 2 ? p : e).push(c.cpus);
+  if (!p.length) return null; // keine Hybrid-Topologie -> flaches Raster nutzen
+  return { p, e };
+}
+// sensors -u: coretemp „CPU Temp/Package" bevorzugt, sonst erster Core; AMD Tctl/Tdie.
+function parseSensors(lines) {
+  const blocks = lines.join('\n').split(/\n\s*\n/);
+  let coretemp = null, amd = null;
+  for (const blk of blocks) {
+    const name = (blk.split('\n')[0] || '').trim();
+    if (/^coretemp/i.test(name)) coretemp = blk.split('\n');
+    else if (/^(k10temp|zenpower)/i.test(name)) amd = blk.split('\n');
+  }
+  const pick = (blk, labelRe) => {
+    if (!blk) return null;
+    let label = '', first = null, labeled = null;
+    for (const ln of blk) {
+      const lab = /^(\S.*):\s*$/.exec(ln);
+      if (lab) { label = lab[1]; continue; }
+      const inp = /^\s+temp\d+_input:\s*(-?[\d.]+)/.exec(ln);
+      if (inp) {
+        const v = parseFloat(inp[1]);
+        if (first == null) first = v;
+        if (labeled == null && labelRe.test(label)) labeled = v;
+      }
+    }
+    return labeled != null ? labeled : first;
+  };
+  let t = pick(coretemp, /package|cpu ?temp/i);
+  if (t == null) t = pick(amd, /tctl|tdie/i);
+  return (t != null && Number.isFinite(t)) ? Math.round(t * 10) / 10 : null;
+}
+
 async function fetchUnraidSystem(cfg) {
   const d = await unraidGraphQL(cfg, `query {
     info {
@@ -3213,9 +3369,9 @@ async function fetchUnraidSystem(cfg) {
     cpuBrand: cpuInfo.brand || null,
     cores: cpuInfo.cores || null, threads: cpuInfo.threads || null,
     cpuSpeedMhz: null, cpuSpeedMaxMhz: null,
-    cpuPct: null, cpuCores: null, cpuTemp: null, cpuWatts: null,
+    cpuPct: null, cpuCores: null, cpuCoresGroups: null, cpuTemp: null, cpuWatts: null,
     ramPct: null, ramUsed: null, ramTotal: null, ramFree: null, ramAvailable: null,
-    ramType: null, ramMax: null,
+    ramType: null, ramMax: null, dockerMem: null,
     boot: null, log: null, docker: null, // je { sizeKb, usedKb, pctUsed } oder null
   };
   // CPU-Takt — eigene Query, damit eine aeltere API ohne speed/speedmax die
@@ -3248,6 +3404,29 @@ async function fetchUnraidSystem(cfg) {
     const boot = (((await unraidGraphQL(cfg, 'query { array { boot { fsSize fsUsed } } }')).array) || {}).boot;
     result.boot = unraidFsUsage(boot);
   } catch (_) { /* aeltere API ohne array.boot */ }
+  // CPU-Temperatur aus der GraphQL-API (neuere unraid-api: metrics.temperature).
+  try {
+    const m = (await unraidGraphQL(cfg, 'query { metrics { temperature { sensors { name type current { value unit } } summary { hottest { current { value } } } } } }')).metrics;
+    const tv = pickUnraidCpuTemp(m && m.temperature);
+    if (tv != null) result.cpuTemp = tv;
+  } catch (_) { /* API ohne metrics.temperature */ }
+  // Werte, die die GraphQL-API NICHT liefert, per read-only SSH holen: Watt (RAPL),
+  // Docker-RAM (cgroup), /var/log- & Docker-vDisk-Belegung (df), P/E-Core-Topologie
+  // (lscpu) und als Temp-Fallback lm-sensors. Nur wenn SSH konfiguriert ist.
+  try {
+    const s = await getUnraidSshMetrics();
+    if (s) {
+      if (result.cpuTemp == null && s.tempC != null) result.cpuTemp = s.tempC;
+      if (s.watts != null) result.cpuWatts = s.watts;
+      if (s.dockerMem != null) result.dockerMem = s.dockerMem;
+      if (s.fs) {
+        if (s.fs.boot)   result.boot   = s.fs.boot; // df ist direkter als array.boot
+        if (s.fs.log)    result.log    = s.fs.log;
+        if (s.fs.docker) result.docker = s.fs.docker;
+      }
+      if (s.coresTopo) result.cpuCoresGroups = buildCoresGroups(s.coresTopo, result.cpuCores);
+    }
+  } catch (_) { /* SSH nicht verfuegbar */ }
   return result;
 }
 
