@@ -1963,18 +1963,40 @@ function drawUsyHist() {
 function drawUsyCores() {
   const c = $('usyCores');
   if (!c) return;
-  if (!usy.cores || !usy.cores.length) { c.innerHTML = ''; return; }
-  c.innerHTML = usy.cores.map((v) => {
+  const bar = (v, ht) => {
     const h = Math.max(2, Math.min(100, v));
-    return `<div class="usy-core" style="height:${h}%" title="${Math.round(v)}%"></div>`;
-  }).join('');
+    return `<div class="usy-core${ht ? ' ht' : ''}" style="height:${h}%" title="${Math.round(v)}%"></div>`;
+  };
+  if (usy.coresGroups) {
+    // Gruppiert: P | E, pro Kern 1–2 Balken (Haupt voll, HT gedimmt).
+    c.classList.add('grouped');
+    const cell = (arr) => `<div class="usy-core-cell" style="flex:${arr.length}">${arr.map((v, i) => bar(v, i > 0)).join('')}</div>`;
+    c.innerHTML = usy.coresGroups.map((g) => {
+      const threads = g.cores.reduce((n, cc) => n + cc.length, 0);
+      return `<div class="usy-core-group" style="flex:${threads}"><div class="usy-core-bars">${g.cores.map(cell).join('')}</div><div class="usy-core-grp-lbl">${g.label}</div></div>`;
+    }).join('');
+    return;
+  }
+  c.classList.remove('grouped');
+  if (!usy.cores || !usy.cores.length) { c.innerHTML = ''; return; }
+  c.innerHTML = usy.cores.map((v) => bar(v, false)).join('');
+}
+function usyCoresTitle() {
+  if (usy.coresGroups) {
+    const p = usy.coresGroups.find((g) => g.label === 'P'), e = usy.coresGroups.find((g) => g.label === 'E');
+    const parts = [];
+    if (p) parts.push(p.cores.length + 'P');
+    if (e) parts.push(e.cores.length + 'E');
+    return 'Kerne · ' + parts.join('+');
+  }
+  return `Kerne · ${usy.cores ? usy.cores.length : 0}`;
 }
 function usyRedraw() {
   const hist = $('usyHist'), cores = $('usyCores'), title = $('usyGraphTitle'), tlab = $('usyToggleLabel');
-  const coresView = usy.view === 'cores' && usy.cores && usy.cores.length;
+  const coresView = usy.view === 'cores' && (usy.coresGroups || (usy.cores && usy.cores.length));
   if (hist) hist.style.display = coresView ? 'none' : 'block';
   if (cores) cores.style.display = coresView ? 'flex' : 'none';
-  if (coresView) { drawUsyCores(); if (title) title.textContent = `Kerne · ${usy.cores.length}`; }
+  if (coresView) { drawUsyCores(); if (title) title.textContent = usyCoresTitle(); }
   else { drawUsyHist(); if (title) title.textContent = `Verlauf · Ø ${usyAvg()}%`; }
   if (tlab) tlab.textContent = usy.view === 'hist' ? 'Kerne' : 'Verlauf';
 }
@@ -2014,28 +2036,47 @@ function renderUnraidSystem(d) {
   usyShowChip('usyChipCores', !!coresTxt);
   if (coresTxt) setText('usyCpuCoresTxt', coresTxt);
 
-  // Verlaufspuffer + per-Core
+  // Verlaufspuffer + per-Core (flach + gruppiert P/E)
   if (d.cpuPct != null) pushSample(usy.cpuHist, performance.now(), d.cpuPct, USY_HIST_MAX_MS);
   usy.cores = Array.isArray(d.cpuCores) && d.cpuCores.length ? d.cpuCores : null;
+  usy.coresGroups = Array.isArray(d.cpuCoresGroups) && d.cpuCoresGroups.length ? d.cpuCoresGroups : null;
+  const hasCores = usy.cores || usy.coresGroups;
   const tog = $('usyGraphToggle');
-  if (tog) tog.style.display = usy.cores ? '' : 'none';
-  if (!usy.cores && usy.view === 'cores') usy.view = 'hist';
+  if (tog) tog.style.display = hasCores ? '' : 'none';
+  if (!hasCores && usy.view === 'cores') usy.view = 'hist';
   usyWireGraph();
   usyRedraw();
 
-  // RAM-Meter
+  // RAM-Meter — Segmentbalken System/Docker/Frei (Docker-RAM nur per SSH)
   setText('usyRam', d.ramPct != null ? Math.round(d.ramPct) : '–');
-  usySetWidth('usyRamBar', d.ramPct != null ? d.ramPct : 0);
+  const total = d.ramTotal, used = d.ramUsed;
+  const docker = (d.dockerMem != null && total && used != null) ? Math.min(d.dockerMem, used) : null;
+  const system = used != null ? Math.max(0, used - (docker || 0)) : null;
+  const free = d.ramFree != null ? d.ramFree : (total != null && used != null ? total - used : null);
+  const hasSplit = docker != null && !!total;
+  const sysSeg = $('usyRamSys');
+  if (sysSeg) sysSeg.classList.toggle('solo', !hasSplit); // ohne Docker-Split: orange statt grün
+  if (total && used != null) {
+    usySetWidth('usyRamSys', (system / total) * 100);
+    usySetWidth('usyRamDocker', hasSplit ? (docker / total) * 100 : 0);
+  } else {
+    usySetWidth('usyRamSys', d.ramPct != null ? d.ramPct : 0);
+    usySetWidth('usyRamDocker', 0);
+  }
   const ramGiB = d.ramTotal ? Math.round(d.ramTotal / 1073741824) : null;
   setText('usyRamLabel', 'RAM' + (ramGiB ? ` · ${ramGiB} GiB` : '') + (d.ramType ? ` ${d.ramType}` : ''));
   const leg = $('usyRamLegend');
   if (leg) {
-    const used = d.ramUsed;
-    const free = d.ramFree != null ? d.ramFree : (d.ramTotal != null && d.ramUsed != null ? d.ramTotal - d.ramUsed : null);
     const item = (color, txt) => `<span><i style="background:${color}"></i>${txt}</span>`;
     const rows = [];
-    if (used != null) rows.push(item('var(--u-accent)', 'Belegt ' + usyGiB(used)));
-    if (free != null) rows.push(item('var(--u-dim)', 'Frei ' + usyGiB(free)));
+    if (hasSplit) {
+      if (system != null) rows.push(item('var(--u-green)', 'System ' + usyGiB(system)));
+      rows.push(item('var(--u-accent)', 'Docker ' + usyGiB(docker)));
+      if (free != null) rows.push(item('var(--u-dim)', 'Frei ' + usyGiB(free)));
+    } else {
+      if (used != null) rows.push(item('var(--u-accent)', 'Belegt ' + usyGiB(used)));
+      if (free != null) rows.push(item('var(--u-dim)', 'Frei ' + usyGiB(free)));
+    }
     setHtmlIfChanged(leg, rows.join(''));
   }
 
