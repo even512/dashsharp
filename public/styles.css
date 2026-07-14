@@ -478,6 +478,174 @@ body.design-mode #layoutEditBar { display: flex; flex-wrap: wrap; gap: 12px; }
 [data-widget-id="unraid-notifications"].cfg-hide-actions .vm-btn,
 [data-widget-id="unraid-system"].cfg-hide-actions .unraid-actions { display: none !important; }
 
+/* ═══════════════ Unraid System — Hero-Kachel (Design 2a) ═══════════════
+   Farben laufen über --u-*-Variablen: Default = Unraid-Orange (Dark). Light &
+   Win9x überschreiben nur die Variablen (Fläche/Text/Box), Orange bleibt Akzent. */
+.usy {
+  --u-accent:    #ff7a30;
+  --u-accent2:   #ff5722;
+  --u-accent-lt: #ffb454;
+  --u-green:     #3ddc97;
+  --u-surface:   linear-gradient(180deg, #161014, #100a0c);
+  --u-border:    rgba(255,122,48,.18);
+  --u-hero:      #f7efe9;
+  --u-body:      #c9d4e3;
+  --u-dim:       #8b7a70;
+  --u-label:     #a68b7e;
+  --u-track:     rgba(255,122,48,.1);
+  --u-chip-bg:   rgba(255,122,48,.07);
+  --u-chip-bd:   rgba(255,122,48,.14);
+  --u-chip-tx:   #cbb3a5;
+  --u-box-bg:    rgba(0,0,0,.25);
+  --u-box-bd:    rgba(255,122,48,.1);
+  --u-graph-bg:  rgba(0,0,0,.22);
+  --u-area:      rgba(255,122,48,.14);
+  --u-info-val:  #e8dcd3;
+  background: var(--u-surface);
+  border: 1px solid var(--u-border);
+  border-radius: 16px;
+  padding: 20px 22px;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  color: var(--u-body);
+  box-shadow: 0 8px 30px rgba(0,0,0,.3);
+}
+.usy-glow {
+  position: absolute; top: -40px; right: -40px; width: 160px; height: 160px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,122,48,.14), transparent 70%);
+  pointer-events: none;
+}
+/* Kopf */
+.usy-head { display: flex; justify-content: space-between; align-items: flex-start; position: relative; }
+.usy-brand { display: flex; align-items: center; gap: 9px; }
+.usy-logo {
+  width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
+  background: linear-gradient(135deg, var(--u-accent), var(--u-accent2));
+  display: flex; align-items: center; justify-content: center;
+  font: 800 13px 'Space Grotesk', sans-serif; color: #fff;
+  box-shadow: 0 2px 8px rgba(255,122,48,.4);
+}
+.usy-name { font: 600 11px/1 'JetBrains Mono', monospace; letter-spacing: .14em; color: var(--u-label); text-transform: uppercase; }
+.usy-pills { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.usy-pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  border-radius: 20px; padding: 4px 10px;
+  font: 600 11px 'JetBrains Mono', monospace;
+  color: var(--u-green);
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 26%, transparent);
+  white-space: nowrap;
+}
+.usy-pill > span:first-child { /* Status-Dot (statisch oder von setUnraidBadge injiziert) */
+  width: 7px !important; height: 7px !important; border-radius: 50% !important;
+  background: currentColor; box-shadow: 0 0 6px color-mix(in srgb, currentColor 70%, transparent);
+}
+.usy-pill-up { color: var(--u-accent); }
+.usy-pill-up svg { stroke: var(--u-accent); }
+/* Hero */
+.usy-hero { position: relative; }
+.usy-host { font: 600 30px/1 'Space Grotesk', sans-serif; color: var(--u-hero); letter-spacing: -.01em; }
+.usy-cpubrand { font: 500 11px 'JetBrains Mono', monospace; color: var(--u-dim); margin-top: 6px; min-height: 13px; }
+/* CPU/RAM-Abschnitt */
+.usy-sec { position: relative; }
+.usy-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; }
+.usy-lbl { display: inline-flex; align-items: center; gap: 6px; font: 600 10px 'JetBrains Mono', monospace; letter-spacing: .1em; color: var(--u-label); text-transform: uppercase; }
+.usy-lbl svg { flex-shrink: 0; stroke: var(--u-accent); }
+.usy-val { font: 600 15px 'Space Grotesk', sans-serif; color: var(--u-hero); font-variant-numeric: tabular-nums; }
+.usy-val small { font-size: 11px; color: var(--u-dim); }
+.usy-bar { height: 8px; border-radius: 5px; background: var(--u-track); overflow: hidden; }
+.usy-bar-fill { height: 100%; border-radius: 5px; background: linear-gradient(90deg, var(--u-accent), var(--u-accent-lt)); transition: width 1s cubic-bezier(.4,0,.2,1); }
+.usy-bar-fill.usy-ram { background: linear-gradient(90deg, var(--u-accent2), var(--u-accent)); }
+@keyframes usyBreathe { 0%,100% { box-shadow: 0 0 4px rgba(255,122,48,.45); opacity: .9 } 50% { box-shadow: 0 0 11px rgba(255,122,48,.9); opacity: 1 } }
+.usy-breathe { animation: usyBreathe 2.6s ease-in-out infinite; }
+.usy-chips { display: flex; gap: 7px; margin-top: 9px; flex-wrap: wrap; }
+.usy-chip { display: inline-flex; align-items: center; gap: 5px; background: var(--u-chip-bg); border: 1px solid var(--u-chip-bd); border-radius: 7px; padding: 4px 8px; font: 600 10px 'JetBrains Mono', monospace; color: var(--u-chip-tx); }
+#usyChipTemp svg, #usyChipCores svg { stroke: var(--u-accent); }
+#usyChipWatt svg { fill: var(--u-accent); }
+/* Verlaufsgraph */
+.usy-graph { margin-top: 13px; }
+.usy-graph-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 8px; }
+.usy-graph-title { font: 600 9px 'JetBrains Mono', monospace; letter-spacing: .06em; color: var(--u-dim); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.usy-graph-ctl { display: inline-flex; gap: 6px; flex-shrink: 0; }
+.usy-graph-toggle { border: 1px solid var(--u-chip-bd); background: var(--u-chip-bg); color: var(--u-chip-tx); font: 600 9px 'JetBrains Mono', monospace; border-radius: 6px; padding: 3px 7px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; transition: .12s; }
+.usy-graph-toggle:hover { border-color: color-mix(in srgb, var(--u-accent) 40%, transparent); color: var(--u-hero); }
+.usy-range { background: var(--u-chip-bg); border: 1px solid var(--u-chip-bd); color: var(--u-chip-tx); font: 600 9px 'JetBrains Mono', monospace; border-radius: 6px; padding: 2px 5px; cursor: pointer; -webkit-appearance: none; appearance: none; }
+.usy-graph-body { position: relative; height: 46px; border-radius: 8px; background: var(--u-graph-bg); border: 1px solid var(--u-box-bd); overflow: hidden; }
+.usy-hist { position: absolute; inset: 0; }
+.usy-hist svg { display: block; }
+.usy-area { fill: var(--u-area); }
+.usy-line { stroke: var(--u-accent); stroke-width: 1.6; fill: none; }
+.usy-hist-max, .usy-hist-min { position: absolute; right: 6px; font: 600 8px 'JetBrains Mono', monospace; color: var(--u-dim); }
+.usy-hist-max { top: 3px; } .usy-hist-min { bottom: 2px; }
+.usy-cores { position: absolute; inset: 0; display: none; align-items: flex-end; gap: 2px; padding: 6px 8px; }
+.usy-core { flex: 1; min-height: 2px; border-radius: 2px 2px 0 0; background: linear-gradient(180deg, var(--u-accent-lt), var(--u-accent)); transition: height .8s cubic-bezier(.4,0,.2,1); }
+/* RAM-Legende */
+.usy-legend { display: flex; gap: 14px; margin-top: 9px; flex-wrap: wrap; font: 600 10px 'JetBrains Mono', monospace; color: var(--u-label); }
+.usy-legend > span { display: inline-flex; align-items: center; gap: 5px; }
+.usy-legend i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+/* Disk-Raster */
+.usy-disks { display: grid; gap: 12px; margin-top: 2px; }
+.usy-disk-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.usy-disk-lbl { font: 600 9px 'JetBrains Mono', monospace; letter-spacing: .06em; color: var(--u-label); text-transform: uppercase; }
+.usy-disk-val { font: 600 12px 'Space Grotesk', sans-serif; color: var(--u-hero); }
+.usy-disk-val small { font-size: 9px; color: var(--u-dim); }
+.usy-disk-bar { height: 5px; border-radius: 4px; background: var(--u-track); overflow: hidden; }
+.usy-disk-bar > div { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--u-accent), var(--u-accent-lt)); transition: width 1s cubic-bezier(.4,0,.2,1); }
+/* Info-Box */
+.usy-info { background: var(--u-box-bg); border: 1px solid var(--u-box-bd); border-radius: 11px; padding: 10px 14px; }
+.usy-info:empty { display: none; }
+.usy-info-row { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font: 500 11.5px 'JetBrains Mono', monospace; }
+.usy-info-row > span:first-child { color: var(--u-dim); flex-shrink: 0; }
+.usy-info-row > span:last-child { color: var(--u-info-val); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Aktions-Buttons: Neustart orange, Herunterfahren rot (vm-btn.stop) */
+.usy-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.usy-actions .vm-btn { flex: 1; }
+.usy-actions .vm-btn:not(.stop) { color: var(--u-accent); border-color: color-mix(in srgb, var(--u-accent) 32%, transparent); }
+.usy-actions .vm-btn:not(.stop):hover { color: var(--u-accent); background: color-mix(in srgb, var(--u-accent) 12%, transparent); border-color: color-mix(in srgb, var(--u-accent) 55%, transparent); }
+.usy-actions .vm-btn-note { flex-basis: 100%; font: 500 10px 'JetBrains Mono', monospace; color: var(--u-dim); }
+
+/* ── Light: Fläche/Text/Box aus Theme-Variablen, Orange bleibt Akzent ── */
+[data-theme="light"] .usy {
+  --u-surface: linear-gradient(180deg, var(--bg-card), var(--bg-card-end));
+  --u-border: var(--border-2);
+  --u-hero: var(--text-1);
+  --u-body: var(--text-2);
+  --u-dim: var(--text-3);
+  --u-label: var(--text-3);
+  --u-track: var(--track);
+  --u-chip-bg: rgba(255,122,48,.09);
+  --u-chip-bd: rgba(255,122,48,.24);
+  --u-chip-tx: var(--text-4);
+  --u-box-bg: var(--bg-panel);
+  --u-box-bd: var(--border-3);
+  --u-graph-bg: var(--bg-panel);
+  --u-info-val: var(--text-15);
+  box-shadow: 0 8px 30px rgba(37,99,235,0.08);
+}
+[data-theme="light"] .usy-glow { opacity: .45; }
+
+/* ── Win9x: Silber/Navy, eckig, ohne Glow/Atmen (Root ist bereits grau) ── */
+[data-theme="win9x"] .usy {
+  --u-accent: #000080; --u-accent2: #000080; --u-accent-lt: #1010b0;
+  --u-green: #007000;
+  --u-border: #808080;
+  --u-hero: #000; --u-body: #000; --u-dim: #555; --u-label: #000080;
+  --u-track: #808080;
+  --u-chip-bg: #fff; --u-chip-bd: #808080; --u-chip-tx: #000;
+  --u-box-bg: #fff; --u-box-bd: #808080;
+  --u-graph-bg: #fff; --u-area: rgba(0,0,128,.18);
+  --u-info-val: #000;
+  gap: 8px; box-shadow: var(--w9-group) !important;
+}
+[data-theme="win9x"] .usy-glow { display: none; }
+[data-theme="win9x"] .usy-breathe { animation: none !important; }
+[data-theme="win9x"] .usy-logo { border-radius: 0; box-shadow: none; }
+[data-theme="win9x"] .usy-info, [data-theme="win9x"] .usy-graph-body { box-shadow: var(--w9-sunken); }
+
 /* Toast / Snackbar */
 .toast-host { position: fixed; left: 24px; bottom: 24px; z-index: 500; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; pointer-events: none; }
 .toast { pointer-events: auto; display: flex; align-items: center; gap: 14px; padding: 11px 16px; border-radius: 11px; background: var(--bg-modal); border: 1px solid var(--border-modal); box-shadow: 0 12px 40px rgba(0,0,0,.5); color: var(--text-1); font: 500 12px 'JetBrains Mono', monospace; opacity: 0; transform: translateY(10px); transition: opacity .25s ease, transform .25s ease; }

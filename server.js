@@ -3152,6 +3152,37 @@ app.post('/api/unraid/notifications/action', async (req, res) => {
 
 /* ---------- System-Info ---------- */
 
+// systeminformation liefert CPU-Takt in GHz (z.B. 4.554) — fuer die Kachel
+// nach MHz normalisieren (Werte < 100 gelten als GHz).
+function unraidMhz(v) {
+  const n = parseFloat(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n < 100 ? n * 1000 : n);
+}
+// { fsSize, fsUsed } (KB) -> { sizeKb, usedKb, pctUsed } oder null.
+function unraidFsUsage(x) {
+  if (!x) return null;
+  const sizeKb = unraidNum(x.fsSize), usedKb = unraidNum(x.fsUsed);
+  if (!sizeKb) return null;
+  return { sizeKb, usedKb, pctUsed: usedKb != null ? Math.round((usedKb / sizeKb) * 1000) / 10 : null };
+}
+// metrics{}-Antwort (cpu/memory) in das Ergebnisobjekt uebernehmen.
+function applyUnraidMetrics(result, m) {
+  if (m.cpu) {
+    if (Number.isFinite(+m.cpu.percentTotal)) result.cpuPct = Math.round(+m.cpu.percentTotal * 10) / 10;
+    if (Array.isArray(m.cpu.cpus) && m.cpu.cpus.length) {
+      result.cpuCores = m.cpu.cpus.map((c) => Math.round((+((c && c.percentTotal)) || 0) * 10) / 10);
+    }
+  }
+  if (m.memory) {
+    if (Number.isFinite(+m.memory.percentTotal)) result.ramPct = Math.round(+m.memory.percentTotal * 10) / 10;
+    result.ramUsed  = unraidNum(m.memory.used);
+    result.ramTotal = unraidNum(m.memory.total);
+    if (m.memory.free      != null) result.ramFree      = unraidNum(m.memory.free);
+    if (m.memory.available != null) result.ramAvailable = unraidNum(m.memory.available);
+  }
+}
+
 async function fetchUnraidSystem(cfg) {
   const d = await unraidGraphQL(cfg, `query {
     info {
@@ -3181,18 +3212,42 @@ async function fetchUnraidSystem(cfg) {
     bootTime: os.uptime || null, uptimeSec,
     cpuBrand: cpuInfo.brand || null,
     cores: cpuInfo.cores || null, threads: cpuInfo.threads || null,
-    cpuPct: null, ramPct: null, ramUsed: null, ramTotal: null,
+    cpuSpeedMhz: null, cpuSpeedMaxMhz: null,
+    cpuPct: null, cpuCores: null, cpuTemp: null, cpuWatts: null,
+    ramPct: null, ramUsed: null, ramTotal: null, ramFree: null, ramAvailable: null,
+    ramType: null, ramMax: null,
+    boot: null, log: null, docker: null, // je { sizeKb, usedKb, pctUsed } oder null
   };
+  // CPU-Takt — eigene Query, damit eine aeltere API ohne speed/speedmax die
+  // Basis-Query (brand/cores/threads) nicht mitreisst.
   try {
-    // metrics gibt es erst in neueren unraid-api-Versionen
-    const m = (await unraidGraphQL(cfg, 'query { metrics { cpu { percentTotal } memory { percentTotal total used } } }')).metrics || {};
-    if (m.cpu && Number.isFinite(+m.cpu.percentTotal)) result.cpuPct = Math.round(+m.cpu.percentTotal * 10) / 10;
-    if (m.memory) {
-      if (Number.isFinite(+m.memory.percentTotal)) result.ramPct = Math.round(+m.memory.percentTotal * 10) / 10;
-      result.ramUsed  = unraidNum(m.memory.used);
-      result.ramTotal = unraidNum(m.memory.total);
-    }
-  } catch (_) { /* aeltere API ohne metrics */ }
+    const c = (((await unraidGraphQL(cfg, 'query { info { cpu { speed speedmax } } }')).info) || {}).cpu || {};
+    result.cpuSpeedMhz    = unraidMhz(c.speed);
+    result.cpuSpeedMaxMhz = unraidMhz(c.speedmax);
+  } catch (_) { /* aeltere API ohne cpu.speed */ }
+  // RAM-Typ & maximaler Ausbau aus dem Memory-Layout.
+  try {
+    const mem = (((await unraidGraphQL(cfg, 'query { info { memory { max layout { size type clockSpeed } } } }')).info) || {}).memory || {};
+    result.ramMax = unraidNum(mem.max);
+    const lay = Array.isArray(mem.layout) ? mem.layout.filter((x) => x && x.type) : [];
+    if (lay.length) result.ramType = lay[0].type; // z.B. "DDR5"
+  } catch (_) { /* aeltere API ohne memory.layout */ }
+  // metrics gibt es erst in neueren unraid-api-Versionen. Erst die erweiterte
+  // Variante (per-Core + free/available) versuchen, dann das Minimal-Set.
+  try {
+    const m = (await unraidGraphQL(cfg, 'query { metrics { cpu { percentTotal cpus { percentTotal } } memory { percentTotal total used free available } } }')).metrics || {};
+    applyUnraidMetrics(result, m);
+  } catch (_) {
+    try {
+      const m = (await unraidGraphQL(cfg, 'query { metrics { cpu { percentTotal } memory { percentTotal total used } } }')).metrics || {};
+      applyUnraidMetrics(result, m);
+    } catch (_2) { /* aeltere API ganz ohne metrics */ }
+  }
+  // Boot-Device-Belegung (best effort) — nur wo die API sie liefert.
+  try {
+    const boot = (((await unraidGraphQL(cfg, 'query { array { boot { fsSize fsUsed } } }')).array) || {}).boot;
+    result.boot = unraidFsUsage(boot);
+  } catch (_) { /* aeltere API ohne array.boot */ }
   return result;
 }
 
