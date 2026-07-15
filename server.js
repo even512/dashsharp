@@ -3102,14 +3102,29 @@ app.post('/api/unraid/array/action', async (req, res) => {
 /* ---------- Shares ---------- */
 
 async function fetchUnraidShares(cfg) {
-  const d = await unraidGraphQL(cfg, 'query { shares { id name comment free used size cache } }');
-  const shares = (d.shares || []).map((s) => {
+  // `id` wird bewusst NICHT abgefragt: Es stammt aus dem Node-Interface und ist
+  // non-null (PrefixedID!). Kann der Resolver fuer einen Share keine ID liefern
+  // (User-Shares haben keine natuerliche ID) oder fehlt das Feld in aelteren
+  // unraid-api-Versionen, scheitert sonst die GANZE Query und die Kachel bleibt
+  // leer/offline. Der Share-Name ist ohnehin eindeutig und genuegt als Schluessel.
+  // `comment`/`cache` sind ebenfalls versionsabhaengig -> Fallback wie bei den
+  // uebrigen Unraid-Kacheln (Docker/Array/VMs) auf die seit jeher vorhandenen
+  // Kernfelder.
+  let list;
+  try {
+    const d = await unraidGraphQL(cfg, 'query { shares { name comment free used size cache } }');
+    list = d.shares;
+  } catch (e) {
+    const d = await unraidGraphQL(cfg, 'query { shares { name free used size } }');
+    list = d.shares;
+  }
+  const shares = (list || []).map((s) => {
     const freeKb = unraidNum(s.free), usedKb = unraidNum(s.used);
     let sizeKb = unraidNum(s.size);
     // `size` ist bei User-Shares oft 0 -> aus used+free ableiten
     if (!sizeKb && usedKb != null && freeKb != null) sizeKb = usedKb + freeKb;
     return {
-      id: s.id || s.name, name: s.name || '?', comment: s.comment || '',
+      id: s.name || '?', name: s.name || '?', comment: s.comment || '',
       freeKb, usedKb, sizeKb,
       pctUsed: (sizeKb && usedKb != null) ? Math.round(usedKb / sizeKb * 100) : null,
       cached: s.cache === true,
