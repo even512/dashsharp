@@ -2612,21 +2612,30 @@ function unraidCfg() {
   return { base, apiKey };
 }
 
+// Keep-Alive-Agents: Ohne sie handshaked jeder GraphQL-Call (und jeder Poll
+// aller Unraid-Kacheln) TCP/TLS neu. Mit Keep-Alive werden Verbindungen zur
+// Unraid-Box wiederverwendet — v.a. wenn fetchUnraidSystem mehrere Abfragen
+// parallel feuert. rejectUnauthorized:false, da Unraid oft self-signed nutzt.
+const uHttpAgent  = new http.Agent({ keepAlive: true, maxSockets: 8 });
+const uHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 8, rejectUnauthorized: false });
+
 // Ein GraphQL-Request gegen ${base}/graphql. http/https je nach URL,
 // self-signed erlaubt. Wirft bei GraphQL-Errors, liefert sonst `data`.
 function unraidGraphQL(cfg, query, variables, timeoutMs = 6000) {
   return new Promise((resolve, reject) => {
     let parsed;
     try { parsed = new URL(cfg.base + '/graphql'); } catch (e) { return reject(e); }
-    const lib = parsed.protocol === 'https:' ? https : http;
+    const isHttps = parsed.protocol === 'https:';
+    const lib = isHttps ? https : http;
     const payload = JSON.stringify({ query, variables: variables || {} });
     let settled = false;
     const req = lib.request(
       {
         hostname: parsed.hostname,
-        port:     parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+        port:     parsed.port || (isHttps ? 443 : 80),
         path:     parsed.pathname + parsed.search,
         method:   'POST',
+        agent:    isHttps ? uHttpsAgent : uHttpAgent,
         rejectUnauthorized: false,
         headers: {
           'Content-Type':   'application/json',
@@ -2853,6 +2862,9 @@ function unraidDangerEnabled() { return getSecret('UNRAID_DANGER_ACTIONS') === '
 // BigInt-/String-Zahlenfelder der API robust in Number wandeln.
 function unraidNum(v) { const n = parseFloat(v); return Number.isFinite(n) ? n : null; }
 
+// Laufende Fetches je Slot, damit parallele Cache-Misses sich einen Abruf teilen.
+const _unraidInflight = {}; // slot -> Promise|null
+
 // Gemeinsames GET-Boilerplate der Unraid-Endpoints:
 // cfg-Check -> Cache-Hit -> Fetch -> bei Fehler letzte Daten als _stale.
 async function serveUnraid(res, slot, ttl, fetchFn) {
@@ -2861,9 +2873,20 @@ async function serveUnraid(res, slot, ttl, fetchFn) {
   if (!cfg) return res.json({ ok: false, error: 'not_configured' });
   if (cache[slot].data && Date.now() - cache[slot].ts < ttl) return res.json(cache[slot].data);
   try {
-    const result = await fetchFn(cfg);
-    cache[slot] = { ts: Date.now(), data: result };
-    res.json(result);
+    // In-Flight-Dedupe: zwei parallele Cache-Misses (zweiter Tab / SSE+REST)
+    // teilen sich denselben fetchFn-Aufruf, statt die Abfrage-Lawine zu doppeln.
+    let p = _unraidInflight[slot];
+    if (!p) {
+      p = (async () => {
+        try {
+          const result = await fetchFn(cfg);
+          cache[slot] = { ts: Date.now(), data: result };
+          return result;
+        } finally { _unraidInflight[slot] = null; }
+      })();
+      _unraidInflight[slot] = p;
+    }
+    res.json(await p);
   } catch (err) {
     console.error(`Unraid-Abruf (${slot}) fehlgeschlagen:`, err.message);
     if (cache[slot].data) return res.json({ ...cache[slot].data, _stale: true });
@@ -3210,7 +3233,7 @@ function buildCoresGroups(topo, cpuCores) {
    Ein kombiniertes Read-only-Kommando; eigener Memo-Cache, damit der 10s-Poll
    den SSH-Kanal nicht überrennt. Alles best effort — Fehler => null. */
 const USY_SSH_TTL = 12000;
-const _usySshMemo = { ts: 0, data: null };
+const _usySshMemo = { ts: 0, data: null, inflight: false };
 const USY_SSH_SCRIPT = [
   'echo @DF',
   'df -kP /boot /var/log /var/lib/docker 2>/dev/null',
@@ -3233,21 +3256,32 @@ const USY_SSH_SCRIPT = [
   'echo @END',
 ].join('\n');
 
-async function getUnraidSshMetrics() {
-  if (Date.now() - _usySshMemo.ts < USY_SSH_TTL) return _usySshMemo.data;
-  _usySshMemo.ts = Date.now(); // vorab setzen -> Back-off bei Fehler/parallelen Aufrufen
+// Frischt den SSH-Memo im Hintergrund auf, wenn er abgelaufen ist und kein Abruf
+// laeuft — blockiert NIE den Aufrufer. Der SSH-Handshake + `sleep 0.3` (RAPL)
+// gehoert damit nicht mehr auf den HTTP-Antwortpfad der System-Kachel: die
+// Antwort liefert sofort die GraphQL-Werte, Watt/df/Docker-RAM/Temp-Fallback
+// kommen aus dem Memo (ggf. beim allerersten Aufruf einen Poll spaeter).
+function refreshUnraidSshMetrics() {
+  if (_usySshMemo.inflight) return;
+  if (Date.now() - _usySshMemo.ts < USY_SSH_TTL) return;
   const sshCfg = unraidSshCfg();
-  if (!sshCfg) { _usySshMemo.data = null; return null; }
-  let conn;
-  try {
-    conn = await sshConnect(sshCfg, 5000);
-    const out = await sshExec(conn, USY_SSH_SCRIPT, 5000);
-    _usySshMemo.data = parseUnraidSshMetrics(out);
-  } catch (err) {
-    console.warn('Unraid SSH-Metriken fehlgeschlagen:', err.message);
-    _usySshMemo.data = null;
-  } finally { try { conn && conn.end(); } catch (_) {} }
-  return _usySshMemo.data;
+  if (!sshCfg) { _usySshMemo.ts = Date.now(); _usySshMemo.data = null; return; }
+  _usySshMemo.inflight = true;
+  _usySshMemo.ts = Date.now(); // vorab setzen -> Back-off bei Fehler/parallelen Aufrufen
+  (async () => {
+    let conn;
+    try {
+      conn = await sshConnect(sshCfg, 5000);
+      const out = await sshExec(conn, USY_SSH_SCRIPT, 5000);
+      _usySshMemo.data = parseUnraidSshMetrics(out);
+    } catch (err) {
+      console.warn('Unraid SSH-Metriken fehlgeschlagen:', err.message);
+      _usySshMemo.data = null;
+    } finally {
+      _usySshMemo.inflight = false;
+      try { conn && conn.end(); } catch (_) {}
+    }
+  })();
 }
 
 function parseUnraidSshMetrics(out) {
@@ -3346,14 +3380,37 @@ function parseSensors(lines) {
 }
 
 async function fetchUnraidSystem(cfg) {
-  const d = await unraidGraphQL(cfg, `query {
-    info {
-      os { hostname distro release kernel uptime }
-      cpu { brand cores threads }
-      versions { core { unraid api } }
-    }
-    online
-  }`);
+  // Alle GraphQL-Abfragen gleichzeitig feuern statt nacheinander: die Wall-Clock
+  // der Kachel faellt von der Summe aller Round-Trips auf das Maximum eines
+  // einzelnen. Jede Optional-Query ist best effort (eigenes catch -> null); nur
+  // die Basis-info-Query ist erforderlich (Fehler -> serveUnraid-Stale-Pfad).
+  // Keep-Alive (uHttpsAgent) laesst die parallelen Calls Verbindungen teilen.
+  const q = (query) => unraidGraphQL(cfg, query).catch(() => null);
+  const [d, cpuSpeed, memLayout, metrics, arrayBoot, temperature] = await Promise.all([
+    unraidGraphQL(cfg, `query {
+      info {
+        os { hostname distro release kernel uptime }
+        cpu { brand cores threads }
+        versions { core { unraid api } }
+      }
+      online
+    }`),
+    // CPU-Takt — eigene Query, damit eine aeltere API ohne speed/speedmax die Basis nicht mitreisst.
+    q('query { info { cpu { speed speedmax } } }'),
+    // RAM-Typ & maximaler Ausbau aus dem Memory-Layout.
+    q('query { info { memory { max layout { size type clockSpeed } } } }'),
+    // metrics gibt es erst in neueren unraid-api-Versionen. Erst die erweiterte
+    // Variante (per-Core + free/available), bei Fehler das Minimal-Set.
+    q('query { metrics { cpu { percentTotal cpus { percentTotal } } memory { percentTotal total used free available } } }')
+      .then((m) => m || q('query { metrics { cpu { percentTotal } memory { percentTotal total used } } }')),
+    // Boot-Device-Belegung (best effort) — nur wo die API sie liefert.
+    q('query { array { boot { fsSize fsUsed } } }'),
+    // CPU-Temperatur aus der GraphQL-API (neuere unraid-api: metrics.temperature).
+    q('query { metrics { temperature { sensors { name type current { value unit } } summary { hottest { current { value } } } } } }'),
+  ]);
+  // SSH-Zusatzmetriken im Hintergrund frisch halten — blockiert die Antwort NICHT.
+  refreshUnraidSshMetrics();
+
   const info = d.info || {};
   const os = info.os || {}, cpuInfo = info.cpu || {};
   const core = (info.versions && info.versions.core) || {};
@@ -3380,59 +3437,34 @@ async function fetchUnraidSystem(cfg) {
     ramType: null, ramMax: null, dockerMem: null,
     boot: null, log: null, docker: null, // je { sizeKb, usedKb, pctUsed } oder null
   };
-  // CPU-Takt — eigene Query, damit eine aeltere API ohne speed/speedmax die
-  // Basis-Query (brand/cores/threads) nicht mitreisst.
-  try {
-    const c = (((await unraidGraphQL(cfg, 'query { info { cpu { speed speedmax } } }')).info) || {}).cpu || {};
-    result.cpuSpeedMhz    = unraidMhz(c.speed);
-    result.cpuSpeedMaxMhz = unraidMhz(c.speedmax);
-  } catch (_) { /* aeltere API ohne cpu.speed */ }
-  // RAM-Typ & maximaler Ausbau aus dem Memory-Layout.
-  try {
-    const mem = (((await unraidGraphQL(cfg, 'query { info { memory { max layout { size type clockSpeed } } } }')).info) || {}).memory || {};
-    result.ramMax = unraidNum(mem.max);
-    const lay = Array.isArray(mem.layout) ? mem.layout.filter((x) => x && x.type) : [];
-    if (lay.length) result.ramType = lay[0].type; // z.B. "DDR5"
-  } catch (_) { /* aeltere API ohne memory.layout */ }
-  // metrics gibt es erst in neueren unraid-api-Versionen. Erst die erweiterte
-  // Variante (per-Core + free/available) versuchen, dann das Minimal-Set.
-  try {
-    const m = (await unraidGraphQL(cfg, 'query { metrics { cpu { percentTotal cpus { percentTotal } } memory { percentTotal total used free available } } }')).metrics || {};
-    applyUnraidMetrics(result, m);
-  } catch (_) {
-    try {
-      const m = (await unraidGraphQL(cfg, 'query { metrics { cpu { percentTotal } memory { percentTotal total used } } }')).metrics || {};
-      applyUnraidMetrics(result, m);
-    } catch (_2) { /* aeltere API ganz ohne metrics */ }
-  }
-  // Boot-Device-Belegung (best effort) — nur wo die API sie liefert.
-  try {
-    const boot = (((await unraidGraphQL(cfg, 'query { array { boot { fsSize fsUsed } } }')).array) || {}).boot;
-    result.boot = unraidFsUsage(boot);
-  } catch (_) { /* aeltere API ohne array.boot */ }
-  // CPU-Temperatur aus der GraphQL-API (neuere unraid-api: metrics.temperature).
-  try {
-    const m = (await unraidGraphQL(cfg, 'query { metrics { temperature { sensors { name type current { value unit } } summary { hottest { current { value } } } } } }')).metrics;
-    const tv = pickUnraidCpuTemp(m && m.temperature);
-    if (tv != null) result.cpuTemp = tv;
-  } catch (_) { /* API ohne metrics.temperature */ }
-  // Werte, die die GraphQL-API NICHT liefert, per read-only SSH holen: Watt (RAPL),
-  // Docker-RAM (cgroup), /var/log- & Docker-vDisk-Belegung (df), P/E-Core-Topologie
-  // (lscpu) und als Temp-Fallback lm-sensors. Nur wenn SSH konfiguriert ist.
-  try {
-    const s = await getUnraidSshMetrics();
-    if (s) {
-      if (result.cpuTemp == null && s.tempC != null) result.cpuTemp = s.tempC;
-      if (s.watts != null) result.cpuWatts = s.watts;
-      if (s.dockerMem != null) result.dockerMem = s.dockerMem;
-      if (s.fs) {
-        if (s.fs.boot)   result.boot   = s.fs.boot; // df ist direkter als array.boot
-        if (s.fs.log)    result.log    = s.fs.log;
-        if (s.fs.docker) result.docker = s.fs.docker;
-      }
-      if (s.coresTopo) result.cpuCoresGroups = buildCoresGroups(s.coresTopo, result.cpuCores);
+  // --- GraphQL-Ergebnisse zusammenfuehren (Reihenfolge wie zuvor, Semantik erhalten) ---
+  const c = ((cpuSpeed && cpuSpeed.info) || {}).cpu || {};
+  result.cpuSpeedMhz    = unraidMhz(c.speed);
+  result.cpuSpeedMaxMhz = unraidMhz(c.speedmax);
+  const mem = ((memLayout && memLayout.info) || {}).memory || {};
+  result.ramMax = unraidNum(mem.max);
+  const lay = Array.isArray(mem.layout) ? mem.layout.filter((x) => x && x.type) : [];
+  if (lay.length) result.ramType = lay[0].type; // z.B. "DDR5"
+  if (metrics && metrics.metrics) applyUnraidMetrics(result, metrics.metrics);
+  result.boot = unraidFsUsage(((arrayBoot && arrayBoot.array) || {}).boot);
+  const tv = pickUnraidCpuTemp(temperature && temperature.metrics && temperature.metrics.temperature);
+  if (tv != null) result.cpuTemp = tv;
+  // --- SSH-Zusatzmetriken aus dem Memo (was die GraphQL-API nicht liefert): Watt
+  // (RAPL), Docker-RAM (cgroup), /var/log- & Docker-vDisk-Belegung (df), P/E-Core-
+  // Topologie (lscpu) und als Temp-Fallback lm-sensors. Erst nach applyUnraidMetrics,
+  // da buildCoresGroups die zuvor gesetzten result.cpuCores braucht.
+  const s = _usySshMemo.data;
+  if (s) {
+    if (result.cpuTemp == null && s.tempC != null) result.cpuTemp = s.tempC;
+    if (s.watts != null) result.cpuWatts = s.watts;
+    if (s.dockerMem != null) result.dockerMem = s.dockerMem;
+    if (s.fs) {
+      if (s.fs.boot)   result.boot   = s.fs.boot; // df ist direkter als array.boot
+      if (s.fs.log)    result.log    = s.fs.log;
+      if (s.fs.docker) result.docker = s.fs.docker;
     }
-  } catch (_) { /* SSH nicht verfuegbar */ }
+    if (s.coresTopo) result.cpuCoresGroups = buildCoresGroups(s.coresTopo, result.cpuCores);
+  }
   return result;
 }
 
