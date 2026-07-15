@@ -3215,7 +3215,13 @@ const USY_SSH_SCRIPT = [
   'echo @DF',
   'df -kP /boot /var/log /var/lib/docker 2>/dev/null',
   'echo @DOCKERMEM',
-  "awk '{s+=$1} END{if(s>0)print s}' /sys/fs/cgroup/docker/*/memory.current 2>/dev/null || cat /sys/fs/cgroup/docker/memory.current 2>/dev/null || true",
+  // Docker-RAM wie `docker stats`: je Container memory.current − inactive_file
+  // (cgroup v2). Fallback auf die Roh-Summe, sonst den Aggregat-Zaehler.
+  'tot=0; for d in /sys/fs/cgroup/docker/*/; do ' +
+    'cur=$(cat "$d/memory.current" 2>/dev/null) || continue; ' +
+    'inf=$(awk \'/^inactive_file /{print $2}\' "$d/memory.stat" 2>/dev/null); ' +
+    '[ -n "$cur" ] && tot=$((tot + cur - ${inf:-0})); done; ' +
+    'if [ "$tot" -gt 0 ]; then echo "$tot"; else cat /sys/fs/cgroup/docker/memory.current 2>/dev/null; fi',
   'echo @RAPL',
   'E0=$(cat /sys/class/powercap/intel-rapl:0/energy_uj 2>/dev/null); T0=$(date +%s%N); sleep 0.3; ' +
     'E1=$(cat /sys/class/powercap/intel-rapl:0/energy_uj 2>/dev/null); T1=$(date +%s%N); ' +
