@@ -3266,6 +3266,14 @@ const USY_SSH_SCRIPT = [
     'if [ -n "$E0" ] && [ -n "$E1" ]; then echo "$((E1-E0)) $((T1-T0))"; else echo ""; fi',
   'echo @LSCPU',
   'lscpu -p 2>/dev/null',
+  // Per-Core-Last direkt aus /proc/stat: zwei Snapshots um ein echtes Intervall,
+  // daraus Busy-% je logischer CPU (zuverlaessiger als das GraphQL-cpus-Feld, dessen
+  // systeminformation-Deltas der Subscription-Poller der unraid-api leerraeumt).
+  'echo @CPUA',
+  "grep '^cpu[0-9]' /proc/stat",
+  'sleep 0.3',
+  'echo @CPUB',
+  "grep '^cpu[0-9]' /proc/stat",
   'echo @TEMP',
   'sensors -u 2>/dev/null',
   'echo @END',
@@ -3312,6 +3320,7 @@ function parseUnraidSshMetrics(out) {
     dockerMem: parseFirstInt(sec.DOCKERMEM || []),
     watts:     parseRapl(sec.RAPL || []),
     coresTopo: parseLscpu(sec.LSCPU || []),
+    coresPct:  parseProcStat(sec.CPUA || [], sec.CPUB || []),
     tempC:     parseSensors(sec.TEMP || []),
   };
 }
@@ -3364,6 +3373,40 @@ function parseLscpu(lines) {
   for (const c of list) (c.cpus.length >= 2 ? p : e).push(c.cpus);
   if (!p.length) return null; // keine Hybrid-Topologie -> flaches Raster nutzen
   return { p, e };
+}
+// /proc/stat je Zeile „cpuN u n s idle iowait irq softirq steal …" (kumulative
+// Jiffies) -> { N: {busy, total} }. busy = total − (idle + iowait).
+function readProcStat(lines) {
+  const m = {};
+  for (const ln of lines) {
+    const p = String(ln).trim().split(/\s+/);
+    const mm = /^cpu(\d+)$/.exec(p[0] || '');
+    if (!mm) continue;
+    const v = p.slice(1).map(Number);
+    if (v.length < 5 || v.some((x) => !Number.isFinite(x))) continue;
+    const total = v.reduce((a, b) => a + b, 0);
+    const idle = v[3] + v[4]; // idle + iowait
+    m[+mm[1]] = { busy: total - idle, total };
+  }
+  return m;
+}
+// Zwei /proc/stat-Snapshots -> Busy-% je logischer CPU, dichtes Array [0..maxN]
+// (fehlende/idle Kerne -> 0). null, wenn keine gueltigen Deltas vorliegen.
+function parseProcStat(aLines, bLines) {
+  const a = readProcStat(aLines), b = readProcStat(bLines);
+  const idx = Object.keys(b).map(Number).filter((n) => a[n]);
+  if (!idx.length) return null;
+  const maxN = Math.max(...idx);
+  const out = new Array(maxN + 1).fill(0);
+  let any = false;
+  for (const n of idx) {
+    const dt = b[n].total - a[n].total;
+    if (dt <= 0) continue; // kein Fortschritt -> 0 lassen
+    const pct = ((b[n].busy - a[n].busy) / dt) * 100;
+    out[n] = Math.round(Math.max(0, Math.min(100, pct)) * 10) / 10;
+    any = true;
+  }
+  return any ? out : null;
 }
 // sensors -u: coretemp „CPU Temp/Package" bevorzugt, sonst erster Core; AMD Tctl/Tdie.
 function parseSensors(lines) {
@@ -3478,6 +3521,9 @@ async function fetchUnraidSystem(cfg) {
       if (s.fs.log)    result.log    = s.fs.log;
       if (s.fs.docker) result.docker = s.fs.docker;
     }
+    // Per-Core-Last aus /proc/stat bevorzugen — liefert live, index-gleich mit
+    // lscpu; das GraphQL-cpus-Feld ist auf vielen Setups flach/eingefroren.
+    if (Array.isArray(s.coresPct) && s.coresPct.length) result.cpuCores = s.coresPct;
     if (s.coresTopo) result.cpuCoresGroups = buildCoresGroups(s.coresTopo, result.cpuCores);
   }
   return result;
