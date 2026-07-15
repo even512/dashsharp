@@ -1261,6 +1261,7 @@ function renderVms(d) {
 }
 async function pollVms() {
   if (!state.liveOn) return;
+  if (!widgetOnDashboard('unraid-vms')) return;
   try {
     const res = await fetch('/api/vms', { cache: 'no-store' });
     const d = await res.json();
@@ -1630,7 +1631,10 @@ function renderUnraidDocker(d) {
   const list = $('udkList');
   if (list) diffList(list, _cfgLimit('unraid-docker', 'maxRows', items), (c) => c.id, createUdkRow, updateUdkRow);
 }
-function pollUnraidDocker() { return pollUnraid('/api/unraid/docker', 'udkBadge', renderUnraidDocker); }
+function pollUnraidDocker() {
+  if (!widgetOnDashboard('unraid-docker')) return;
+  return pollUnraid('/api/unraid/docker', 'udkBadge', renderUnraidDocker);
+}
 function startUnraidDocker() {
   clearInterval(udkTimer);
   pollUnraidDocker();
@@ -1781,6 +1785,7 @@ function renderUnraidDisks(d) {
 }
 
 function pollUnraidArray() {
+  if (!anyWidgetOnDashboard(['unraid-array', 'unraid-disks'])) return;
   return pollUnraid('/api/unraid/array', 'uarBadge', (d) => { renderUnraidArray(d); renderUnraidDisks(d); });
 }
 function startUnraidArray() {
@@ -1829,7 +1834,10 @@ function renderUnraidShares(d) {
   const list = $('ushList');
   if (list) diffList(list, _cfgLimit('unraid-shares', 'maxRows', d.shares || []), (s) => s.id || s.name, createUshRow, updateUshRow);
 }
-function pollUnraidShares() { return pollUnraid('/api/unraid/shares', 'ushBadge', renderUnraidShares); }
+function pollUnraidShares() {
+  if (!widgetOnDashboard('unraid-shares')) return;
+  return pollUnraid('/api/unraid/shares', 'ushBadge', renderUnraidShares);
+}
 function startUnraidShares() {
   clearInterval(ushTimer);
   pollUnraidShares();
@@ -1893,7 +1901,10 @@ function renderUnraidNotifications(d) {
   const list = $('unoList');
   if (list) diffList(list, _cfgLimit('unraid-notifications', 'maxRows', d.notifications || []), (n) => n.id, createUnoRow, updateUnoRow);
 }
-function pollUnraidNotifications() { return pollUnraid('/api/unraid/notifications', 'unoBadge', renderUnraidNotifications); }
+function pollUnraidNotifications() {
+  if (!widgetOnDashboard('unraid-notifications')) return;
+  return pollUnraid('/api/unraid/notifications', 'unoBadge', renderUnraidNotifications);
+}
 function startUnraidNotifications() {
   clearInterval(unoTimer);
   pollUnraidNotifications();
@@ -2134,7 +2145,10 @@ function renderUnraidSystem(d) {
     }
   }
 }
-function pollUnraidSystem() { return pollUnraid('/api/unraid/system', 'usyBadge', renderUnraidSystem); }
+function pollUnraidSystem() {
+  if (!widgetOnDashboard('unraid-system')) return;
+  return pollUnraid('/api/unraid/system', 'usyBadge', renderUnraidSystem);
+}
 function startUnraidSystem() {
   clearInterval(usyTimer);
   clearInterval(usy.uptimeTimer);
@@ -2181,7 +2195,10 @@ function renderUnraidUps(d) {
   }
   setText('uupModel', [u.model || u.name, d.devices.length > 1 ? `+${d.devices.length - 1} weitere` : ''].filter(Boolean).join(' · '));
 }
-function pollUnraidUps() { return pollUnraid('/api/unraid/ups', 'uupBadge', renderUnraidUps); }
+function pollUnraidUps() {
+  if (!widgetOnDashboard('unraid-ups')) return;
+  return pollUnraid('/api/unraid/ups', 'uupBadge', renderUnraidUps);
+}
 function startUnraidUps() {
   clearInterval(uupTimer);
   pollUnraidUps();
@@ -3474,6 +3491,17 @@ function setupNextcloudUpload() {
   });
 }
 
+// Liegt eine Kachel ueberhaupt auf dem Dashboard (irgendeine Seite, nicht
+// ausgeblendet)? Die teuren Unraid-/VM-Poller pruefen das pro Tick und sparen
+// sich sonst den GraphQL-/SSH-Abruf — das entlastet den knappen HTTP-Pool des
+// Browsers. Live-Pruefung, damit zur Laufzeit hinzugefuegte Kacheln beim
+// naechsten Tick automatisch pollen (der Timer laeuft ohnehin weiter).
+function widgetOnDashboard(id) {
+  return !!(_dashboard && Array.isArray(_dashboard.tiles)
+    && _dashboard.tiles.some((t) => t.id === id && !t.hidden));
+}
+function anyWidgetOnDashboard(ids) { return ids.some(widgetOnDashboard); }
+
 // Starts/refreshes all live polls (shared interval).
 function startLive() {
   startGlances();
@@ -4471,6 +4499,9 @@ function addWidgetToActivePage(widgetId) {
   if (!restore) { t.x = 0; t.y = _bottomY(_activePage, widgetId); }
   delete t._wasPlaced;
   _rebuildActivePage();
+  // Frisch platzierte Kachel sofort fuellen — sonst wartet ein gegateter Poller
+  // (z.B. Unraid) bis zu einem vollen Intervall, bis Daten erscheinen.
+  try { WIDGET_REFRESH[widgetId]?.(); } catch { /* ignore */ }
   renderCatalogIfOpen();
   _saveIfLive();
   toast(`${wd.label} hinzugefügt`);
@@ -4488,6 +4519,9 @@ function addWidgetAt(widgetId, x, y) {
   t.x = Math.max(0, Math.min(GRID_COLUMNS - t.w, Math.round(x)));
   t.y = Math.max(0, Math.round(y));
   _rebuildActivePage();
+  // Frisch platzierte Kachel sofort fuellen — sonst wartet ein gegateter Poller
+  // (z.B. Unraid) bis zu einem vollen Intervall, bis Daten erscheinen.
+  try { WIDGET_REFRESH[widgetId]?.(); } catch { /* ignore */ }
   renderCatalogIfOpen();
   _saveIfLive();
   toast(`${wd.label} hinzugefügt`);
