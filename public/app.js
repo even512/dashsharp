@@ -2047,12 +2047,18 @@ function renderUnraidSystem(d) {
   usyWireGraph();
   usyRedraw();
 
-  // RAM-Meter — Segmentbalken System/Docker/Frei (Docker-RAM nur per SSH)
+  // RAM-Meter — Segmentbalken System/Docker/Frei (Docker-RAM nur per SSH).
+  // Frei/Belegt Cache-bereinigt wie Unraid: MemAvailable statt MemFree, damit
+  // der Page-Cache nicht als „belegt" zählt (sonst System viel zu hoch).
   setText('usyRam', d.ramPct != null ? Math.round(d.ramPct) : '–');
-  const total = d.ramTotal, used = d.ramUsed;
+  const total = d.ramTotal;
+  const free = d.ramAvailable != null ? d.ramAvailable
+    : (d.ramFree != null ? d.ramFree
+      : (total != null && d.ramUsed != null ? total - d.ramUsed : null));
+  const used = (total != null && free != null) ? Math.max(0, total - free)
+    : (d.ramUsed != null ? d.ramUsed : null);
   const docker = (d.dockerMem != null && total && used != null) ? Math.min(d.dockerMem, used) : null;
   const system = used != null ? Math.max(0, used - (docker || 0)) : null;
-  const free = d.ramFree != null ? d.ramFree : (total != null && used != null ? total - used : null);
   const hasSplit = docker != null && !!total;
   const sysSeg = $('usyRamSys');
   if (sysSeg) sysSeg.classList.toggle('solo', !hasSplit); // ohne Docker-Split: orange statt grün
