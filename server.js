@@ -458,7 +458,18 @@ function checkTcp(name, host, port) {
 app.use(compression({
   filter: (req, res) => (req.path === '/api/glances/stream' ? false : compression.filter(req, res)),
 }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    // Versionsstabile Vendor-Libs (gridstack, noVNC, sortable) lange & unveraenderlich
+    // cachen -> kein 304-Revalidieren bei jedem Reload. Die App-Assets
+    // (app.js/styles.css/index.html) sind NICHT content-gehasht und bleiben deshalb
+    // auf ETag/Last-Modified-Revalidierung (Default von express.static), damit ein
+    // Deploy sofort sichtbar wird.
+    if (filePath.includes(`${path.sep}vendor${path.sep}`)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+  },
+}));
 app.use(express.json());
 
 // Dienste-Konfiguration. Wird bei jedem Request frisch von der Platte gelesen
