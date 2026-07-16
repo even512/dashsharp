@@ -984,6 +984,7 @@ function applyMetrics(d) {
 }
 async function pollGlances() {
   if (!state.liveOn) return;
+  if (!anyWidgetOnActivePage(GLANCES_WIDGETS)) return;
   try {
     const res = await fetch('/api/glances', { cache: 'no-store' });
     const d = await res.json();
@@ -1063,6 +1064,8 @@ function startGlancesFallbackPoll() {
 }
 function startGlances() {
   clearInterval(dataTimer); dataTimer = null;
+  // Nur streamen, wenn eine System/Netzwerk/Disk-Kachel auf der aktiven Seite liegt.
+  if (!anyWidgetOnActivePage(GLANCES_WIDGETS)) { closeMetricsStream(); return; }
   if (typeof window !== 'undefined' && window.EventSource) openMetricsStream();
   else startGlancesFallbackPoll();
 }
@@ -1119,6 +1122,7 @@ function renderDocker(d) {
 }
 async function pollDocker() {
   if (!state.liveOn) return;
+  if (!widgetOnActivePage('docker')) return;
   try {
     const res = await fetch('/api/docker', { cache: 'no-store' });
     const d = await res.json();
@@ -1261,7 +1265,7 @@ function renderVms(d) {
 }
 async function pollVms() {
   if (!state.liveOn) return;
-  if (!widgetOnDashboard('unraid-vms')) return;
+  if (!widgetOnActivePage('unraid-vms')) return;
   try {
     const res = await fetch('/api/vms', { cache: 'no-store' });
     const d = await res.json();
@@ -1632,7 +1636,7 @@ function renderUnraidDocker(d) {
   if (list) diffList(list, _cfgLimit('unraid-docker', 'maxRows', items), (c) => c.id, createUdkRow, updateUdkRow);
 }
 function pollUnraidDocker() {
-  if (!widgetOnDashboard('unraid-docker')) return;
+  if (!widgetOnActivePage('unraid-docker')) return;
   return pollUnraid('/api/unraid/docker', 'udkBadge', renderUnraidDocker);
 }
 function startUnraidDocker() {
@@ -1785,7 +1789,7 @@ function renderUnraidDisks(d) {
 }
 
 function pollUnraidArray() {
-  if (!anyWidgetOnDashboard(['unraid-array', 'unraid-disks'])) return;
+  if (!anyWidgetOnActivePage(['unraid-array', 'unraid-disks'])) return;
   return pollUnraid('/api/unraid/array', 'uarBadge', (d) => { renderUnraidArray(d); renderUnraidDisks(d); });
 }
 function startUnraidArray() {
@@ -1835,7 +1839,7 @@ function renderUnraidShares(d) {
   if (list) diffList(list, _cfgLimit('unraid-shares', 'maxRows', d.shares || []), (s) => s.id || s.name, createUshRow, updateUshRow);
 }
 function pollUnraidShares() {
-  if (!widgetOnDashboard('unraid-shares')) return;
+  if (!widgetOnActivePage('unraid-shares')) return;
   return pollUnraid('/api/unraid/shares', 'ushBadge', renderUnraidShares);
 }
 function startUnraidShares() {
@@ -1902,7 +1906,7 @@ function renderUnraidNotifications(d) {
   if (list) diffList(list, _cfgLimit('unraid-notifications', 'maxRows', d.notifications || []), (n) => n.id, createUnoRow, updateUnoRow);
 }
 function pollUnraidNotifications() {
-  if (!widgetOnDashboard('unraid-notifications')) return;
+  if (!widgetOnActivePage('unraid-notifications')) return;
   return pollUnraid('/api/unraid/notifications', 'unoBadge', renderUnraidNotifications);
 }
 function startUnraidNotifications() {
@@ -2146,7 +2150,7 @@ function renderUnraidSystem(d) {
   }
 }
 function pollUnraidSystem() {
-  if (!widgetOnDashboard('unraid-system')) return;
+  if (!widgetOnActivePage('unraid-system')) return;
   return pollUnraid('/api/unraid/system', 'usyBadge', renderUnraidSystem);
 }
 function startUnraidSystem() {
@@ -2196,7 +2200,7 @@ function renderUnraidUps(d) {
   setText('uupModel', [u.model || u.name, d.devices.length > 1 ? `+${d.devices.length - 1} weitere` : ''].filter(Boolean).join(' · '));
 }
 function pollUnraidUps() {
-  if (!widgetOnDashboard('unraid-ups')) return;
+  if (!widgetOnActivePage('unraid-ups')) return;
   return pollUnraid('/api/unraid/ups', 'uupBadge', renderUnraidUps);
 }
 function startUnraidUps() {
@@ -2264,6 +2268,7 @@ function renderAdGuard(d) {
 }
 async function pollAdGuard() {
   if (!state.liveOn) return;
+  if (!widgetOnActivePage('adguard')) return;
   try {
     const res = await fetch('/api/adguard', { cache: 'no-store' });
     const d = await res.json();
@@ -2363,6 +2368,7 @@ function renderJDownloader(d) {
 }
 async function pollJDownloader() {
   if (!state.liveOn) return;
+  if (!widgetOnActivePage('jdownloader')) return;
   try {
     const res = await fetch('/api/jdownloader', { cache: 'no-store' });
     const d = await res.json();
@@ -2757,6 +2763,7 @@ function renderPlex(d) {
 
 async function pollPlex() {
   if (!state.liveOn) return;
+  if (!widgetOnActivePage('plex')) return;
   try {
     const res = await fetch('/api/plex', { cache: 'no-store' });
     const d = await res.json();
@@ -2850,6 +2857,7 @@ function renderServiceStatus(d) {
 
 async function pollServiceStatus() {
   if (!state.liveOn) return;
+  if (!widgetOnActivePage('service-status')) return;
   try {
     const d = await fetch('/api/status', { cache: 'no-store' }).then((r) => r.json());
     renderServiceStatus(d);
@@ -3292,6 +3300,7 @@ function renderUnifiAps(devices) {
 
 async function pollUnifiSnapshot() {
   if (!state.liveOn) return;
+  if (!widgetOnActivePage('unifi-cameras')) return;
   const img   = $('unifiSnapshot');
   const ph    = $('unifiSnapshotPlaceholder');
   const camSt = $('unifiCamStatus');
@@ -3339,6 +3348,7 @@ async function pollUnifiSnapshot() {
 
 async function pollUnifi() {
   if (!state.liveOn) return;
+  if (!anyWidgetOnActivePage(['unifi-network', 'unifi-aps'])) return;
   try {
     const d = await fetch('/api/unifi', { cache: 'no-store' }).then(r => r.json());
     if (!d?.ok) {
@@ -3426,6 +3436,7 @@ function renderNextcloud(d) {
 
 async function pollNextcloud() {
   if (!state.liveOn) return;
+  if (!widgetOnActivePage('nextcloud')) return;
   try {
     const res = await fetch('/api/nextcloud', { cache: 'no-store' });
     const d = await res.json();
@@ -3491,16 +3502,23 @@ function setupNextcloudUpload() {
   });
 }
 
-// Liegt eine Kachel ueberhaupt auf dem Dashboard (irgendeine Seite, nicht
-// ausgeblendet)? Die teuren Unraid-/VM-Poller pruefen das pro Tick und sparen
-// sich sonst den GraphQL-/SSH-Abruf — das entlastet den knappen HTTP-Pool des
-// Browsers. Live-Pruefung, damit zur Laufzeit hinzugefuegte Kacheln beim
-// naechsten Tick automatisch pollen (der Timer laeuft ohnehin weiter).
-function widgetOnDashboard(id) {
+// Liegt eine sichtbare Kachel auf der AKTIVEN Unterseite? Jeder Poller prueft das
+// pro Tick und spart sich sonst den Abruf — ein Modul pollt nur, solange sein Tab
+// sichtbar ist. Off-Page-Kacheln pausieren (der Timer laeuft weiter, faengt aber
+// hier ab), beim Zurueckwechseln laedt showPage() sie sofort einmal frisch nach.
+// So kollabiert der Start-Burst auf die Kacheln der Landeseite statt aller ~16
+// Poller gleichzeitig; das entlastet zugleich den knappen HTTP-Pool des Browsers.
+// Live-Pruefung, damit zur Laufzeit hinzugefuegte Kacheln automatisch pollen.
+function widgetOnActivePage(id) {
   return !!(_dashboard && Array.isArray(_dashboard.tiles)
-    && _dashboard.tiles.some((t) => t.id === id && !t.hidden));
+    && _dashboard.tiles.some((t) => t.id === id && !t.hidden && t.page === _activePage));
 }
-function anyWidgetOnDashboard(ids) { return ids.some(widgetOnDashboard); }
+function anyWidgetOnActivePage(ids) { return ids.some(widgetOnActivePage); }
+
+// Die drei glances-gespeisten Kacheln teilen sich EINEN SSE-Stream (kein eigener
+// poll*/Timer). Der Stream wird nur geoeffnet, wenn eine davon auf der aktiven
+// Seite liegt (siehe startGlances/_syncGlancesStream).
+const GLANCES_WIDGETS = ['system-load', 'network-throughput', 'disk-storage'];
 
 // Starts/refreshes all live polls (shared interval).
 function startLive() {
@@ -3520,6 +3538,9 @@ function startLive() {
   startUnraidNotifications();
   startUnraidSystem();
   startUnraidUps();
+  // Ab hier uebernimmt showPage() das sofortige Nachladen beim Wechsel auf eine
+  // zuvor pausierte Unterseite (verhindert zugleich Doppel-Fetch waehrend Init).
+  _liveStarted = true;
 }
 // Counterpart to startLive(): actually clears every live timer (not just a
 // flag-check) so a hidden tab or "Live updates" off truly stops polling.
@@ -3937,6 +3958,7 @@ let _dashboard = { version: 2, pages: [], tiles: [] };
 const _grids = new Map();     // pageId -> GridStack instance
 const _builtPages = new Set();
 let _activePage = null;
+let _liveStarted = false;      // true, sobald startLive() den ersten Paint erledigt hat
 let _designOn = false;
 let _designSnapshot = null;    // deep copy of _dashboard when entering design mode (for discard)
 let _tabSortable = null;
@@ -4124,7 +4146,10 @@ const WIDGET_REFRESH = {
   'unraid-system':        () => pollUnraidSystem(),
   'unraid-ups':           () => pollUnraidUps(),
   'plex':                 () => pollPlex(),
+  'nextcloud':            () => pollNextcloud(),
+  'unifi-network':        () => pollUnifi(),
   'unifi-aps':            () => pollUnifi(),
+  'unifi-cameras':        () => pollUnifiSnapshot(),
 };
 
 // Änderungen werden immer verzögert (leise) gespeichert — auch im Design-Modus,
@@ -4340,6 +4365,24 @@ function _restoreActivePage() {
   return _dashboard.pages[0].id;
 }
 
+// Oeffnet/schliesst den geteilten Glances-SSE-Stream je nach aktiver Unterseite
+// (ohne unnoetigen Reconnect, wenn er bereits laeuft).
+function _syncGlancesStream() {
+  const want = state.liveOn && anyWidgetOnActivePage(GLANCES_WIDGETS);
+  if (want) { if (!metricsEs && !dataTimer) startGlances(); }
+  else { closeMetricsStream(); clearInterval(dataTimer); dataTimer = null; }
+}
+
+// Feuert die poll*-Funktionen der sichtbaren Kacheln genau einmal, damit beim
+// Oeffnen einer Unterseite sofort Daten erscheinen statt erst beim naechsten Tick.
+function _refreshActivePageWidgets() {
+  if (!_dashboard || !Array.isArray(_dashboard.tiles)) return;
+  _dashboard.tiles.forEach((t) => {
+    if (t.type !== 'widget' || t.hidden || t.page !== _activePage) return;
+    try { WIDGET_REFRESH[t.id]?.(); } catch { /* ignore */ }
+  });
+}
+
 function showPage(pageId) {
   if (!_dashboard.pages.some((p) => p.id === pageId)) pageId = _dashboard.pages[0].id;
   _activePage = pageId;
@@ -4347,6 +4390,13 @@ function showPage(pageId) {
   buildGridForPage(pageId);
   _applyGridVisibility();
   renderPageTabs();
+  // Lazy-Load pro Unterseite: erst beim (Wieder-)Anzeigen die Live-Daten der
+  // sichtbaren Kacheln anstossen. Waehrend des Erst-Inits (_liveStarted=false)
+  // uebernimmt startLive() den ersten Paint -> hier nichts tun (kein Doppel-Fetch).
+  if (_liveStarted) {
+    _syncGlancesStream();
+    _refreshActivePageWidgets();
+  }
 }
 
 async function saveDashboard(opts) {
