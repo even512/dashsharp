@@ -745,6 +745,10 @@ function downsampleNet(points, maxPts) {
 
 // ---- SSE-Clients & Broadcast ----
 const sseClients = new Set();
+// Letzte je Event gepushte Payload (docker, adguard, …). Der Push-Hub haelt sie
+// zentral warm; ein neu verbundener Client erhaelt daraus sofort einen kompletten
+// Snapshot, statt selbst pro Kachel zu pollen.
+const lastPush = {};
 function sseSend(res, event, data) {
   try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch (_) { /* ignore */ }
 }
@@ -1308,6 +1312,9 @@ app.get('/api/glances/stream', (req, res) => {
   if (wanState.latest) sseSend(res, 'wan', wanState.latest);
   fetchGlancesSample().then((d) => sseSend(res, 'glances', d)).catch(() => {});
   ensureGlancesStream();
+  // Sofort-Snapshot aller zentral vorgehaltenen Kachel-Daten -> die Seite ist
+  // beim Oeffnen sofort befuellt, ohne einen Schwung paralleler REST-Fetches.
+  for (const ev of Object.keys(lastPush)) sseSend(res, ev, lastPush[ev]);
 
   const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch (_) {} }, 20000);
   req.on('close', () => { clearInterval(hb); sseClients.delete(res); wanWsOnClientsChanged(); });
@@ -1482,13 +1489,14 @@ function mapContainer(c) {
   };
 }
 
-app.get('/api/docker', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
+// Liefert (bzw. aktualisiert) den Docker-Status. Wird von der REST-Route und
+// vom Server-Push-Hub genutzt; der TTL-Cache dedupliziert beide Wege.
+async function refreshDocker() {
   const { url } = glancesCfg();
-  if (!url) return res.json({ ok: false, error: 'not_configured' });
+  if (!url) return { ok: false, error: 'not_configured' };
 
   if (cache.docker.data && Date.now() - cache.docker.ts < DOCKER_TTL) {
-    return res.json(cache.docker.data);
+    return cache.docker.data;
   }
 
   try {
@@ -1520,11 +1528,16 @@ app.get('/api/docker', async (req, res) => {
       containers: sorted,
     };
     cache.docker = { ts: Date.now(), data: result };
-    res.json(result);
+    return result;
   } catch (err) {
     console.error('Docker-Abruf (Glances) fehlgeschlagen:', err.message);
-    res.json({ ok: false, error: 'fetch_failed', message: err.message });
+    return { ok: false, error: 'fetch_failed', message: err.message };
   }
+}
+
+app.get('/api/docker', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await refreshDocker());
 });
 
 /* ============================================================
@@ -1563,13 +1576,12 @@ function topBlockedList(list) {
     .filter((item) => item.domain);
 }
 
-app.get('/api/adguard', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
+async function refreshAdguard() {
   const { url, user, pass } = adguardCfg();
-  if (!url) return res.json({ ok: false, error: 'not_configured' });
+  if (!url) return { ok: false, error: 'not_configured' };
 
   if (cache.adguard.data && Date.now() - cache.adguard.ts < ADGUARD_TTL) {
-    return res.json(cache.adguard.data);
+    return cache.adguard.data;
   }
 
   const auth = adguardAuth(user, pass);
@@ -1594,11 +1606,16 @@ app.get('/api/adguard', async (req, res) => {
                     ? +(stats.avg_processing_time * 1000).toFixed(1) : null,
     };
     cache.adguard = { ts: Date.now(), data: result };
-    res.json(result);
+    return result;
   } catch (err) {
     console.error('AdGuard-Abruf fehlgeschlagen:', err.message);
-    res.json({ ok: false, error: 'fetch_failed', message: err.message });
+    return { ok: false, error: 'fetch_failed', message: err.message };
   }
+}
+
+app.get('/api/adguard', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await refreshAdguard());
 });
 
 /* ============================================================
@@ -1820,23 +1837,27 @@ async function jdownloaderFetch(cfg) {
   }
 }
 
-app.get('/api/jdownloader', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
+async function refreshJdownloader() {
   const cfg = jdownloaderCfg();
-  if (!jdownloaderReady(cfg)) return res.json({ ok: false, error: 'not_configured' });
+  if (!jdownloaderReady(cfg)) return { ok: false, error: 'not_configured' };
 
   if (cache.jdownloader.data && Date.now() - cache.jdownloader.ts < JDOWNLOADER_TTL) {
-    return res.json(cache.jdownloader.data);
+    return cache.jdownloader.data;
   }
   try {
     const result = await jdownloaderFetch(cfg);
     cache.jdownloader = { ts: Date.now(), data: result };
-    res.json(result);
+    return result;
   } catch (err) {
-    if (err.jdOffline) return res.json({ ok: false, error: 'device_offline' });
+    if (err.jdOffline) return { ok: false, error: 'device_offline' };
     console.error('JDownloader-Abruf fehlgeschlagen:', err.message);
-    res.json({ ok: false, error: 'fetch_failed', message: err.message });
+    return { ok: false, error: 'fetch_failed', message: err.message };
   }
+}
+
+app.get('/api/jdownloader', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await refreshJdownloader());
 });
 
 /* ============================================================
@@ -1961,10 +1982,9 @@ function normRecent(metadata) {
   }));
 }
 
-app.get('/api/plex', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
+async function refreshPlex() {
   const { url, token } = plexCfg();
-  if (!url || !token) return res.json({ ok: false, error: 'not_configured' });
+  if (!url || !token) return { ok: false, error: 'not_configured' };
 
   // Bibliothekszahlen (lange TTL – aendern sich kaum)
   let library = cache.plexLib.data;
@@ -2052,7 +2072,12 @@ app.get('/api/plex', async (req, res) => {
     }
   }
 
-  res.json({ ok: true, library, sessions, recent });
+  return { ok: true, library, sessions, recent };
+}
+
+app.get('/api/plex', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await refreshPlex());
 });
 
 // Poster-Proxy: Plex-Token bleibt serverseitig.
@@ -2096,27 +2121,31 @@ app.post('/api/status/config', (req, res) => {
   }
 });
 
-app.get('/api/status', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
+async function refreshStatus() {
   if (cache.status.data && Date.now() - cache.status.ts < STATUS_TTL) {
-    return res.json(cache.status.data);
+    return cache.status.data;
   }
   const { services } = readStatusCfg();
   if (!services.length) {
     const empty = { ok: true, online: 0, total: 0, services: [] };
     cache.status = { ts: Date.now(), data: empty };
-    return res.json(empty);
+    return empty;
   }
   try {
     const results = await Promise.all(services.map((s) => checkService(s.name, s.url)));
     const online = results.filter((r) => r.online).length;
     const data = { ok: true, online, total: results.length, services: results };
     cache.status = { ts: Date.now(), data };
-    res.json(data);
+    return data;
   } catch (err) {
     console.error('Status-Check fehlgeschlagen:', err.message);
-    res.status(500).json({ ok: false, error: 'check_failed' });
+    return { ok: false, error: 'check_failed' };
   }
+}
+
+app.get('/api/status', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await refreshStatus());
 });
 
 /* ---------- Festplatten-Konfiguration (Labels) ---------- */
@@ -2278,16 +2307,14 @@ app.post('/api/secrets', (req, res) => {
    Wetterdaten → open-meteo Forecast API  → Temperatur + WMO-Code
    Cache: 10 Minuten (Wetter aendert sich langsam)
    ============================================================ */
-app.get('/api/weather', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
-
+async function refreshWeather() {
   const city = getSecret('WEATHER_CITY');
   const unit = getSecret('WEATHER_UNIT') || 'C';
 
-  if (!city) return res.json({ ok: false, configured: false });
+  if (!city) return { ok: false, configured: false };
 
   if (cache.weather.data && Date.now() - cache.weather.ts < WEATHER_TTL) {
-    return res.json(cache.weather.data);
+    return cache.weather.data;
   }
 
   try {
@@ -2299,7 +2326,7 @@ app.get('/api/weather', async (req, res) => {
     if (!geoRes.ok) throw new Error(`Geocoding HTTP ${geoRes.status}`);
     const geo = await geoRes.json();
     if (!geo.results || !geo.results.length) {
-      return res.json({ ok: false, configured: true, error: 'city_not_found', city });
+      return { ok: false, configured: true, error: 'city_not_found', city };
     }
     const { latitude, longitude, name, country } = geo.results[0];
 
@@ -2324,24 +2351,28 @@ app.get('/api/weather', async (req, res) => {
       country,
     };
     cache.weather = { ts: Date.now(), data };
-    res.json(data);
+    return data;
   } catch (err) {
     console.error('Wetter-Fetch fehlgeschlagen:', err.message);
-    if (cache.weather.data) return res.json({ ...cache.weather.data, _stale: true });
-    res.status(502).json({ ok: false, configured: true, error: 'fetch_failed' });
+    if (cache.weather.data) return { ...cache.weather.data, _stale: true };
+    return { ok: false, configured: true, error: 'fetch_failed' };
   }
+}
+
+app.get('/api/weather', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await refreshWeather());
 });
 
 /* ============================================================
    UniFi Network Application + Protect  (Cloud API)
    ============================================================ */
-app.get('/api/unifi', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
+async function refreshUnifi() {
   const cfg = unifiCfg();
-  if (!cfg.apiKey) return res.json({ ok: false, error: 'not_configured' });
+  if (!cfg.apiKey) return { ok: false, error: 'not_configured' };
 
   if (Date.now() - cache.unifi.ts < UNIFI_TTL && cache.unifi.data)
-    return res.json(cache.unifi.data);
+    return cache.unifi.data;
 
   try {
     const hostId = await getConsoleId(cfg);
@@ -2439,11 +2470,16 @@ app.get('/api/unifi', async (req, res) => {
     };
 
     cache.unifi = { ts: Date.now(), data: out };
-    res.json(out);
+    return out;
   } catch (err) {
-    if (cache.unifi.data) return res.json({ ...cache.unifi.data, _stale: true });
-    res.json({ ok: false, error: err.message });
+    if (cache.unifi.data) return { ...cache.unifi.data, _stale: true };
+    return { ok: false, error: err.message };
   }
+}
+
+app.get('/api/unifi', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await refreshUnifi());
 });
 
 app.get('/api/unifi/snapshot', (req, res) => {
@@ -2522,13 +2558,12 @@ async function ncFetch(cfg, apiPath, timeoutMs = 6000) {
   return ocs.data;
 }
 
-app.get('/api/nextcloud', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
+async function refreshNextcloud() {
   const cfg = nextcloudCfg();
-  if (!cfg.url || !cfg.user || !cfg.pass) return res.json({ ok: false, error: 'not_configured' });
+  if (!cfg.url || !cfg.user || !cfg.pass) return { ok: false, error: 'not_configured' };
 
   if (cache.nextcloud.data && Date.now() - cache.nextcloud.ts < NEXTCLOUD_TTL) {
-    return res.json(cache.nextcloud.data);
+    return cache.nextcloud.data;
   }
 
   try {
@@ -2585,12 +2620,17 @@ app.get('/api/nextcloud', async (req, res) => {
       version,
     };
     cache.nextcloud = { ts: Date.now(), data: result };
-    res.json(result);
+    return result;
   } catch (err) {
     console.error('Nextcloud-Abruf fehlgeschlagen:', err.message);
-    if (cache.nextcloud.data) return res.json({ ...cache.nextcloud.data, _stale: true });
-    res.json({ ok: false, error: 'fetch_failed', message: err.message });
+    if (cache.nextcloud.data) return { ...cache.nextcloud.data, _stale: true };
+    return { ok: false, error: 'fetch_failed', message: err.message };
   }
+}
+
+app.get('/api/nextcloud', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await refreshNextcloud());
 });
 
 // Datei-Upload in den ToLeech-Ordner. Body = rohe Datei, ?name=<dateiname>.
@@ -2746,13 +2786,12 @@ function enrichVmsResult(result) {
   return { ...result, vms };
 }
 
-app.get('/api/vms', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
+async function refreshVms() {
   const cfg = unraidCfg();
-  if (!cfg) return res.json({ ok: false, error: 'not_configured' });
+  if (!cfg) return { ok: false, error: 'not_configured' };
 
   if (cache.unraid.data && Date.now() - cache.unraid.ts < VM_TTL) {
-    return res.json(enrichVmsResult(cache.unraid.data));
+    return enrichVmsResult(cache.unraid.data);
   }
 
   try {
@@ -2779,12 +2818,17 @@ app.get('/api/vms', async (req, res) => {
       vms,
     };
     cache.unraid = { ts: Date.now(), data: result };
-    res.json(enrichVmsResult(result));
+    return enrichVmsResult(result);
   } catch (err) {
     console.error('Unraid-VM-Abruf fehlgeschlagen:', err.message);
-    if (cache.unraid.data) return res.json(enrichVmsResult({ ...cache.unraid.data, _stale: true }));
-    res.json({ ok: false, error: 'fetch_failed', message: err.message });
+    if (cache.unraid.data) return enrichVmsResult({ ...cache.unraid.data, _stale: true });
+    return { ok: false, error: 'fetch_failed', message: err.message };
   }
+}
+
+app.get('/api/vms', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await refreshVms());
 });
 
 app.get('/api/vms/config', (req, res) => {
@@ -2898,11 +2942,13 @@ const _unraidInflight = {}; // slot -> Promise|null
 
 // Gemeinsames GET-Boilerplate der Unraid-Endpoints:
 // cfg-Check -> Cache-Hit -> Fetch -> bei Fehler letzte Daten als _stale.
-async function serveUnraid(res, slot, ttl, fetchFn) {
-  res.set('Cache-Control', 'no-store');
+// Liefert (bzw. aktualisiert) einen Unraid-Slot als Payload — genutzt von der
+// REST-Route (serveUnraid) und vom Server-Push-Hub. cfg-Check -> Cache-Hit ->
+// Fetch (mit In-Flight-Dedupe) -> bei Fehler letzte Daten als _stale.
+async function getUnraid(slot, ttl, fetchFn) {
   const cfg = unraidCfg();
-  if (!cfg) return res.json({ ok: false, error: 'not_configured' });
-  if (cache[slot].data && Date.now() - cache[slot].ts < ttl) return res.json(cache[slot].data);
+  if (!cfg) return { ok: false, error: 'not_configured' };
+  if (cache[slot].data && Date.now() - cache[slot].ts < ttl) return cache[slot].data;
   try {
     // In-Flight-Dedupe: zwei parallele Cache-Misses (zweiter Tab / SSE+REST)
     // teilen sich denselben fetchFn-Aufruf, statt die Abfrage-Lawine zu doppeln.
@@ -2917,12 +2963,17 @@ async function serveUnraid(res, slot, ttl, fetchFn) {
       })();
       _unraidInflight[slot] = p;
     }
-    res.json(await p);
+    return await p;
   } catch (err) {
     console.error(`Unraid-Abruf (${slot}) fehlgeschlagen:`, err.message);
-    if (cache[slot].data) return res.json({ ...cache[slot].data, _stale: true });
-    res.json({ ok: false, error: 'fetch_failed', message: err.message });
+    if (cache[slot].data) return { ...cache[slot].data, _stale: true };
+    return { ok: false, error: 'fetch_failed', message: err.message };
   }
+}
+
+async function serveUnraid(res, slot, ttl, fetchFn) {
+  res.set('Cache-Control', 'no-store');
+  res.json(await getUnraid(slot, ttl, fetchFn));
 }
 
 /* ---------- Docker-Container ---------- */
@@ -3868,6 +3919,59 @@ async function handleVncWs(ws, id) {
 // Healthcheck fuer Docker / Monitoring
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
+/* ============================================================
+   Server-Push-Hub — zentrales Vorhalten ALLER Kachel-Daten
+   ------------------------------------------------------------
+   Verallgemeinert das ensureGlancesStream-Muster auf jede
+   periodische Integration: pro Quelle EIN serverweiter Timer, der
+   ab Boot dauerhaft (24/7) laeuft, den TTL-Cache warm haelt und das
+   Ergebnis via SSE an alle verbundenen Clients broadcastet. Eine
+   frisch geladene Seite bekommt so sofort einen kompletten Snapshot
+   (lastPush, siehe /api/glances/stream), statt selbst einen Schwung
+   paralleler REST-Fetches abzufeuern. Broadcast an null Clients ist
+   ein No-op — der Cache bleibt trotzdem warm, damit auch der erste/
+   einzige Aufruf ohne Aufwaermzeit sofort da ist. Die REST-Routen
+   bleiben als Fallback (kein SSE) voll funktionsfaehig.
+   ============================================================ */
+const PUSH_SOURCES = [
+  { event: 'docker',       interval: DOCKER_TTL,        get: refreshDocker },
+  { event: 'adguard',      interval: ADGUARD_TTL,       get: refreshAdguard },
+  { event: 'jdownloader',  interval: JDOWNLOADER_TTL,   get: refreshJdownloader },
+  { event: 'plex',         interval: PLEX_SESS_TTL,     get: refreshPlex },
+  { event: 'status',       interval: STATUS_TTL,        get: refreshStatus },
+  { event: 'weather',      interval: WEATHER_TTL,       get: refreshWeather },
+  { event: 'unifi',        interval: UNIFI_TTL,         get: refreshUnifi },
+  { event: 'nextcloud',    interval: NEXTCLOUD_TTL,     get: refreshNextcloud },
+  { event: 'vms',          interval: VM_TTL,            get: refreshVms },
+  { event: 'unraidDocker', interval: UNRAID_DOCKER_TTL, get: () => getUnraid('unraidDocker', UNRAID_DOCKER_TTL, fetchUnraidDocker) },
+  { event: 'unraidArray',  interval: UNRAID_ARRAY_TTL,  get: () => getUnraid('unraidArray',  UNRAID_ARRAY_TTL,  fetchUnraidArray) },
+  { event: 'unraidShares', interval: UNRAID_SHARES_TTL, get: () => getUnraid('unraidShares', UNRAID_SHARES_TTL, fetchUnraidShares) },
+  { event: 'unraidNotif',  interval: UNRAID_NOTIF_TTL,  get: () => getUnraid('unraidNotif',  UNRAID_NOTIF_TTL,  fetchUnraidNotifications) },
+  { event: 'unraidSystem', interval: UNRAID_SYSTEM_TTL, get: () => getUnraid('unraidSystem', UNRAID_SYSTEM_TTL, fetchUnraidSystem) },
+  { event: 'unraidUps',    interval: UNRAID_UPS_TTL,    get: () => getUnraid('unraidUps',    UNRAID_UPS_TTL,    fetchUnraidUps) },
+];
+
+let _pushHubStarted = false;
+function startPushHub() {
+  if (_pushHubStarted) return;
+  _pushHubStarted = true;
+  const tick = async (src) => {
+    try {
+      const payload = await src.get();
+      if (payload === undefined) return;
+      lastPush[src.event] = payload;   // Snapshot fuer neu verbundene Clients
+      broadcast(src.event, payload);   // an alle offenen Streams (No-op bei 0 Clients)
+    } catch (err) {
+      console.warn(`Push-Hub (${src.event}) fehlgeschlagen:`, err.message);
+    }
+  };
+  for (const src of PUSH_SOURCES) {
+    tick(src);                                        // sofort einmal warmlaufen
+    src._timer = setInterval(() => tick(src), src.interval);
+  }
+  console.log(`Push-Hub aktiv: ${PUSH_SOURCES.length} Quellen werden dauerhaft vorgehalten`);
+}
+
 const server = http.createServer(app);
 server.on('upgrade', (req, socket, head) => {
   let url;
@@ -3887,4 +3991,6 @@ server.listen(PORT, () => {
   // 1h-Verlauf sofort warmlaeuft und 10m/1h ohne Aufwaermzeit verfuegbar sind.
   startNetSampler();
   startWanSampler();
+  // Alle Kachel-Integrationen zentral & dauerhaft vorhalten (Server-Push-Hub).
+  startPushHub();
 });
