@@ -1024,6 +1024,29 @@ function markGlancesError(d) {
 let metricsEs = null;
 let _esConnected = false;
 let _esFails = 0;
+// Push-Modus: der Server haelt alle Kacheln zentral aktuell und schickt sie ueber
+// EINEN SSE-Stream (kein Per-Kachel-Polling). Faellt SSE aus, wird auf klassisches
+// Polling zurueckgeschaltet (_pushMode=false). Standard: an, wenn EventSource geht.
+let _pushMode = false;
+// Routing der Server-Push-Events (Event-Namen = PUSH_SOURCES in server.js) auf die
+// vorhandenen Kachel-Handler. Dieselben Handler nutzt auch der REST-Fallback.
+const PUSH_HANDLERS = {
+  docker:       handleDocker,
+  vms:          handleVms,
+  adguard:      handleAdGuard,
+  jdownloader:  handleJDownloader,
+  plex:         handlePlex,
+  status:       renderServiceStatus,
+  weather:      renderWeather,
+  unifi:        handleUnifi,
+  nextcloud:    handleNextcloud,
+  unraidDocker: (d) => handleUnraid(d, 'udkBadge', renderUnraidDocker),
+  unraidArray:  (d) => handleUnraid(d, 'uarBadge', (x) => { renderUnraidArray(x); renderUnraidDisks(x); }),
+  unraidShares: (d) => handleUnraid(d, 'ushBadge', renderUnraidShares),
+  unraidNotif:  (d) => handleUnraid(d, 'unoBadge', renderUnraidNotifications),
+  unraidSystem: (d) => handleUnraid(d, 'usyBadge', renderUnraidSystem),
+  unraidUps:    (d) => handleUnraid(d, 'uupBadge', renderUnraidUps),
+};
 function openMetricsStream() {
   closeMetricsStream();
   clearInterval(dataTimer); dataTimer = null;
@@ -1044,11 +1067,21 @@ function openMetricsStream() {
     if (!d || !d.ok) { markGlancesError(d); return; }
     applyMetrics(d); markGlancesConnected();
   });
+  // Alle uebrigen Kacheln kommen als benannte Push-Events ueber denselben Stream
+  // (inkl. Sofort-Snapshot beim Verbinden) -> direkt in die vorhandenen Handler.
+  for (const ev of Object.keys(PUSH_HANDLERS)) {
+    es.addEventListener(ev, (e) => {
+      let d; try { d = JSON.parse(e.data); } catch (_) { return; }
+      _esConnected = true; _esFails = 0;
+      try { PUSH_HANDLERS[ev](d); } catch (err) { console.warn('Push-Handler', ev, err && err.message); }
+    });
+  }
   es.onopen = () => { _esConnected = true; _esFails = 0; };
   es.onerror = () => {
     _esFails++;
-    // Nie verbunden und mehrfach fehlgeschlagen -> Server kann kein SSE -> Polling.
-    if (!_esConnected && _esFails >= 3) startGlancesFallbackPoll();
+    // Nie verbunden und mehrfach fehlgeschlagen -> Server kann kein SSE -> komplett
+    // auf klassisches Per-Kachel-Polling zurueckschalten.
+    if (!_esConnected && _esFails >= 3 && _pushMode) startPollingFallback();
     // Andernfalls reconnectet EventSource selbsttaetig.
   };
 }
@@ -1120,22 +1153,25 @@ function renderDocker(d) {
   if (_cfgVal('docker', 'hideStopped')) containers = containers.filter((c) => c.state !== 'stopped');
   diffList(list, _cfgLimit('docker', 'maxRows', containers), (c) => c.name, createDockerRow, updateDockerRow);
 }
+// Verarbeitet eine Docker-Payload (aus SSE-Push ODER REST-Poll) in die Kachel.
+function handleDocker(d) {
+  if (!d || !d.ok) {
+    const msg = d && d.error === 'not_configured' ? 'not configured' : 'offline';
+    setDockerBadge(msg, '#f43f5e');
+    setText('dockerSettingsStatus', '● ' + msg);
+    const ds = $('dockerSettingsStatus'); if (ds) ds.style.color = '#f43f5e';
+    return;
+  }
+  renderDocker(d);
+  setText('dockerSettingsStatus', `● ${d.running ?? 0} active`);
+  const ds = $('dockerSettingsStatus'); if (ds) ds.style.color = '#3ddc97';
+}
 async function pollDocker() {
   if (!state.liveOn) return;
   if (!widgetOnActivePage('docker')) return;
   try {
     const res = await fetch('/api/docker', { cache: 'no-store' });
-    const d = await res.json();
-    if (!d || !d.ok) {
-      const msg = d && d.error === 'not_configured' ? 'not configured' : 'offline';
-      setDockerBadge(msg, '#f43f5e');
-      setText('dockerSettingsStatus', '● ' + msg);
-      const ds = $('dockerSettingsStatus'); if (ds) ds.style.color = '#f43f5e';
-      return;
-    }
-    renderDocker(d);
-    setText('dockerSettingsStatus', `● ${d.running ?? 0} active`);
-    const ds = $('dockerSettingsStatus'); if (ds) ds.style.color = '#3ddc97';
+    handleDocker(await res.json());
   } catch (err) {
     setDockerBadge('offline', '#f43f5e');
     setText('dockerSettingsStatus', '● offline');
@@ -1263,20 +1299,22 @@ function renderVms(d) {
   if (list) diffList(list, _cfgLimit('unraid-vms', 'maxRows', d.vms || []), (v) => v.id, createVmRow, updateVmRow);
   if (_vmModalVm) refreshVmModal(); // offenes Modal aktualisieren
 }
+function handleVms(d) {
+  if (!d || !d.ok) {
+    const msg = d && d.error === 'not_configured' ? 'not configured' : 'offline';
+    setVmBadge(msg, '#f43f5e');
+    setVmSettingsStatus(msg, '#f43f5e');
+    return;
+  }
+  renderVms(d);
+  setVmSettingsStatus(`${d.running || 0} running · ${d.total} VMs`, '#3ddc97');
+}
 async function pollVms() {
   if (!state.liveOn) return;
   if (!widgetOnActivePage('unraid-vms')) return;
   try {
     const res = await fetch('/api/vms', { cache: 'no-store' });
-    const d = await res.json();
-    if (!d || !d.ok) {
-      const msg = d && d.error === 'not_configured' ? 'not configured' : 'offline';
-      setVmBadge(msg, '#f43f5e');
-      setVmSettingsStatus(msg, '#f43f5e');
-      return;
-    }
-    renderVms(d);
-    setVmSettingsStatus(`${d.running || 0} running · ${d.total} VMs`, '#3ddc97');
+    handleVms(await res.json());
   } catch (err) {
     setVmBadge('offline', '#f43f5e');
     setVmSettingsStatus('offline', '#f43f5e');
@@ -1486,13 +1524,13 @@ async function saveVmCfg() {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config }),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    startVms(); // Kacheln sofort mit neuen Flags aktualisieren
+    pollVms(); // Kachel sofort mit neuen Flags aktualisieren (Push-Hub liefert danach weiter)
   } catch (err) { console.warn('VM-Config speichern fehlgeschlagen:', err.message); }
 }
 async function detectVmOs() {
   const btn = $('vmDetectBtn');
   if (btn) { btn.disabled = true; btn.textContent = '⟳ …'; }
-  try { await fetch('/api/vms/detect', { method: 'POST' }); await loadVmCfg(); startVms(); }
+  try { await fetch('/api/vms/detect', { method: 'POST' }); await loadVmCfg(); pollVms(); }
   catch (err) { console.warn('OS-Erkennung fehlgeschlagen:', err.message); }
   finally { if (btn) { btn.disabled = false; btn.textContent = '⟳ OS erkennen'; } }
 }
@@ -1513,18 +1551,22 @@ function setUnraidBadge(id, text, color) {
 
 // Gemeinsames Poll-Boilerplate: /api/unraid-Endpoint holen, Fehlerzustände
 // in der Badge melden, sonst rendern.
+// Verarbeitet eine Unraid-Payload (SSE-Push ODER REST-Poll) in die jeweilige Kachel.
+function handleUnraid(d, badgeId, render) {
+  if (!d || !d.ok) {
+    const unsupported = d && d.error === 'unsupported';
+    const msg = d && d.error === 'not_configured' ? 'not configured'
+              : unsupported ? 'nicht verfügbar' : 'offline';
+    setUnraidBadge(badgeId, msg, unsupported ? '#6b7689' : '#f43f5e');
+    return;
+  }
+  render(d);
+}
 async function pollUnraid(path, badgeId, render) {
   if (!state.liveOn) return;
   try {
     const d = await fetch(path, { cache: 'no-store' }).then(r => r.json());
-    if (!d || !d.ok) {
-      const unsupported = d && d.error === 'unsupported';
-      const msg = d && d.error === 'not_configured' ? 'not configured'
-                : unsupported ? 'nicht verfügbar' : 'offline';
-      setUnraidBadge(badgeId, msg, unsupported ? '#6b7689' : '#f43f5e');
-      return;
-    }
-    render(d);
+    handleUnraid(d, badgeId, render);
   } catch (err) {
     setUnraidBadge(badgeId, 'offline', '#f43f5e');
     console.warn('Unraid poll failed:', path, err.message);
@@ -2266,17 +2308,19 @@ function renderAdGuard(d) {
     }
   }
 }
+function handleAdGuard(d) {
+  if (!d || !d.ok) {
+    setAdguardStatus(d && d.error === 'not_configured' ? 'not configured' : 'offline', '#f43f5e');
+    return;
+  }
+  renderAdGuard(d);
+}
 async function pollAdGuard() {
   if (!state.liveOn) return;
   if (!widgetOnActivePage('adguard')) return;
   try {
     const res = await fetch('/api/adguard', { cache: 'no-store' });
-    const d = await res.json();
-    if (!d || !d.ok) {
-      setAdguardStatus(d && d.error === 'not_configured' ? 'not configured' : 'offline', '#f43f5e');
-      return;
-    }
-    renderAdGuard(d);
+    handleAdGuard(await res.json());
   } catch (err) {
     setAdguardStatus('offline', '#f43f5e');
     console.warn('AdGuard poll failed:', err.message);
@@ -2366,19 +2410,21 @@ function renderJDownloader(d) {
     }
   }
 }
+function handleJDownloader(d) {
+  if (!d || !d.ok) {
+    const msg = d && d.error === 'not_configured' ? 'not configured'
+              : d && d.error === 'device_offline'  ? 'device offline' : 'offline';
+    setJdownloaderStatus(msg, '#f43f5e');
+    return;
+  }
+  renderJDownloader(d);
+}
 async function pollJDownloader() {
   if (!state.liveOn) return;
   if (!widgetOnActivePage('jdownloader')) return;
   try {
     const res = await fetch('/api/jdownloader', { cache: 'no-store' });
-    const d = await res.json();
-    if (!d || !d.ok) {
-      const msg = d && d.error === 'not_configured' ? 'not configured'
-                : d && d.error === 'device_offline'  ? 'device offline' : 'offline';
-      setJdownloaderStatus(msg, '#f43f5e');
-      return;
-    }
-    renderJDownloader(d);
+    handleJDownloader(await res.json());
   } catch (err) {
     setJdownloaderStatus('offline', '#f43f5e');
     console.warn('JDownloader poll failed:', err.message);
@@ -2761,18 +2807,20 @@ function renderPlex(d) {
   diffList(container, _cfgLimit('plex', 'maxSessions', d.sessions), (s) => s.key, createPlexCard, updatePlexCard);
 }
 
+function handlePlex(d) {
+  if (!d || !d.ok) {
+    setPlexStatus(d && d.error === 'not_configured' ? 'not configured' : 'offline', '#f43f5e');
+    setText('plexLibStats', '–');
+    return;
+  }
+  renderPlex(d);
+}
 async function pollPlex() {
   if (!state.liveOn) return;
   if (!widgetOnActivePage('plex')) return;
   try {
     const res = await fetch('/api/plex', { cache: 'no-store' });
-    const d = await res.json();
-    if (!d || !d.ok) {
-      setPlexStatus(d && d.error === 'not_configured' ? 'not configured' : 'offline', '#f43f5e');
-      setText('plexLibStats', '–');
-      return;
-    }
-    renderPlex(d);
+    handlePlex(await res.json());
   } catch (err) {
     setPlexStatus('offline', '#f43f5e');
     console.warn('Plex poll failed:', err.message);
@@ -3346,30 +3394,33 @@ async function pollUnifiSnapshot() {
   tmp.src = url;
 }
 
+function handleUnifi(d) {
+  if (!d?.ok) {
+    setUnifiStatus(
+      d?.error === 'not_configured' ? 'not configured' : 'offline',
+      d?.error === 'not_configured' ? 'var(--text-3)' : 'var(--red)'
+    );
+    return;
+  }
+  _unifiState = d;
+  // Fallback-Feed fuer die Durchsatz-Kachel ohne SSE: nur einspeisen, wenn
+  // laenger kein frisches WAN-Sample ueber den Stream kam (sonst doppelt).
+  if (d.wan && d.wan.rxRate != null && performance.now() - state._wanRxAt > 15000)
+    ingestWan({ ts: Date.now(), status: d.wan.status, rxMbit: d.wan.rxRate, txMbit: d.wan.txRate });
+  renderUnifi(d);
+  renderUnifiAps(d.devices);
+  setText('unifiCamName', d.cameras?.[0]?.name || '–');
+  setUnifiStatus(
+    d.wan.status === 'ok' ? 'online' : 'degraded',
+    d.wan.status === 'ok' ? 'var(--green)' : 'var(--orange)'
+  );
+}
 async function pollUnifi() {
   if (!state.liveOn) return;
   if (!anyWidgetOnActivePage(['unifi-network', 'unifi-aps'])) return;
   try {
     const d = await fetch('/api/unifi', { cache: 'no-store' }).then(r => r.json());
-    if (!d?.ok) {
-      setUnifiStatus(
-        d?.error === 'not_configured' ? 'not configured' : 'offline',
-        d?.error === 'not_configured' ? 'var(--text-3)' : 'var(--red)'
-      );
-      return;
-    }
-    _unifiState = d;
-    // Fallback-Feed fuer die Durchsatz-Kachel ohne SSE: nur einspeisen, wenn
-    // laenger kein frisches WAN-Sample ueber den Stream kam (sonst doppelt).
-    if (d.wan && d.wan.rxRate != null && performance.now() - state._wanRxAt > 15000)
-      ingestWan({ ts: Date.now(), status: d.wan.status, rxMbit: d.wan.rxRate, txMbit: d.wan.txRate });
-    renderUnifi(d);
-    renderUnifiAps(d.devices);
-    setText('unifiCamName', d.cameras?.[0]?.name || '–');
-    setUnifiStatus(
-      d.wan.status === 'ok' ? 'online' : 'degraded',
-      d.wan.status === 'ok' ? 'var(--green)' : 'var(--orange)'
-    );
+    handleUnifi(d);
   } catch {
     setUnifiStatus('offline', 'var(--red)');
   }
@@ -3434,17 +3485,19 @@ function renderNextcloud(d) {
   setNextcloudStatus('connected', '#3ddc97');
 }
 
+function handleNextcloud(d) {
+  if (!d || !d.ok) {
+    setNextcloudStatus(d && d.error === 'not_configured' ? 'not configured' : 'offline', '#f43f5e');
+    return;
+  }
+  renderNextcloud(d);
+}
 async function pollNextcloud() {
   if (!state.liveOn) return;
   if (!widgetOnActivePage('nextcloud')) return;
   try {
     const res = await fetch('/api/nextcloud', { cache: 'no-store' });
-    const d = await res.json();
-    if (!d || !d.ok) {
-      setNextcloudStatus(d && d.error === 'not_configured' ? 'not configured' : 'offline', '#f43f5e');
-      return;
-    }
-    renderNextcloud(d);
+    handleNextcloud(await res.json());
   } catch (err) {
     setNextcloudStatus('offline', '#f43f5e');
     console.warn('Nextcloud poll failed:', err.message);
@@ -3520,9 +3573,29 @@ function anyWidgetOnActivePage(ids) { return ids.some(widgetOnActivePage); }
 // Seite liegt (siehe startGlances/_syncGlancesStream).
 const GLANCES_WIDGETS = ['system-load', 'network-throughput', 'disk-storage'];
 
-// Starts/refreshes all live polls (shared interval).
+// Startet die Live-Aktualisierung. STANDARD: Push-Modus — EIN SSE-Stream liefert
+// alle zentral (24/7) vorgehaltenen Kacheln inkl. Sofort-Snapshot beim Verbinden;
+// kein Per-Kachel-Poll-Burst mehr. Nur die reinen Client-Ticker (Live-Uptime,
+// Kamera-Snapshot als Parameter-Endpoint) laufen weiter. Ohne EventSource-Support
+// faellt alles transparent auf das klassische Polling zurueck.
 function startLive() {
-  startGlances();
+  _pushMode = (typeof window !== 'undefined' && !!window.EventSource);
+  if (_pushMode) {
+    openMetricsStream();   // net/wan/glances + alle Kachel-Events + Snapshot
+    startUptimeTicker();   // 1s-Uptime (Systemdaten kommen per SSE)
+    startUnifiSnapshot();  // Kamera-Snapshot bleibt Pull (guarded via _unifiState)
+  } else {
+    startPollingFallback();
+  }
+  // Ab hier uebernimmt showPage() das sofortige Nachladen beim Wechsel auf eine
+  // zuvor pausierte Unterseite (verhindert zugleich Doppel-Fetch waehrend Init).
+  _liveStarted = true;
+}
+
+// Fallback ohne SSE: klassisches Per-Kachel-Polling (exakt das bisherige Verhalten).
+function startPollingFallback() {
+  _pushMode = false;
+  startGlancesFallbackPoll();
   startDocker();
   startAdGuard();
   startJDownloader();
@@ -3538,9 +3611,17 @@ function startLive() {
   startUnraidNotifications();
   startUnraidSystem();
   startUnraidUps();
-  // Ab hier uebernimmt showPage() das sofortige Nachladen beim Wechsel auf eine
-  // zuvor pausierte Unterseite (verhindert zugleich Doppel-Fetch waehrend Init).
-  _liveStarted = true;
+}
+
+// Zusatz-Ticker fuer den Push-Modus (im Fallback erledigen das
+// startUnraidSystem/startUnifi selbst).
+function startUptimeTicker() {
+  clearInterval(usy.uptimeTimer);
+  usy.uptimeTimer = setInterval(usyTick, 1000);
+}
+function startUnifiSnapshot() {
+  clearInterval(unifiSnapTimer);
+  unifiSnapTimer = setInterval(pollUnifiSnapshot, UNIFI_SNAP_MS);
 }
 // Counterpart to startLive(): actually clears every live timer (not just a
 // flag-check) so a hidden tab or "Live updates" off truly stops polling.
@@ -3562,6 +3643,7 @@ function pauseLive() {
   clearInterval(ushTimer);       ushTimer = null;
   clearInterval(unoTimer);       unoTimer = null;
   clearInterval(usyTimer);       usyTimer = null;
+  clearInterval(usy.uptimeTimer); usy.uptimeTimer = null;
   clearInterval(uupTimer);       uupTimer = null;
 }
 // Pauses polling and the graph rAF loop while the tab is hidden; resumes
@@ -4368,7 +4450,14 @@ function _restoreActivePage() {
 // Oeffnet/schliesst den geteilten Glances-SSE-Stream je nach aktiver Unterseite
 // (ohne unnoetigen Reconnect, wenn er bereits laeuft).
 function _syncGlancesStream() {
-  const want = state.liveOn && anyWidgetOnActivePage(GLANCES_WIDGETS);
+  if (!state.liveOn) { closeMetricsStream(); clearInterval(dataTimer); dataTimer = null; return; }
+  if (_pushMode) {
+    // Der Unified-Stream traegt ALLE Kacheln -> offen halten, solange live.
+    if (!metricsEs) openMetricsStream();
+    return;
+  }
+  // Fallback: Glances nur betreiben, wenn eine System/Netz/Disk-Kachel sichtbar ist.
+  const want = anyWidgetOnActivePage(GLANCES_WIDGETS);
   if (want) { if (!metricsEs && !dataTimer) startGlances(); }
   else { closeMetricsStream(); clearInterval(dataTimer); dataTimer = null; }
 }
@@ -5195,8 +5284,13 @@ async function saveSecrets(card) {
     const r = await fetch('/api/secrets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     await loadSecrets();
-    if (card === 'glances' || card === 'adguard' || card === 'jdownloader' || card === 'plex' || card === 'unifi' || card === 'nextcloud' || card === 'unraid') startLive();
-    if (card === 'weather') startWeather();
+    // Neue Zugangsdaten: der Server hat seinen Cache bei /api/secrets invalidiert.
+    // Im Push-Modus die sichtbaren Kacheln sofort einmal frisch ziehen (Push-Hub
+    // liefert danach automatisch weiter); im Fallback die Poller neu starten.
+    if (_liveStarted) {
+      if (_pushMode) _refreshActivePageWidgets();
+      else startLive();
+    }
   } catch (err) {
     console.error('Failed to save secrets:', err.message);
   }
