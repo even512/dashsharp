@@ -1061,6 +1061,13 @@ function openMetricsStream() {
   es.addEventListener('wan', (e) => {
     try { ingestWan(JSON.parse(e.data)); } catch (_) { /* ignore */ }
   });
+  // Live-CPU (Unraid /proc/stat) — eigener schneller Strom wie net/wan, nicht
+  // ueber PUSH_HANDLERS (kein PUSH_SOURCES-Snapshot, sondern ein Sampler-Event).
+  es.addEventListener('unraidCpu', (e) => {
+    let d; try { d = JSON.parse(e.data); } catch (_) { return; }
+    _esConnected = true; _esFails = 0;
+    try { handleUnraidCpu(d); } catch (err) { console.warn('Push-Handler unraidCpu', err && err.message); }
+  });
   es.addEventListener('glances', (e) => {
     let d; try { d = JSON.parse(e.data); } catch (_) { return; }
     _esConnected = true; _esFails = 0;
@@ -1960,17 +1967,24 @@ function startUnraidNotifications() {
 /* --- System-Info (Hero-Kachel, Design 2a) --- */
 const USY_POLL_MS = 10000;
 const USY_HIST_MAX_MS = 300000; // Ringpuffer = groesstes Zeitfenster (5m)
+// Solange innerhalb dieses Fensters ein Live-CPU-Push (unraidCpu-SSE-Event) kam,
+// ueberlaesst der (langsamere) System-Voll-Render CPU/Kerne dem Live-Sampler,
+// damit dessen ~1s-Werte nicht vom 5s-Push mit aelteren Daten ueberschrieben
+// werden. Faellt der Sampler aus (kein SSH), greift danach wieder der Voll-Render.
+const USY_CPU_LIVE_MS = 4000;
 
 // Lokaler Zustand der System-Kachel (getrennt vom globalen `state`, damit der
 // gemeinsame rAF-Graph-Loop unberuehrt bleibt).
 const usy = {
   cpuHist: [],       // { t, v } — t = performance.now()
   cores: null,       // letztes per-Core-Auslastungs-Array oder null
+  coresGroups: null, // P/E-Gruppierung oder null
   winMs: 60000,      // sichtbares Zeitfenster (aus dem <select>)
   view: 'hist',      // 'hist' | 'cores'
   bootMs: null,      // Boot-Zeitpunkt (Date.now-Basis) fuer die Live-Uptime
   uptimeTimer: null, // 1s-Ticker
   wired: false,      // Graph-Events einmalig verdrahtet
+  cpuLiveTs: 0,      // performance.now() des letzten Live-CPU-Push (unraidCpu)
 };
 
 function unraidSystemAction(action, btn) {
@@ -2080,9 +2094,12 @@ function renderUnraidSystem(d) {
   setText('usyHost', d.hostname || '–');
   setText('usyCpuBrand', d.cpuBrand ? (d.cpuSpeedMhz ? `${d.cpuBrand} @ ${d.cpuSpeedMhz} MHz` : d.cpuBrand) : '');
 
-  // CPU-Meter
-  setText('usyCpu', d.cpuPct != null ? Math.round(d.cpuPct) : '–');
-  usySetWidth('usyCpuBar', d.cpuPct != null ? d.cpuPct : 0);
+  // CPU-Meter — solange der Live-Sampler (unraidCpu) frisch liefert, ihm ueberlassen.
+  const cpuLiveActive = performance.now() - usy.cpuLiveTs < USY_CPU_LIVE_MS;
+  if (!cpuLiveActive) {
+    setText('usyCpu', d.cpuPct != null ? Math.round(d.cpuPct) : '–');
+    usySetWidth('usyCpuBar', d.cpuPct != null ? d.cpuPct : 0);
+  }
 
   // Chips — nur wenn die API den Wert liefert
   usyShowChip('usyChipWatt', d.cpuWatts != null);
@@ -2093,10 +2110,12 @@ function renderUnraidSystem(d) {
   usyShowChip('usyChipCores', !!coresTxt);
   if (coresTxt) setText('usyCpuCoresTxt', coresTxt);
 
-  // Verlaufspuffer + per-Core (flach + gruppiert P/E)
-  if (d.cpuPct != null) pushSample(usy.cpuHist, performance.now(), d.cpuPct, USY_HIST_MAX_MS);
-  usy.cores = Array.isArray(d.cpuCores) && d.cpuCores.length ? d.cpuCores : null;
-  usy.coresGroups = Array.isArray(d.cpuCoresGroups) && d.cpuCoresGroups.length ? d.cpuCoresGroups : null;
+  // Verlaufspuffer + per-Core (flach + gruppiert P/E) — nur wenn kein Live-CPU-Push aktiv.
+  if (!cpuLiveActive) {
+    if (d.cpuPct != null) pushSample(usy.cpuHist, performance.now(), d.cpuPct, USY_HIST_MAX_MS);
+    usy.cores = Array.isArray(d.cpuCores) && d.cpuCores.length ? d.cpuCores : null;
+    usy.coresGroups = Array.isArray(d.cpuCoresGroups) && d.cpuCoresGroups.length ? d.cpuCoresGroups : null;
+  }
   const hasCores = usy.cores || usy.coresGroups;
   const tog = $('usyGraphToggle');
   if (tog) tog.style.display = hasCores ? '' : 'none';
@@ -2190,6 +2209,26 @@ function renderUnraidSystem(d) {
       }
     }
   }
+}
+// Schlanker Live-CPU-Handler (SSE-Event `unraidCpu` vom dauerhaften /proc/stat-
+// Sampler). Aktualisiert NUR CPU-Meter, Verlaufspuffer und die Kern-Balken im
+// ~1s-Takt — der restliche Kachel-Inhalt (RAM, Temp, Watt, Disks, Uptime, …)
+// bleibt dem 5s-`unraidSystem`-Push ueberlassen. Setzt cpuLiveTs, damit der
+// Voll-Render diese Werte nicht mit aelteren Daten ueberschreibt.
+function handleUnraidCpu(d) {
+  if (!d) return;
+  usy.cpuLiveTs = performance.now();
+  setText('usyCpu', d.cpuPct != null ? Math.round(d.cpuPct) : '–');
+  usySetWidth('usyCpuBar', d.cpuPct != null ? d.cpuPct : 0);
+  if (d.cpuPct != null) pushSample(usy.cpuHist, performance.now(), d.cpuPct, USY_HIST_MAX_MS);
+  usy.cores = Array.isArray(d.cpuCores) && d.cpuCores.length ? d.cpuCores : null;
+  usy.coresGroups = Array.isArray(d.cpuCoresGroups) && d.cpuCoresGroups.length ? d.cpuCoresGroups : null;
+  const hasCores = usy.cores || usy.coresGroups;
+  const tog = $('usyGraphToggle');
+  if (tog) tog.style.display = hasCores ? '' : 'none';
+  if (!hasCores && usy.view === 'cores') usy.view = 'hist';
+  usyWireGraph();
+  usyRedraw();
 }
 function pollUnraidSystem() {
   if (!widgetOnActivePage('unraid-system')) return;

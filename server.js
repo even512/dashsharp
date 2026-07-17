@@ -844,6 +844,139 @@ function startNetSampler() {
 }
 
 /* ============================================================
+   CPU-Sampler (Unraid /proc/stat) + SSE-Push
+   ------------------------------------------------------------
+   Live-Auslastung (Aggregat UND je logischer Kern) ueber EINE dauerhafte
+   SSH-Session — dasselbe Muster wie der Netz-Sampler, statt eines frischen
+   Handshakes je Poll. `grep "^cpu" /proc/stat` liefert die Aggregat-Zeile
+   `cpu …` UND `cpu0..N` in einem winzigen Read; aus zwei aufeinanderfolgenden
+   Snapshots wird Busy-% je CPU aus den Delta-Jiffies gebildet (zuverlaessig &
+   index-gleich mit lscpu, im Gegensatz zum flachen GraphQL-cpus-Feld). Nur
+   solange SSE-Clients zuschauen (Realtime nur bei aktiver Ansicht; schont den
+   Host). Die P/E-Topologie (lscpu) kommt weiter aus dem langsamen System-Memo
+   (`_usySshMemo`), da sie sich praktisch nie aendert.
+   ============================================================ */
+const CPU_SAMPLE_MS = clampN(parseInt(process.env.CPU_SAMPLE_MS || '1000', 10) || 1000, 250, 4000);
+
+const cpuState = {
+  latest: null,   // { cpuPct, cpuCores:[], cpuCoresGroups }
+  prev: null,     // { per:{ N:{busy,total} }, agg:{busy,total}|null }
+  running: false,
+  sshConn: null,
+  buf: '',
+  _reco: null,
+};
+
+// Eine /proc/stat-Momentaufnahme -> { per:{ N:{busy,total} }, agg:{busy,total}|null }.
+// Zeile „cpu …" (ohne Ziffer) = Aggregat, „cpuN …" = logischer Kern N.
+// busy = total − (idle + iowait); total = Summe aller Jiffie-Felder.
+function readCpuSnapshot(text) {
+  const per = {}; let agg = null;
+  for (const ln of String(text).split('\n')) {
+    const p = ln.trim().split(/\s+/);
+    const m = /^cpu(\d*)$/.exec(p[0] || '');
+    if (!m) continue;
+    const v = p.slice(1).map(Number);
+    if (v.length < 5 || v.some((x) => !Number.isFinite(x))) continue;
+    const total = v.reduce((a, b) => a + b, 0);
+    const idle = v[3] + v[4]; // idle + iowait
+    const rec = { busy: total - idle, total };
+    if (m[1] === '') agg = rec; else per[+m[1]] = rec;
+  }
+  return { per, agg };
+}
+// Busy-% aus zwei kumulativen Snapshots eines CPU-Zaehlers, geklemmt 0..100.
+function cpuBusyPct(a, b) {
+  const dt = b.total - a.total;
+  if (dt <= 0) return 0; // kein Fortschritt / Zaehler-Reset
+  return Math.round(Math.max(0, Math.min(100, ((b.busy - a.busy) / dt) * 100)) * 10) / 10;
+}
+function onCpuTick(text) {
+  const cur = readCpuSnapshot(text);
+  if (!cur.agg && !Object.keys(cur.per).length) return;
+  const prev = cpuState.prev;
+  cpuState.prev = cur;
+  if (!prev) return; // erster Snapshot -> nur Basis fuer das naechste Delta
+  // Per-Core: dichtes Array [0..maxN] (fehlende/idle Kerne -> 0), index-gleich mit lscpu.
+  let cpuCores = null;
+  const idx = Object.keys(cur.per).map(Number).filter((n) => prev.per[n]);
+  if (idx.length) {
+    const maxN = Math.max(...idx);
+    cpuCores = new Array(maxN + 1).fill(0);
+    for (const n of idx) cpuCores[n] = cpuBusyPct(prev.per[n], cur.per[n]);
+  }
+  // Aggregat bevorzugt aus der „cpu"-Gesamtzeile, sonst Mittel der Kerne.
+  let cpuPct = null;
+  if (cur.agg && prev.agg) cpuPct = cpuBusyPct(prev.agg, cur.agg);
+  else if (cpuCores && cpuCores.length) cpuPct = Math.round((cpuCores.reduce((a, b) => a + b, 0) / cpuCores.length) * 10) / 10;
+  const topo = _usySshMemo.data && _usySshMemo.data.coresTopo;
+  const payload = { cpuPct, cpuCores, cpuCoresGroups: buildCoresGroups(topo, cpuCores) };
+  cpuState.latest = payload;
+  broadcast('unraidCpu', payload);
+}
+function onCpuChunk(s) {
+  cpuState.buf += s;
+  let idx;
+  while ((idx = cpuState.buf.indexOf('__CPUTICK__')) >= 0) {
+    const seg = cpuState.buf.slice(0, idx);
+    cpuState.buf = cpuState.buf.slice(idx + 11);
+    onCpuTick(seg);
+  }
+  if (cpuState.buf.length > 65536) cpuState.buf = ''; // Sicherheitsnetz
+}
+function scheduleCpuReconnect(cfg) {
+  cpuState.sshConn = null;
+  cpuState.prev = null; // Luecke -> Delta neu aufsetzen
+  cpuState.buf = '';
+  if (!cpuState.running) return;
+  clearTimeout(cpuState._reco);
+  cpuState._reco = setTimeout(() => connectCpuSsh(cfg), 5000);
+}
+function connectCpuSsh(cfg) {
+  sshConnect(cfg, 10000).then((conn) => {
+    if (!cpuState.running) { try { conn.end(); } catch (_) {} return; } // waehrenddessen abgemeldet
+    cpuState.sshConn = conn;
+    conn.on('close', () => scheduleCpuReconnect(cfg));
+    conn.on('error', () => { /* close folgt */ });
+    const secs = (CPU_SAMPLE_MS / 1000).toFixed(3);
+    const cmd = `sh -c 'while :; do grep "^cpu" /proc/stat; echo __CPUTICK__; sleep ${secs}; done'`;
+    conn.exec(cmd, (err, stream) => {
+      if (err) { try { conn.end(); } catch (_) {} return scheduleCpuReconnect(cfg); }
+      cpuState.buf = '';
+      stream.on('data', (d) => onCpuChunk(d.toString('utf8')));
+      stream.stderr.on('data', () => { /* ignore */ });
+      stream.on('close', () => { try { conn.end(); } catch (_) {} });
+    });
+  }).catch(() => scheduleCpuReconnect(cfg));
+}
+function startCpuSampler() {
+  if (cpuState.running) return;
+  const cfg = unraidSshCfg();
+  if (!cfg) return; // ohne SSH kein Live-Sampler -> Kachel nutzt den GraphQL-Fallback
+  cpuState.running = true;
+  console.log(`CPU-Sampler: SSH /proc/stat @ ${CPU_SAMPLE_MS}ms auf ${cfg.host}`);
+  connectCpuSsh(cfg);
+}
+function stopCpuSampler() {
+  if (!cpuState.running) return;
+  cpuState.running = false;
+  clearTimeout(cpuState._reco);
+  cpuState._reco = null;
+  const conn = cpuState.sshConn;
+  cpuState.sshConn = null;
+  cpuState.prev = null;
+  cpuState.buf = '';
+  cpuState.latest = null;
+  try { conn && conn.end(); } catch (_) {}
+}
+// Nur samplen, solange jemand zuschaut (wie der lokale WAN-Websocket): beim
+// ersten Client verbinden, nach dem letzten die SSH-Session wieder schliessen.
+function cpuSamplerOnClientsChanged() {
+  if (sseClients.size > 0) startCpuSampler();
+  else stopCpuSampler();
+}
+
+/* ============================================================
    WAN-Sampler (UniFi stat/health) + SSE-Push
    ------------------------------------------------------------
    Pollt die WAN-Raten (Internet ↓/↑) des UniFi-Gateways ueber die Cloud-API
@@ -1307,9 +1440,12 @@ app.get('/api/glances/stream', (req, res) => {
   if (wanState.running) scheduleWanNext();
   // Lokaler WAN-Websocket verbindet nur solange jemand zuschaut.
   wanWsOnClientsChanged();
+  // CPU-Live-Sampler ebenso nur bei aktiven Zuschauern.
+  cpuSamplerOnClientsChanged();
 
   if (netState.latest) sseSend(res, 'net', netState.latest);
   if (wanState.latest) sseSend(res, 'wan', wanState.latest);
+  if (cpuState.latest) sseSend(res, 'unraidCpu', cpuState.latest);
   fetchGlancesSample().then((d) => sseSend(res, 'glances', d)).catch(() => {});
   ensureGlancesStream();
   // Sofort-Snapshot aller zentral vorgehaltenen Kachel-Daten -> die Seite ist
@@ -1317,7 +1453,7 @@ app.get('/api/glances/stream', (req, res) => {
   for (const ev of Object.keys(lastPush)) sseSend(res, ev, lastPush[ev]);
 
   const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch (_) {} }, 20000);
-  req.on('close', () => { clearInterval(hb); sseClients.delete(res); wanWsOnClientsChanged(); });
+  req.on('close', () => { clearInterval(hb); sseClients.delete(res); wanWsOnClientsChanged(); cpuSamplerOnClientsChanged(); });
 });
 
 // ---- Backfill fuer den gewaehlten Zeitraum (10m/1h) ----
