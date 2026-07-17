@@ -26,6 +26,18 @@ const { execFile } = require('child_process');
 const { Client: SSHClient } = require('ssh2');
 const { WebSocket, WebSocketServer } = require('ws');
 
+// Kein Bug soll den ganzen Container unkontrolliert mit rohem Stacktrace
+// crashen lassen — sauber loggen und beenden, Docker startet dank
+// restart:unless-stopped ohnehin neu.
+process.on('uncaughtException', (err) => {
+  console.error('FATAL uncaughtException:', err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('FATAL unhandledRejection:', reason);
+  process.exit(1);
+});
+
 /* ============================================================
    UniFi Cloud API — api.ui.com, X-API-Key, kein lokaler Zugriff nötig
    Connector-Proxy-Pfad:
@@ -1011,7 +1023,15 @@ function closeWanWs() {
   const ws = wanWs.ws;
   wanWs.ws = null;
   wanWs.connecting = false;
-  if (ws) { try { ws.removeAllListeners(); ws.terminate(); } catch (_) {} }
+  if (ws) {
+    try {
+      ws.removeAllListeners();
+      // terminate() auf einem noch CONNECTING-Socket emittiert 'error' erst per
+      // nextTick — ohne Listener stuerzt das den Prozess ab (unhandled error).
+      ws.on('error', () => {});
+      ws.terminate();
+    } catch (_) {}
+  }
 }
 
 function onWanWsDown(reason) {
