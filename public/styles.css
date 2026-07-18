@@ -582,7 +582,7 @@ body.design-mode #layoutEditBar { display: flex; flex-wrap: wrap; gap: 12px; }
 .usy-hist-max, .usy-hist-min { position: absolute; right: 6px; font: 600 8px 'JetBrains Mono', monospace; color: var(--u-dim); }
 .usy-hist-max { top: 3px; } .usy-hist-min { bottom: 2px; }
 .usy-cores { position: absolute; inset: 0; display: none; align-items: flex-end; gap: 2px; padding: 6px 8px; }
-.usy-core { flex: 1; min-height: 2px; border-radius: 2px 2px 0 0; background: linear-gradient(180deg, var(--u-accent-lt), var(--u-accent)); transition: height .8s cubic-bezier(.4,0,.2,1); }
+.usy-core { flex: 1; min-height: 2px; border-radius: 2px 2px 0 0; background: linear-gradient(180deg, var(--u-accent-lt), var(--u-accent)); transition: height var(--usy-core-tr, .9s) linear; }
 .usy-core.ht { opacity: .42; } /* HT-Thread gedimmt */
 /* Kerne gruppiert (P | E) */
 .usy-cores.grouped { align-items: stretch; gap: 12px; padding: 5px 9px 3px; }
