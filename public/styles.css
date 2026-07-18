@@ -588,7 +588,7 @@ body.design-mode #layoutEditBar { display: flex; flex-wrap: wrap; gap: 12px; }
 .usy-cores.grouped { align-items: stretch; gap: 12px; padding: 5px 9px 3px; }
 .usy-core-group { display: flex; flex-direction: column; min-width: 0; }
 .usy-core-bars { flex: 1; display: flex; align-items: flex-end; gap: 3px; min-height: 0; }
-.usy-core-cell { display: flex; align-items: flex-end; gap: 1px; min-width: 0; }
+.usy-core-cell { height: 100%; display: flex; align-items: flex-end; gap: 1px; min-width: 0; }
 .usy-core-grp-lbl { font: 700 7px 'JetBrains Mono', monospace; letter-spacing: .12em; color: var(--u-dim); text-align: center; margin-top: 3px; }
 /* RAM-Segmentbalken (System | Docker | Frei) */
 .usy-bar-seg { display: flex; }
