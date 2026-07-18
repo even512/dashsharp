@@ -1985,6 +1985,8 @@ const usy = {
   uptimeTimer: null, // 1s-Ticker
   wired: false,      // Graph-Events einmalig verdrahtet
   cpuLiveTs: 0,      // performance.now() des letzten Live-CPU-Push (unraidCpu)
+  cpuIntervalMs: 0,  // geglättetes Sample-Intervall -> Balken-Transitionsdauer
+  _coresSig: '',     // Struktur-Signatur der Kern-Balken (In-Place-Update vs. Neuaufbau)
 };
 
 function unraidSystemAction(action, btn) {
@@ -2034,10 +2036,30 @@ function drawUsyHist() {
 function drawUsyCores() {
   const c = $('usyCores');
   if (!c) return;
-  const bar = (v, ht) => {
-    const h = Math.max(2, Math.min(100, v));
-    return `<div class="usy-core${ht ? ' ht' : ''}" style="height:${h}%" title="${Math.round(v)}%"></div>`;
-  };
+  // Zielhöhen in Zeichen-Reihenfolge + Struktur-Signatur (gruppiert vs. flach,
+  // Kern-/Thread-Layout). Solange die Signatur gleich bleibt (im Sekundentakt der
+  // Normalfall), werden NUR die Höhen der bestehenden Balken gesetzt — die CSS-
+  // Transition gleitet dann weich zwischen den Samples. Ein kompletter Neuaufbau
+  // (innerHTML) pro Sample würde die Transition verschlucken (Balken „springen").
+  const heights = [];
+  let sig;
+  if (usy.coresGroups) {
+    for (const g of usy.coresGroups) for (const core of g.cores) for (const v of core) heights.push(v);
+    sig = 'g|' + usy.coresGroups.map((g) => g.label + ':' + g.cores.map((cc) => cc.length).join('')).join(',');
+  } else if (usy.cores && usy.cores.length) {
+    for (const v of usy.cores) heights.push(v);
+    sig = 'f|' + usy.cores.length;
+  } else {
+    c.innerHTML = ''; c.classList.remove('grouped'); usy._coresSig = ''; return;
+  }
+  const setH = (el, v) => { el.style.height = Math.max(2, Math.min(100, v)) + '%'; el.title = Math.round(v) + '%'; };
+  // Struktur unverändert -> nur Höhen der vorhandenen Balken aktualisieren (weich).
+  if (usy._coresSig === sig) {
+    const els = c.querySelectorAll('.usy-core');
+    if (els.length === heights.length) { for (let i = 0; i < els.length; i++) setH(els[i], heights[i]); return; }
+  }
+  // Struktur neu (Erst-/Umbau, z. B. Topologie-Wechsel) -> DOM einmalig aufbauen.
+  const bar = (v, ht) => `<div class="usy-core${ht ? ' ht' : ''}" style="height:${Math.max(2, Math.min(100, v))}%" title="${Math.round(v)}%"></div>`;
   if (usy.coresGroups) {
     // Gruppiert: P | E, pro Kern 1–2 Balken (Haupt voll, HT gedimmt).
     c.classList.add('grouped');
@@ -2046,11 +2068,11 @@ function drawUsyCores() {
       const threads = g.cores.reduce((n, cc) => n + cc.length, 0);
       return `<div class="usy-core-group" style="flex:${threads}"><div class="usy-core-bars">${g.cores.map(cell).join('')}</div><div class="usy-core-grp-lbl">${g.label}</div></div>`;
     }).join('');
-    return;
+  } else {
+    c.classList.remove('grouped');
+    c.innerHTML = usy.cores.map((v) => bar(v, false)).join('');
   }
-  c.classList.remove('grouped');
-  if (!usy.cores || !usy.cores.length) { c.innerHTML = ''; return; }
-  c.innerHTML = usy.cores.map((v) => bar(v, false)).join('');
+  usy._coresSig = sig;
 }
 function usyCoresTitle() {
   if (usy.coresGroups) {
@@ -2217,16 +2239,26 @@ function renderUnraidSystem(d) {
 // Voll-Render diese Werte nicht mit aelteren Daten ueberschreibt.
 function handleUnraidCpu(d) {
   if (!d) return;
-  usy.cpuLiveTs = performance.now();
+  const now = performance.now();
+  // Beobachtetes Sample-Intervall (geglättet) -> Transitionsdauer der Kern-Balken,
+  // damit sie linear zwischen den Samples gleiten (kontinuierlich, kein Steppen).
+  if (usy.cpuLiveTs) {
+    const dt = now - usy.cpuLiveTs;
+    if (dt > 60 && dt < 10000) usy.cpuIntervalMs = usy.cpuIntervalMs ? usy.cpuIntervalMs * 0.7 + dt * 0.3 : dt;
+  }
+  usy.cpuLiveTs = now;
   setText('usyCpu', d.cpuPct != null ? Math.round(d.cpuPct) : '–');
   usySetWidth('usyCpuBar', d.cpuPct != null ? d.cpuPct : 0);
-  if (d.cpuPct != null) pushSample(usy.cpuHist, performance.now(), d.cpuPct, USY_HIST_MAX_MS);
+  if (d.cpuPct != null) pushSample(usy.cpuHist, now, d.cpuPct, USY_HIST_MAX_MS);
   usy.cores = Array.isArray(d.cpuCores) && d.cpuCores.length ? d.cpuCores : null;
   usy.coresGroups = Array.isArray(d.cpuCoresGroups) && d.cpuCoresGroups.length ? d.cpuCoresGroups : null;
   const hasCores = usy.cores || usy.coresGroups;
   const tog = $('usyGraphToggle');
   if (tog) tog.style.display = hasCores ? '' : 'none';
   if (!hasCores && usy.view === 'cores') usy.view = 'hist';
+  // Transitionsdauer knapp über dem Intervall -> nahtloser Fluss ohne Stillstand.
+  const cont = $('usyCores');
+  if (cont && usy.cpuIntervalMs) cont.style.setProperty('--usy-core-tr', Math.round(Math.min(4000, usy.cpuIntervalMs * 1.15)) + 'ms');
   usyWireGraph();
   usyRedraw();
 }
