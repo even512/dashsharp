@@ -49,6 +49,38 @@ for (const f of jsFiles) {
   catch (e) { bad(`${f}: ${String(e.stderr || e).split('\n').slice(0, 3).join(' ')}`); }
 }
 
+/* ---------- 1b. Image-Vollstaendigkeit ----------
+   Der Smoke-Test laeuft gegen das Repo, das Image enthaelt aber nur die im
+   Dockerfile per COPY aufgefuehrten Pfade. Genau daran ist der Container schon
+   einmal gestorben: server/registry.js war neu, aber nicht kopiert — Node
+   brach beim require sofort ab, waehrend hier alles gruen war.
+   Deshalb: jeden relativen require()-Pfad aus server.js gegen die kopierten
+   Pfade pruefen. */
+head('Image-Vollstaendigkeit (Dockerfile COPY)');
+{
+  const dockerfile = readFileSync(join(ROOT, 'Dockerfile'), 'utf8');
+  const copied = [...dockerfile.matchAll(/^COPY\s+(?!--)(\S+)\s+(\S+)\s*$/gm)]
+    .map(([, src]) => src.replace(/^\.\//, ''));
+  const covers = (p) => copied.some((c) => {
+    if (c === p) return true;
+    if (c.includes('*')) return new RegExp('^' + c.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*') + '$').test(p);
+    return p.startsWith(c.replace(/\/$/, '') + '/');
+  });
+
+  const server = readFileSync(join(ROOT, 'server.js'), 'utf8');
+  const localReqs = [...server.matchAll(/require\(\s*'(\.[^']+)'\s*\)/g)].map(([, r]) => r);
+  for (const r of localReqs) {
+    const rel = r.replace(/^\.\//, '');
+    const candidates = [rel, `${rel}.js`, `${rel}/index.js`];
+    is(candidates.some(covers), `require('${r}') ist im Image enthalten`);
+  }
+  // Verzeichnisse, die zur Laufzeit eingelesen werden (Auto-Discovery)
+  for (const dir of ['server/modules', 'public/modules']) {
+    is(covers(`${dir}/x.js`), `${dir}/ wird ins Image kopiert`);
+  }
+  is(covers('public/registry.js'), 'public/registry.js ist im Image enthalten');
+}
+
 /* ---------- 2. Backend-Module ---------- */
 head('Backend-Module');
 const registry = await import(join(ROOT, 'server/registry.js')).then((m) => m.default ?? m);

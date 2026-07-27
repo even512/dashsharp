@@ -29,8 +29,60 @@ jobs:
       - name: Smoke-Test
         run: npm test
 
-  docker:
+  # Das Image wirklich bauen und starten, bevor es veroeffentlicht wird. Der
+  # Smoke-Test oben laeuft gegen das Repo — eine Datei, die zur Laufzeit
+  # gebraucht, aber nicht ins Image kopiert wird, faellt dort nicht auf. Genau
+  # daran ist der Container schon einmal gestorben (server/ fehlte im COPY).
+  image:
     needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image (nur laden, nicht pushen)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: dashsharp:ci
+          provenance: false
+
+      - name: Container starten und pruefen
+        run: |
+          set -euo pipefail
+          # Frisches Volume mit fremder Kennung — bildet eine bestehende
+          # Unraid-Installation (nobody:users) nach.
+          mkdir -p "$RUNNER_TEMP/appdata"
+          sudo chown 99:100 "$RUNNER_TEMP/appdata"
+          docker run -d --name dashsharp-ci -p 8099:3000 \
+            -v "$RUNNER_TEMP/appdata:/app/config" dashsharp:ci
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8099/healthz >/dev/null 2>&1; then ok=1; break; fi
+            sleep 1
+          done
+          docker logs dashsharp-ci
+          if [ "${ok:-0}" != "1" ]; then echo "::error::Container nicht erreichbar"; exit 1; fi
+
+          curl -fsS http://127.0.0.1:8099/api/version | grep -q '"version"'
+          curl -fsS http://127.0.0.1:8099/registry.js  >/dev/null
+          curl -fsS http://127.0.0.1:8099/modules.js   >/dev/null
+          curl -fsS http://127.0.0.1:8099/vendor/fonts/jetbrains-mono-400-latin.woff2 >/dev/null
+
+          # Schreibpfad: die UI muss ins gemountete Volume speichern koennen.
+          curl -fsS -X POST http://127.0.0.1:8099/api/dashboard \
+            -H 'Content-Type: application/json' \
+            -d '{"pages":[{"id":"home","name":"CI"}],"tiles":[]}' | grep -q '"ok":true'
+          test -f "$RUNNER_TEMP/appdata/dashboard.json"
+
+          # Rechte tatsaechlich abgelegt?
+          docker exec dashsharp-ci sh -c 'id -u' | grep -qv '^0$' \
+            || echo "::warning::Container laeuft als root"
+          docker rm -f dashsharp-ci
+
+  docker:
+    needs: [test, image]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
