@@ -69,6 +69,7 @@ const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { Client: SSHClient } = require('ssh2');
 const { WebSocket, WebSocketServer } = require('ws');
+const registry = require('./server/registry');
 
 // Ein echter uncaughtException laesst den Prozess in undefiniertem Zustand
 // zurueck — sauber loggen und beenden, Docker startet dank
@@ -690,12 +691,10 @@ function cleanDisks(fsList) {
 const cache = {
   glances:  { ts: 0, data: null },
   docker:   { ts: 0, data: null },
-  adguard:  { ts: 0, data: null },
   plexLib:  { ts: 0, data: null },
   plexSess: { ts: 0, data: null },
   plexRecent: { ts: 0, data: null },
   status:   { ts: 0, data: null },
-  weather:  { ts: 0, data: null },
   unifi:    { ts: 0, data: null },
   nextcloud:{ ts: 0, data: null },
   unraid:   { ts: 0, data: null },
@@ -721,16 +720,28 @@ function withInflight(slot, fn) {
   }
   return p;
 }
+
+/* ============================================================
+   Modul-Registry
+   ------------------------------------------------------------
+   Jede Datei in server/modules/ beschreibt eine Integration
+   deklarativ; Cache-Slot, TTL, GET-Route, Push-Hub-Eintrag,
+   Secrets-Keys und Maskierung entstehen daraus automatisch
+   (siehe server/modules/README.md). Eine neue Integration kostet
+   damit eine Datei statt ~8 verteilter Aenderungen hier.
+   ============================================================ */
+const MODULES = registry.loadModules();
+const moduleRuntime = registry.createRuntime(MODULES, { getSecret, cache, withInflight });
+const MODULE_SECRETS = registry.secretsMeta(MODULES);
+console.log(`Modul-Registry: ${MODULES.length} geladen (${MODULES.map((m) => m.id).join(', ') || '–'})`);
 const GLANCES_TTL   = 500;    // ms – Glances-Metriken hoechstens 2x/s abrufen; muss unter dem
                               // kleinsten Client-Poll-Intervall (400 ms Slider-Minimum) liegen,
                               // sonst bekommen Clients periodisch identische Samples zurueck
 const DOCKER_TTL    = 8000;   // ms – Container-Liste aendert sich selten
-const ADGUARD_TTL   = 30000;  // ms – aggregierte Stats, aendern sich langsam
 const PLEX_LIB_TTL    = 300000; // ms – Bibliothekszahlen (5 min)
 const PLEX_SESS_TTL   = 4000;   // ms – aktive Sessions (Frontend pollt alle 5s)
 const PLEX_RECENT_TTL = 300000; // ms – zuletzt hinzugefügte Titel (5 min)
 const STATUS_TTL    = 30000;  // ms – Dienste-Verfügbarkeit (30 s)
-const WEATHER_TTL   = 600000; // ms – Wetterdaten (10 min)
 const UNIFI_TTL     = 10000;  // ms – UniFi-Netzwerkdaten (10 s)
 const NEXTCLOUD_TTL = 60000;  // ms – Nextcloud-Speicher/Nutzer (60 s)
 const JDOWNLOADER_TTL = 4000; // ms – Downloads bewegen sich schnell, kurz cachen
@@ -1751,87 +1762,6 @@ app.get('/api/docker', async (req, res) => {
 });
 
 /* ============================================================
-   AdGuard Home Integration
-   Basic-Auth-Proxy gegen /control/status + /control/stats.
-   Zugangsdaten kommen ausschliesslich aus Env-Vars.
-   ============================================================ */
-
-function adguardCfg() {
-  return {
-    url:  (getSecret('ADGUARD_URL')  || '').replace(/\/+$/, ''),
-    user: getSecret('ADGUARD_USER')  || '',
-    pass: getSecret('ADGUARD_PASS')  || '',
-  };
-}
-
-function adguardAuth(user, pass) {
-  return 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
-}
-
-async function agFetch(base, path, auth) {
-  const res = await fetch(`${base}${path}`, {
-    headers: { Authorization: auth },
-    signal: AbortSignal.timeout(4000),
-  });
-  if (!res.ok) throw new Error(`${path} HTTP ${res.status}`);
-  return res.json();
-}
-
-function topBlockedList(list) {
-  if (!Array.isArray(list)) return [];
-  return list
-    .filter((item) => item && typeof item === 'object')
-    .slice(0, 10)
-    .map((item) => ({ domain: Object.keys(item)[0], count: Object.values(item)[0] }))
-    .filter((item) => item.domain);
-}
-
-// Dedupe ueber den Slot `adguard`: paralleler Push-Hub-Tick und
-// REST-Fallback teilen sich denselben Abruf.
-const refreshAdguard = () => withInflight('adguard', _refreshAdguard);
-async function _refreshAdguard() {
-  const { url, user, pass } = adguardCfg();
-  if (!url) return { ok: false, error: 'not_configured' };
-
-  if (cache.adguard.data && Date.now() - cache.adguard.ts < ADGUARD_TTL) {
-    return cache.adguard.data;
-  }
-
-  const auth = adguardAuth(user, pass);
-  try {
-    const [status, stats] = await Promise.all([
-      agFetch(url, '/control/status', auth),
-      agFetch(url, '/control/stats',  auth),
-    ]);
-
-    const total   = stats.num_dns_queries       || 0;
-    const blocked = stats.num_blocked_filtering || 0;
-    const result  = {
-      ok:         true,
-      version:    status.version || null,
-      running:    !!status.running,
-      protection: !!status.protection_enabled,
-      total,
-      blocked,
-      blockedPct: total > 0 ? Math.round(blocked / total * 100) : 0,
-      topBlocked: topBlockedList(stats.top_blocked_domains),
-      avgMs:      typeof stats.avg_processing_time === 'number'
-                    ? +(stats.avg_processing_time * 1000).toFixed(1) : null,
-    };
-    cache.adguard = { ts: Date.now(), data: result };
-    return result;
-  } catch (err) {
-    console.error('AdGuard-Abruf fehlgeschlagen:', err.message);
-    return { ok: false, error: 'fetch_failed', message: err.message };
-  }
-}
-
-app.get('/api/adguard', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  res.json(await refreshAdguard());
-});
-
-/* ============================================================
    JDownloader-Integration (MyJDownloader Cloud-API)
    ------------------------------------------------------------
    Anmeldung laeuft ueber my.jdownloader.org: E-Mail + Passwort leiten
@@ -2483,21 +2413,32 @@ app.post('/api/quicklinks', (req, res) => {
   }
 });
 
-const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'UNIFI_LOCAL_URL', 'UNIFI_LOCAL_USER', 'UNIFI_LOCAL_PASS', 'UNIFI_LOCAL_SITE', 'UNIFI_GW_SSH_HOST', 'UNIFI_GW_SSH_PORT', 'UNIFI_GW_SSH_USER', 'UNIFI_GW_SSH_PASSWORD', 'UNIFI_GW_SSH_KEY', 'UNIFI_GW_WAN_IFACE', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH', 'UNRAID_URL', 'UNRAID_API_KEY', 'UNRAID_SSH_HOST', 'UNRAID_SSH_PORT', 'UNRAID_SSH_USER', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'UNRAID_DANGER_ACTIONS', 'JDOWNLOADER_EMAIL', 'JDOWNLOADER_PASS', 'JDOWNLOADER_DEVICE', 'JDOWNLOADER_APPKEY'];
-const SECRETS_MASKED = new Set(['ADGUARD_PASS', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'UNIFI_LOCAL_PASS', 'UNIFI_GW_SSH_PASSWORD', 'UNIFI_GW_SSH_KEY', 'NEXTCLOUD_PASS', 'UNRAID_API_KEY', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'JDOWNLOADER_PASS']);
+const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'PLEX_URL', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'UNIFI_LOCAL_URL', 'UNIFI_LOCAL_USER', 'UNIFI_LOCAL_PASS', 'UNIFI_LOCAL_SITE', 'UNIFI_GW_SSH_HOST', 'UNIFI_GW_SSH_PORT', 'UNIFI_GW_SSH_USER', 'UNIFI_GW_SSH_PASSWORD', 'UNIFI_GW_SSH_KEY', 'UNIFI_GW_WAN_IFACE', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH', 'UNRAID_URL', 'UNRAID_API_KEY', 'UNRAID_SSH_HOST', 'UNRAID_SSH_PORT', 'UNRAID_SSH_USER', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'UNRAID_DANGER_ACTIONS', 'JDOWNLOADER_EMAIL', 'JDOWNLOADER_PASS', 'JDOWNLOADER_DEVICE', 'JDOWNLOADER_APPKEY'];
+const SECRETS_MASKED = new Set(['PLEX_TOKEN', 'UNIFI_API_KEY', 'UNIFI_LOCAL_PASS', 'UNIFI_GW_SSH_PASSWORD', 'UNIFI_GW_SSH_KEY', 'NEXTCLOUD_PASS', 'UNRAID_API_KEY', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'JDOWNLOADER_PASS']);
+
+// Kern-Keys (Glances, UniFi, Unraid, Plex, Nextcloud, JDownloader) plus alles,
+// was die geladenen Module deklarieren — so muss ein neues Modul seine Secrets
+// nicht mehr hier eintragen.
+const ALL_SECRET_KEYS = SECRETS_KEYS.concat(MODULE_SECRETS.keys.filter((k) => !SECRETS_KEYS.includes(k)));
+const ALL_SECRETS_MASKED = new Set([...SECRETS_MASKED, ...MODULE_SECRETS.masked]);
 
 app.get('/api/secrets', (req, res) => {
   const out = {};
-  for (const k of SECRETS_KEYS) {
+  const env = [];
+  for (const k of ALL_SECRET_KEYS) {
     const v = getSecret(k);
-    out[k] = (v && SECRETS_MASKED.has(k)) ? '***' : v;
+    out[k] = (v && ALL_SECRETS_MASKED.has(k)) ? '***' : v;
+    // Per Env gesetzte Werte kann die UI nicht ueberschreiben (Env hat Vorrang)
+    // — das Frontend zeigt solche Felder deshalb read-only an.
+    if (isEnvSecret(k)) env.push(k);
   }
+  out._env = env;
   res.json(out);
 });
 
 app.post('/api/secrets', (req, res) => {
   for (const [k, v] of Object.entries(req.body || {})) {
-    if (!SECRETS_KEYS.includes(k)) continue;
+    if (!ALL_SECRET_KEYS.includes(k)) continue;
     if (v === '***') continue;
     if (v === '') delete _secrets[k];
     else _secrets[k] = String(v);
@@ -2516,72 +2457,6 @@ app.post('/api/secrets', (req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
-});
-
-/* ============================================================
-   Wetter-Integration (Open-Meteo – kein API-Key noetig)
-   Geocoding  → open-meteo Geocoding API  → lat/lon
-   Wetterdaten → open-meteo Forecast API  → Temperatur + WMO-Code
-   Cache: 10 Minuten (Wetter aendert sich langsam)
-   ============================================================ */
-// Dedupe ueber den Slot `weather`: paralleler Push-Hub-Tick und
-// REST-Fallback teilen sich denselben Abruf.
-const refreshWeather = () => withInflight('weather', _refreshWeather);
-async function _refreshWeather() {
-  const city = getSecret('WEATHER_CITY');
-  const unit = getSecret('WEATHER_UNIT') || 'C';
-
-  if (!city) return { ok: false, configured: false };
-
-  if (cache.weather.data && Date.now() - cache.weather.ts < WEATHER_TTL) {
-    return cache.weather.data;
-  }
-
-  try {
-    // 1) Geocoding: Stadtname → Koordinaten
-    const geoRes = await fetch(
-      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=de&format=json`,
-      { signal: AbortSignal.timeout(5000) }
-    );
-    if (!geoRes.ok) throw new Error(`Geocoding HTTP ${geoRes.status}`);
-    const geo = await geoRes.json();
-    if (!geo.results || !geo.results.length) {
-      return { ok: false, configured: true, error: 'city_not_found', city };
-    }
-    const { latitude, longitude, name, country } = geo.results[0];
-
-    // 2) Wetterdaten: Koordinaten → aktuelles Wetter
-    const tempUnit = unit === 'F' ? 'fahrenheit' : 'celsius';
-    const wRes = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,is_day&temperature_unit=${tempUnit}&forecast_days=1`,
-      { signal: AbortSignal.timeout(5000) }
-    );
-    if (!wRes.ok) throw new Error(`Forecast HTTP ${wRes.status}`);
-    const w = await wRes.json();
-
-    const cur = w.current;
-    const data = {
-      ok: true,
-      configured: true,
-      temp: Math.round(cur.temperature_2m),
-      unit,
-      wmoCode: cur.weather_code,
-      isDay: cur.is_day === 1,
-      city: name,
-      country,
-    };
-    cache.weather = { ts: Date.now(), data };
-    return data;
-  } catch (err) {
-    console.error('Wetter-Fetch fehlgeschlagen:', err.message);
-    if (cache.weather.data) return { ...cache.weather.data, _stale: true };
-    return { ok: false, configured: true, error: 'fetch_failed' };
-  }
-}
-
-app.get('/api/weather', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  res.json(await refreshWeather());
 });
 
 /* ============================================================
@@ -4131,6 +4006,11 @@ async function handleVncWs(ws, id) {
   pending.length = 0;
 }
 
+// GET /api/<id> (+ optionale Aktions-Routen) fuer jedes registrierte Modul.
+// Bewusst nach den Kern-Routen, damit ein Modul eine bestehende Route nicht
+// versehentlich verdeckt — Express nimmt den zuerst registrierten Handler.
+registry.registerRoutes(app, MODULES, moduleRuntime, { getSecret, cache });
+
 // Healthcheck fuer Docker / Monitoring
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
@@ -4150,11 +4030,9 @@ app.get('/healthz', (req, res) => res.json({ ok: true }));
    ============================================================ */
 const PUSH_SOURCES = [
   { event: 'docker',       interval: DOCKER_TTL,        get: refreshDocker },
-  { event: 'adguard',      interval: ADGUARD_TTL,       get: refreshAdguard },
   { event: 'jdownloader',  interval: JDOWNLOADER_TTL,   get: refreshJdownloader },
   { event: 'plex',         interval: PLEX_SESS_TTL,     get: refreshPlex },
   { event: 'status',       interval: STATUS_TTL,        get: refreshStatus },
-  { event: 'weather',      interval: WEATHER_TTL,       get: refreshWeather },
   { event: 'unifi',        interval: UNIFI_TTL,         get: refreshUnifi },
   { event: 'nextcloud',    interval: NEXTCLOUD_TTL,     get: refreshNextcloud },
   { event: 'vms',          interval: VM_TTL,            get: refreshVms },
@@ -4164,7 +4042,8 @@ const PUSH_SOURCES = [
   { event: 'unraidNotif',  interval: UNRAID_NOTIF_TTL,  get: () => getUnraid('unraidNotif',  UNRAID_NOTIF_TTL,  fetchUnraidNotifications) },
   { event: 'unraidSystem', interval: UNRAID_SYSTEM_TTL, get: () => getUnraid('unraidSystem', UNRAID_SYSTEM_TTL, fetchUnraidSystem) },
   { event: 'unraidUps',    interval: UNRAID_UPS_TTL,    get: () => getUnraid('unraidUps',    UNRAID_UPS_TTL,    fetchUnraidUps) },
-];
+  // Alles, was als Modul in server/modules/ liegt, haengt sich hier selbst ein.
+].concat(registry.pushSources(MODULES, moduleRuntime));
 
 let _pushHubStarted = false;
 function startPushHub() {

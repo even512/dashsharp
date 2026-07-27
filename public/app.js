@@ -5332,7 +5332,22 @@ async function loadSecrets() {
     set('secretUnraidSshKey',  d.UNRAID_SSH_KEY);
     const danger = $('unraidDangerToggle');
     if (danger) danger.checked = d.UNRAID_DANGER_ACTIONS === 'true';
+    renderEnvLockNote(d._env);
   } catch { /* ignore, fields stay empty */ }
+}
+
+// Umgebungsvariablen haben Vorrang vor den in der UI gespeicherten Werten
+// (so dokumentiert es .env.example). Ohne Hinweis wirkt ein per Env gesetztes
+// Feld hier wie ein stummes Eingabefeld: speichern geht, aendern nichts.
+function renderEnvLockNote(envKeys) {
+  const box = $('envLockNote');
+  if (!box) return;
+  const keys = Array.isArray(envKeys) ? envKeys : [];
+  if (!keys.length) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  box.innerHTML = '<b>Per Umgebungsvariable gesetzt</b> — diese Werte haben Vorrang; '
+    + 'Änderungen in den Feldern unten bleiben wirkungslos, solange die Variable gesetzt ist:<br>'
+    + keys.map((k) => `<code>${esc(k)}</code>`).join(', ');
 }
 
 async function saveSecrets(card) {
