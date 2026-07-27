@@ -13,9 +13,53 @@ const PORT = process.env.PORT || 3000;
 const CONFIG_PATH =
   process.env.CONFIG_PATH || path.join(__dirname, 'config', 'services.yaml');
 
+/* ------------------------------------------------------------
+   Config-Dateien: gecachtes Lesen & atomares Schreiben
+   ------------------------------------------------------------
+   Lesen: die Config-Dateien werden aus heissen Pfaden aufgerufen
+   (glancesCfg/readDiskCfg laufen bei JEDEM Glances-Sample, also alle ~2 s im
+   SSE-Broadcast). Ein readFileSync pro Sample blockiert den Event-Loop und
+   trifft auf Unraid die Appdata-Disk, die dafuer aus dem Spindown kommt.
+   Deshalb: Inhalt cachen und nur neu parsen, wenn sich mtime/size aendern —
+   externe Edits an services.yaml bleiben damit weiterhin sofort sichtbar.
+
+   Schreiben: writeFileSync direkt auf die Zieldatei laesst bei einem Crash
+   mitten im Schreibvorgang eine abgeschnittene Datei zurueck. Da der komplette
+   Dashboard-Zustand (secrets.json, dashboard.json) genau hier liegt, wird
+   immer in eine tmp-Datei geschrieben und atomar per rename ersetzt.
+   ------------------------------------------------------------ */
+const _fileCache = new Map(); // path -> { mtimeMs, size, value }
+
+// Wirft weiter wie ein direktes readFileSync/parse — Aufrufer, die einen
+// Fehler melden wollen (z.B. /api/config -> 500), behalten ihr Verhalten.
+function readFileCached(filePath, parse) {
+  let st;
+  try { st = fs.statSync(filePath); }
+  catch (e) { _fileCache.delete(filePath); throw e; }
+  const hit = _fileCache.get(filePath);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.value;
+  const value = parse(fs.readFileSync(filePath, 'utf8'));
+  _fileCache.set(filePath, { mtimeMs: st.mtimeMs, size: st.size, value });
+  return value;
+}
+
+// Variante fuer die optionalen Laufzeit-Dateien (disks.json, status.json, …):
+// „nicht vorhanden" ist dort der Normalfall, nicht der Fehlerfall.
+function readJsonCached(filePath, fallback) {
+  try { return readFileCached(filePath, (raw) => JSON.parse(raw)); }
+  catch { return fallback; }
+}
+
+function writeJsonAtomic(filePath, obj) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), 'utf8');
+  fs.renameSync(tmp, filePath);
+  _fileCache.delete(filePath); // naechster Read sieht garantiert den neuen Stand
+}
+
 function readConfig() {
-  const raw = fs.readFileSync(CONFIG_PATH, 'utf8');
-  return yaml.load(raw) || {};
+  return readFileCached(CONFIG_PATH, (raw) => yaml.load(raw) || {});
 }
 
 const http  = require('http');
@@ -26,16 +70,21 @@ const { execFile } = require('child_process');
 const { Client: SSHClient } = require('ssh2');
 const { WebSocket, WebSocketServer } = require('ws');
 
-// Kein Bug soll den ganzen Container unkontrolliert mit rohem Stacktrace
-// crashen lassen — sauber loggen und beenden, Docker startet dank
+// Ein echter uncaughtException laesst den Prozess in undefiniertem Zustand
+// zurueck — sauber loggen und beenden, Docker startet dank
 // restart:unless-stopped ohnehin neu.
 process.on('uncaughtException', (err) => {
   console.error('FATAL uncaughtException:', err);
   process.exit(1);
 });
+// Eine unbehandelte Rejection ist dagegen fast immer ein einzelner
+// fehlgeschlagener Integrations-Abruf (Upstream weg, Timeout, 500er). Den
+// ganzen Container dafuer zu beenden wuerde bei ~15 dauerhaft pollenden
+// Quellen regelmaessig alle Sampler-Ringpuffer (Netz-/WAN-Verlauf) wegwerfen
+// und das Dashboard fuer Sekunden schwarz schalten. Also: laut loggen,
+// weiterlaufen — die betroffene Kachel faellt selbst auf _stale/Fehler zurueck.
 process.on('unhandledRejection', (reason) => {
-  console.error('FATAL unhandledRejection:', reason);
-  process.exit(1);
+  console.error('unhandledRejection (nicht fatal):', reason);
 });
 
 /* ============================================================
@@ -245,23 +294,18 @@ const DASHBOARD_CFG_PATH = path.join(__dirname, 'config', 'dashboard.json');
 const VM_CFG_PATH        = path.join(__dirname, 'config', 'vms.json');
 
 function readDiskCfg() {
-  try {
-    const d = JSON.parse(fs.readFileSync(DISKS_CFG_PATH, 'utf8'));
-    return { labels: (d && d.labels && typeof d.labels === 'object') ? d.labels : {} };
-  } catch { return { labels: {} }; }
+  const d = readJsonCached(DISKS_CFG_PATH, null);
+  return { labels: (d && d.labels && typeof d.labels === 'object') ? d.labels : {} };
 }
 
 // Per-VM-Einstellungen (Windows-Flag, erkanntes OS, RDP-Host/-User).
 // { [vmId]: { win?: bool (manuelle Uebersteuerung), osAuto?: str, rdpHost?, rdpUser? } }
 function readVmCfg() {
-  try {
-    const d = JSON.parse(fs.readFileSync(VM_CFG_PATH, 'utf8'));
-    return (d && typeof d === 'object') ? d : {};
-  } catch { return {}; }
+  const d = readJsonCached(VM_CFG_PATH, null);
+  return (d && typeof d === 'object') ? d : {};
 }
 function writeVmCfg(obj) {
-  fs.mkdirSync(path.dirname(VM_CFG_PATH), { recursive: true });
-  fs.writeFileSync(VM_CFG_PATH, JSON.stringify(obj, null, 2), 'utf8');
+  writeJsonAtomic(VM_CFG_PATH, obj);
 }
 // Effektives Windows-Flag: manuelle Uebersteuerung schlaegt Auto-Erkennung.
 function vmIsWindows(entry) {
@@ -272,15 +316,12 @@ function vmIsWindows(entry) {
 }
 
 function readQuicklinks() {
-  try { return JSON.parse(fs.readFileSync(QUICKLINKS_PATH, 'utf8')); }
-  catch { return null; }
+  return readJsonCached(QUICKLINKS_PATH, null);
 }
 
 function readLayoutCfg() {
-  try {
-    const d = JSON.parse(fs.readFileSync(LAYOUT_CFG_PATH, 'utf8'));
-    return Array.isArray(d) ? d : [];
-  } catch { return []; }
+  const d = readJsonCached(LAYOUT_CFG_PATH, null);
+  return Array.isArray(d) ? d : [];
 }
 
 // Neues Dashboard-Modell: { version, pages:[{id,name,icon}],
@@ -329,11 +370,14 @@ function sanitizeDashboard(body) {
     let page = String(t.page || '').trim().slice(0, 40);
     if (!pageIds.has(page)) page = pages[0].id;
     const type = t.type === 'heading' ? 'heading' : 'widget';
+    const x = clampInt(t.x, 0, 11, 0);
     const entry = {
       id, type, page,
-      x: clampInt(t.x, 0, 11, 0),
+      x,
       y: clampInt(t.y, 0, 1000, 0),
-      w: clampInt(t.w, 1, 12, 4),
+      // Breite gegen die Restspalten clampen — sonst waere x=11,w=12 gueltig
+      // und die Kachel ragte aus dem 12-Spalten-Raster heraus.
+      w: clampInt(t.w, 1, 12 - x, Math.min(4, 12 - x)),
       h: clampInt(t.h, 1, 40, 2),
       hidden: !!t.hidden,
     };
@@ -349,18 +393,28 @@ function sanitizeDashboard(body) {
 
 let _secrets = {};
 function loadSecrets() {
-  try { _secrets = JSON.parse(fs.readFileSync(SECRETS_PATH, 'utf8')); }
-  catch { _secrets = {}; }
+  const d = readJsonCached(SECRETS_PATH, null);
+  _secrets = (d && typeof d === 'object' && !Array.isArray(d)) ? d : {};
 }
 loadSecrets();
 
+// Env schlaegt UI-Wert — so, wie README und .env.example es zusagen. (Vorher
+// war die Reihenfolge umgekehrt: ein einmal in der UI gesetzter Wert
+// ueberschattete die Env dauerhaft, und ein per Env erzwungenes
+// UNRAID_DANGER_ACTIONS liess sich aus der UI aushebeln.)
 function getSecret(key) {
-  return _secrets[key] || process.env[key] || '';
+  return process.env[key] || _secrets[key] || '';
+}
+
+// true, wenn der Wert von aussen vorgegeben ist und die UI ihn nicht
+// ueberschreiben kann — das Frontend zeigt solche Felder read-only an.
+function isEnvSecret(key) {
+  return !!process.env[key];
 }
 
 function readStatusCfg() {
-  try { return JSON.parse(fs.readFileSync(STATUS_CFG_PATH, 'utf8')); }
-  catch { return { services: [] }; }
+  const d = readJsonCached(STATUS_CFG_PATH, null);
+  return (d && typeof d === 'object') ? d : { services: [] };
 }
 
 // Prueft einen Dienst und liefert immer die gleiche Form
@@ -482,7 +536,10 @@ app.use(express.static(path.join(__dirname, 'public'), {
     }
   },
 }));
-app.use(express.json());
+// Das Default-Limit (100 kB) liegt unter dem, was sanitizeDashboard zulaesst
+// (bis 300 Kacheln x 4 kB config) — ein grosses Layout waere sonst mit einem
+// nackten 413 gescheitert, statt sauber validiert zu werden.
+app.use(express.json({ limit: '1mb' }));
 
 // Dienste-Konfiguration. Wird bei jedem Request frisch von der Platte gelesen
 // -> Aenderungen an services.yaml sind nach einem Reload sofort sichtbar.
@@ -650,6 +707,20 @@ const cache = {
   unraidUps:    { ts: 0, data: null },
   jdownloader:  { ts: 0, data: null },
 };
+
+// In-Flight-Dedupe je Cache-Slot: treffen zwei Cache-Misses gleichzeitig ein
+// (Push-Hub-Tick + REST-Fallback, oder ein zweiter Tab), teilen sie sich
+// denselben Upstream-Abruf, statt ihn zu verdoppeln. Vorher hatten das nur die
+// Unraid-Slots — jetzt nutzen es alle Integrationen.
+const _inflight = {}; // slot -> Promise|null
+function withInflight(slot, fn) {
+  let p = _inflight[slot];
+  if (!p) {
+    p = (async () => { try { return await fn(); } finally { _inflight[slot] = null; } })();
+    _inflight[slot] = p;
+  }
+  return p;
+}
 const GLANCES_TTL   = 500;    // ms – Glances-Metriken hoechstens 2x/s abrufen; muss unter dem
                               // kleinsten Client-Poll-Intervall (400 ms Slider-Minimum) liegen,
                               // sonst bekommen Clients periodisch identische Samples zurueck
@@ -1627,7 +1698,10 @@ function mapContainer(c) {
 
 // Liefert (bzw. aktualisiert) den Docker-Status. Wird von der REST-Route und
 // vom Server-Push-Hub genutzt; der TTL-Cache dedupliziert beide Wege.
-async function refreshDocker() {
+// Dedupe ueber den Slot `docker`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshDocker = () => withInflight('docker', _refreshDocker);
+async function _refreshDocker() {
   const { url } = glancesCfg();
   if (!url) return { ok: false, error: 'not_configured' };
 
@@ -1712,7 +1786,10 @@ function topBlockedList(list) {
     .filter((item) => item.domain);
 }
 
-async function refreshAdguard() {
+// Dedupe ueber den Slot `adguard`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshAdguard = () => withInflight('adguard', _refreshAdguard);
+async function _refreshAdguard() {
   const { url, user, pass } = adguardCfg();
   if (!url) return { ok: false, error: 'not_configured' };
 
@@ -1973,7 +2050,10 @@ async function jdownloaderFetch(cfg) {
   }
 }
 
-async function refreshJdownloader() {
+// Dedupe ueber den Slot `jdownloader`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshJdownloader = () => withInflight('jdownloader', _refreshJdownloader);
+async function _refreshJdownloader() {
   const cfg = jdownloaderCfg();
   if (!jdownloaderReady(cfg)) return { ok: false, error: 'not_configured' };
 
@@ -2118,7 +2198,10 @@ function normRecent(metadata) {
   }));
 }
 
-async function refreshPlex() {
+// Dedupe ueber den Slot `plexSess`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshPlex = () => withInflight('plexSess', _refreshPlex);
+async function _refreshPlex() {
   const { url, token } = plexCfg();
   if (!url || !token) return { ok: false, error: 'not_configured' };
 
@@ -2248,7 +2331,7 @@ app.post('/api/status/config', (req, res) => {
     .map((s) => ({ name: s.name.trim().slice(0, 80), url: s.url.trim().slice(0, 500) }))
     .filter((s) => s.name && s.url);
   try {
-    fs.writeFileSync(STATUS_CFG_PATH, JSON.stringify({ services: clean }, null, 2), 'utf8');
+    writeJsonAtomic(STATUS_CFG_PATH, { services: clean });
     cache.status = { ts: 0, data: null }; // Cache invalidieren
     res.json({ ok: true, count: clean.length });
   } catch (err) {
@@ -2257,7 +2340,10 @@ app.post('/api/status/config', (req, res) => {
   }
 });
 
-async function refreshStatus() {
+// Dedupe ueber den Slot `status`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshStatus = () => withInflight('status', _refreshStatus);
+async function _refreshStatus() {
   if (cache.status.data && Date.now() - cache.status.ts < STATUS_TTL) {
     return cache.status.data;
   }
@@ -2307,8 +2393,7 @@ app.post('/api/disks/config', (req, res) => {
     if (v) labels[String(mnt).slice(0, 200)] = v;
   }
   try {
-    fs.mkdirSync(path.dirname(DISKS_CFG_PATH), { recursive: true });
-    fs.writeFileSync(DISKS_CFG_PATH, JSON.stringify({ labels }, null, 2), 'utf8');
+    writeJsonAtomic(DISKS_CFG_PATH, { labels });
     cache.glances.ts = 0; // nächster Poll liefert Disks mit aktualisierten Labels
     res.json({ ok: true, count: Object.keys(labels).length });
   } catch (err) {
@@ -2334,8 +2419,7 @@ app.post('/api/dashboard/layout', (req, res) => {
       hidden: !!e.hidden,
     }));
   try {
-    fs.mkdirSync(path.dirname(LAYOUT_CFG_PATH), { recursive: true });
-    fs.writeFileSync(LAYOUT_CFG_PATH, JSON.stringify(clean, null, 2), 'utf8');
+    writeJsonAtomic(LAYOUT_CFG_PATH, clean);
     res.json({ ok: true, count: clean.length });
   } catch (err) {
     console.error('Dashboard-Layout konnte nicht gespeichert werden:', err.message);
@@ -2356,8 +2440,7 @@ app.post('/api/dashboard', (req, res) => {
   const clean = sanitizeDashboard(req.body);
   if (!clean) return res.status(400).json({ ok: false, error: 'expected object' });
   try {
-    fs.mkdirSync(path.dirname(DASHBOARD_CFG_PATH), { recursive: true });
-    fs.writeFileSync(DASHBOARD_CFG_PATH, JSON.stringify(clean, null, 2), 'utf8');
+    writeJsonAtomic(DASHBOARD_CFG_PATH, clean);
     res.json({ ok: true, pages: clean.pages.length, tiles: clean.tiles.length });
   } catch (err) {
     console.error('Dashboard konnte nicht gespeichert werden:', err.message);
@@ -2393,8 +2476,7 @@ app.post('/api/quicklinks', (req, res) => {
     return out;
   }).filter(l => l.name && l.url);
   try {
-    fs.mkdirSync(path.dirname(QUICKLINKS_PATH), { recursive: true });
-    fs.writeFileSync(QUICKLINKS_PATH, JSON.stringify(clean, null, 2));
+    writeJsonAtomic(QUICKLINKS_PATH, clean);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -2421,8 +2503,7 @@ app.post('/api/secrets', (req, res) => {
     else _secrets[k] = String(v);
   }
   try {
-    fs.mkdirSync(path.dirname(SECRETS_PATH), { recursive: true });
-    fs.writeFileSync(SECRETS_PATH, JSON.stringify(_secrets, null, 2));
+    writeJsonAtomic(SECRETS_PATH, _secrets);
     // Caches invalidieren damit naechster Poll sofort mit neuen Creds laeuft
     for (const k of Object.keys(cache)) cache[k] = { ts: 0, data: null };
     unifiLocalSession = null; // ggf. geaenderte lokale UniFi-Creds erzwingen Re-Login
@@ -2443,7 +2524,10 @@ app.post('/api/secrets', (req, res) => {
    Wetterdaten → open-meteo Forecast API  → Temperatur + WMO-Code
    Cache: 10 Minuten (Wetter aendert sich langsam)
    ============================================================ */
-async function refreshWeather() {
+// Dedupe ueber den Slot `weather`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshWeather = () => withInflight('weather', _refreshWeather);
+async function _refreshWeather() {
   const city = getSecret('WEATHER_CITY');
   const unit = getSecret('WEATHER_UNIT') || 'C';
 
@@ -2503,7 +2587,10 @@ app.get('/api/weather', async (req, res) => {
 /* ============================================================
    UniFi Network Application + Protect  (Cloud API)
    ============================================================ */
-async function refreshUnifi() {
+// Dedupe ueber den Slot `unifi`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshUnifi = () => withInflight('unifi', _refreshUnifi);
+async function _refreshUnifi() {
   const cfg = unifiCfg();
   if (!cfg.apiKey) return { ok: false, error: 'not_configured' };
 
@@ -2694,7 +2781,10 @@ async function ncFetch(cfg, apiPath, timeoutMs = 6000) {
   return ocs.data;
 }
 
-async function refreshNextcloud() {
+// Dedupe ueber den Slot `nextcloud`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshNextcloud = () => withInflight('nextcloud', _refreshNextcloud);
+async function _refreshNextcloud() {
   const cfg = nextcloudCfg();
   if (!cfg.url || !cfg.user || !cfg.pass) return { ok: false, error: 'not_configured' };
 
@@ -2922,7 +3012,10 @@ function enrichVmsResult(result) {
   return { ...result, vms };
 }
 
-async function refreshVms() {
+// Dedupe ueber den Slot `unraid`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshVms = () => withInflight('unraid', _refreshVms);
+async function _refreshVms() {
   const cfg = unraidCfg();
   if (!cfg) return { ok: false, error: 'not_configured' };
 
@@ -3073,33 +3166,19 @@ function unraidDangerEnabled() { return getSecret('UNRAID_DANGER_ACTIONS') === '
 // BigInt-/String-Zahlenfelder der API robust in Number wandeln.
 function unraidNum(v) { const n = parseFloat(v); return Number.isFinite(n) ? n : null; }
 
-// Laufende Fetches je Slot, damit parallele Cache-Misses sich einen Abruf teilen.
-const _unraidInflight = {}; // slot -> Promise|null
-
 // Gemeinsames GET-Boilerplate der Unraid-Endpoints:
-// cfg-Check -> Cache-Hit -> Fetch -> bei Fehler letzte Daten als _stale.
-// Liefert (bzw. aktualisiert) einen Unraid-Slot als Payload — genutzt von der
-// REST-Route (serveUnraid) und vom Server-Push-Hub. cfg-Check -> Cache-Hit ->
-// Fetch (mit In-Flight-Dedupe) -> bei Fehler letzte Daten als _stale.
+// cfg-Check -> Cache-Hit -> Fetch (mit In-Flight-Dedupe) -> bei Fehler letzte
+// Daten als _stale. Genutzt von der REST-Route (serveUnraid) und vom Push-Hub.
 async function getUnraid(slot, ttl, fetchFn) {
   const cfg = unraidCfg();
   if (!cfg) return { ok: false, error: 'not_configured' };
   if (cache[slot].data && Date.now() - cache[slot].ts < ttl) return cache[slot].data;
   try {
-    // In-Flight-Dedupe: zwei parallele Cache-Misses (zweiter Tab / SSE+REST)
-    // teilen sich denselben fetchFn-Aufruf, statt die Abfrage-Lawine zu doppeln.
-    let p = _unraidInflight[slot];
-    if (!p) {
-      p = (async () => {
-        try {
-          const result = await fetchFn(cfg);
-          cache[slot] = { ts: Date.now(), data: result };
-          return result;
-        } finally { _unraidInflight[slot] = null; }
-      })();
-      _unraidInflight[slot] = p;
-    }
-    return await p;
+    return await withInflight(slot, async () => {
+      const result = await fetchFn(cfg);
+      cache[slot] = { ts: Date.now(), data: result };
+      return result;
+    });
   } catch (err) {
     console.error(`Unraid-Abruf (${slot}) fehlgeschlagen:`, err.message);
     if (cache[slot].data) return { ...cache[slot].data, _stale: true };

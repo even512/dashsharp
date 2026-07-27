@@ -538,6 +538,14 @@ function setHtmlIfChanged(el, html) {
   el._lastHtml = html;
   el.innerHTML = html;
 }
+// HTML-Escaping fuer die wenigen Stellen, an denen Fremddaten (Geraete-/Disk-/
+// Dateinamen aus Upstream-APIs bzw. der lokalen Dateiauswahl) in ein
+// Template-Literal fuer innerHTML fliessen. Ueberall sonst arbeiten die
+// Row-Builder mit statischem innerHTML + textContent.
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 function hexA(hex, a) {
   const m = String(hex).replace('#', '');
   const n = m.length === 3 ? m.split('').map((c) => c + c).join('') : m;
@@ -874,7 +882,7 @@ function updateDiskRow(wrap, d, prev) {
   if (!prev || prev.name !== name || prev.label !== d.label || prev._accent !== accent)
     wrap._icon.innerHTML = diskIconSvg(d, accent);
   if (!prev || prev.name !== name || prev.label !== d.label || prev.fsType !== d.fsType)
-    wrap._name.innerHTML = `${name}<span style="color:var(--text-3)"> · ${d.fsType}</span>`;
+    wrap._name.innerHTML = `${esc(name)}<span style="color:var(--text-3)"> · ${esc(d.fsType)}</span>`;
   if (!prev || prev.usedBytes !== d.usedBytes || prev.sizeBytes !== d.sizeBytes || prev._accent !== accent) {
     wrap._size.style.color = accent || 'var(--text-3)';
     wrap._size.textContent = `${fmtSize(d.usedBytes)} / ${fmtSize(d.sizeBytes)}`;
@@ -1080,6 +1088,8 @@ function openMetricsStream() {
     es.addEventListener(ev, (e) => {
       let d; try { d = JSON.parse(e.data); } catch (_) { return; }
       _esConnected = true; _esFails = 0;
+      // Wie die poll*-Funktionen: bei abgeschalteten Live-Updates nicht rendern.
+      if (!state.liveOn) return;
       try { PUSH_HANDLERS[ev](d); } catch (err) { console.warn('Push-Handler', ev, err && err.message); }
     });
   }
@@ -1997,7 +2007,7 @@ function unraidSystemAction(action, btn) {
   unraidAction('/api/unraid/system/action', { action }, btn, null, pollUnraidSystem);
 }
 
-function usyEsc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+const usyEsc = esc; // Alias: die Kachel nutzte frueher einen eigenen Escaper
 function usyGiB(bytes) { return (bytes / 1073741824).toLocaleString('de-DE', { maximumFractionDigits: 1 }) + ' GiB'; }
 function usySetWidth(id, pct) { const el = $(id); if (el) el.style.width = Math.max(0, Math.min(100, pct)) + '%'; }
 function usyShowChip(id, show) { const el = $(id); if (el) el.style.display = show ? '' : 'none'; }
@@ -3340,7 +3350,7 @@ function updateUnifiDeviceChip(chip, dev, prev) {
     : dev.cpu != null ? ` · ${dev.cpu.toFixed(0)}%` : '';
   if (!prev || prev.online !== dev.online) chip._dot.style.color = dot;
   if (!prev || prev.type !== dev.type || prev.name !== dev.name || prev.clients !== dev.clients || prev.cpu !== dev.cpu) {
-    chip._label.innerHTML = `${label}:&nbsp;${dev.name}${extra}`;
+    chip._label.innerHTML = `${esc(label)}:&nbsp;${esc(dev.name)}${esc(extra)}`;
   }
 }
 function renderUnifi(d) {
@@ -3589,17 +3599,17 @@ function ncUploadFiles(files) {
   Array.from(files).forEach((file) => {
     const row = document.createElement('div');
     row.style.cssText = "display:flex;align-items:center;gap:8px;font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)";
-    row.innerHTML = `<span style="color:#5b9dff">⏳</span><span style="${ell}">${file.name}</span><span style="flex-shrink:0">uploading…</span>`;
+    row.innerHTML = `<span style="color:#5b9dff">⏳</span><span style="${ell}">${esc(file.name)}</span><span style="flex-shrink:0">uploading…</span>`;
     box.appendChild(row);
     fetch(`/api/nextcloud/upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file })
       .then((r) => r.json())
       .then((res) => {
         if (res && res.ok) {
-          row.innerHTML = `<span style="color:#3ddc97">✓</span><span style="${ell};color:var(--text-15)">${file.name}</span><span style="color:#3ddc97;flex-shrink:0">uploaded</span>`;
+          row.innerHTML = `<span style="color:#3ddc97">✓</span><span style="${ell};color:var(--text-15)">${esc(file.name)}</span><span style="color:#3ddc97;flex-shrink:0">uploaded</span>`;
           pollNextcloud();
         } else {
           const e = res && res.error ? res.error : 'Error';
-          row.innerHTML = `<span style="color:#f43f5e">✗</span><span style="${ell}">${file.name}</span><span style="color:#f43f5e;flex-shrink:0">${e}</span>`;
+          row.innerHTML = `<span style="color:#f43f5e">✗</span><span style="${ell}">${esc(file.name)}</span><span style="color:#f43f5e;flex-shrink:0">${esc(e)}</span>`;
         }
       })
       .catch(() => {
@@ -3650,6 +3660,10 @@ const GLANCES_WIDGETS = ['system-load', 'network-throughput', 'disk-storage'];
 // Kamera-Snapshot als Parameter-Endpoint) laufen weiter. Ohne EventSource-Support
 // faellt alles transparent auf das klassische Polling zurueck.
 function startLive() {
+  // „Live-Updates aus" muss auch hier greifen: startLive() wird u.a. vom
+  // visibilitychange-Handler beim Zurueckkehren auf den Tab aufgerufen und
+  // wuerde den Stream sonst gegen den Willen des Users wieder oeffnen.
+  if (!state.liveOn) { pauseLive(); return; }
   _pushMode = (typeof window !== 'undefined' && !!window.EventSource);
   if (_pushMode) {
     openMetricsStream();   // net/wan/glances + alle Kachel-Events + Snapshot
@@ -4537,6 +4551,9 @@ function _syncGlancesStream() {
 // Oeffnen einer Unterseite sofort Daten erscheinen statt erst beim naechsten Tick.
 function _refreshActivePageWidgets() {
   if (!_dashboard || !Array.isArray(_dashboard.tiles)) return;
+  // Im Push-Modus liegen die Daten bereits an (SSE-Snapshot + laufende Events);
+  // ein zusaetzlicher REST-Burst pro Seitenwechsel waere reine Doppelarbeit.
+  if (_pushMode && metricsEs) return;
   _dashboard.tiles.forEach((t) => {
     if (t.type !== 'widget' || t.hidden || t.page !== _activePage) return;
     try { WIDGET_REFRESH[t.id]?.(); } catch { /* ignore */ }
@@ -4617,6 +4634,8 @@ function _initTabSortable() {
     onEnd: () => {
       const ids = Array.from($('dashPages').querySelectorAll('.dash-tab:not(.dash-tab-add)')).map((el) => el.dataset.page);
       _dashboard.pages.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+      renderPageTabs();
+      _saveIfLive();
     },
   });
 }
@@ -4627,6 +4646,7 @@ function addPage() {
   const id = _uid('page:');
   _dashboard.pages.push({ id, name: name.slice(0, 60), icon: '' });
   showPage(id);
+  _saveIfLive();
   toast(`Seite „${name}" angelegt`);
 }
 
@@ -4637,6 +4657,7 @@ function renamePage(pageId) {
   if (!name) return;
   p.name = name.slice(0, 60);
   renderPageTabs();
+  _saveIfLive();
 }
 
 function deletePage(pageId) {
@@ -4655,6 +4676,7 @@ function deletePage(pageId) {
   _dashboard.pages = _dashboard.pages.filter((x) => x.id !== pageId);
   _activePage = _dashboard.pages[0].id;
   showPage(_activePage);
+  _saveIfLive();
   toast(`Seite „${p.name}" gelöscht`);
 }
 
@@ -5436,7 +5458,7 @@ function renderSettingsTree() {
       const itemEl = document.createElement('div');
       itemEl.className = 'tree-item';
       itemEl.dataset.tab = child.id;
-      itemEl.innerHTML = `${leafIconHtml(child, 14)}<span>${child.label}</span>` +
+      itemEl.innerHTML = `${leafIconHtml(child, 14)}<span>${esc(child.label)}</span>` +
         (child.statusEl ? '<span class="tree-status-dot" style="display:none"></span>' : '');
       itemEl.addEventListener('click', () => selectTab(child.id));
       childrenEl.appendChild(itemEl);
@@ -5459,7 +5481,7 @@ function renderCategoryGrid(catId) {
     card.dataset.tab = child.id;
     card.innerHTML =
       `<div class="grid-card-icon">${leafIconHtml(child, 26)}</div>` +
-      `<div class="grid-card-label">${child.label}</div>` +
+      `<div class="grid-card-label">${esc(child.label)}</div>` +
       (child.statusEl ? '<span class="grid-card-status" style="display:none"></span>' : '');
     card.addEventListener('click', () => selectTab(child.id));
     grid.appendChild(card);

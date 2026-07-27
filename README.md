@@ -45,7 +45,7 @@ and no build step.
 - 🐳 **One container** — `node:20-alpine`, multi-arch (amd64/arm64), healthcheck, ~48 MB
 
 > [!NOTE]
-> **Dash# is at v0.1 — the first public iteration.** It works and is used daily, but expect rough edges
+> **Dash# is still pre-1.0.** It works and is used daily, but expect rough edges
 > and breaking changes before 1.0. Feedback and issues are very welcome.
 
 ## Screenshot
