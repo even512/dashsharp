@@ -13,9 +13,53 @@ const PORT = process.env.PORT || 3000;
 const CONFIG_PATH =
   process.env.CONFIG_PATH || path.join(__dirname, 'config', 'services.yaml');
 
+/* ------------------------------------------------------------
+   Config-Dateien: gecachtes Lesen & atomares Schreiben
+   ------------------------------------------------------------
+   Lesen: die Config-Dateien werden aus heissen Pfaden aufgerufen
+   (glancesCfg/readDiskCfg laufen bei JEDEM Glances-Sample, also alle ~2 s im
+   SSE-Broadcast). Ein readFileSync pro Sample blockiert den Event-Loop und
+   trifft auf Unraid die Appdata-Disk, die dafuer aus dem Spindown kommt.
+   Deshalb: Inhalt cachen und nur neu parsen, wenn sich mtime/size aendern —
+   externe Edits an services.yaml bleiben damit weiterhin sofort sichtbar.
+
+   Schreiben: writeFileSync direkt auf die Zieldatei laesst bei einem Crash
+   mitten im Schreibvorgang eine abgeschnittene Datei zurueck. Da der komplette
+   Dashboard-Zustand (secrets.json, dashboard.json) genau hier liegt, wird
+   immer in eine tmp-Datei geschrieben und atomar per rename ersetzt.
+   ------------------------------------------------------------ */
+const _fileCache = new Map(); // path -> { mtimeMs, size, value }
+
+// Wirft weiter wie ein direktes readFileSync/parse — Aufrufer, die einen
+// Fehler melden wollen (z.B. /api/config -> 500), behalten ihr Verhalten.
+function readFileCached(filePath, parse) {
+  let st;
+  try { st = fs.statSync(filePath); }
+  catch (e) { _fileCache.delete(filePath); throw e; }
+  const hit = _fileCache.get(filePath);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.value;
+  const value = parse(fs.readFileSync(filePath, 'utf8'));
+  _fileCache.set(filePath, { mtimeMs: st.mtimeMs, size: st.size, value });
+  return value;
+}
+
+// Variante fuer die optionalen Laufzeit-Dateien (disks.json, status.json, …):
+// „nicht vorhanden" ist dort der Normalfall, nicht der Fehlerfall.
+function readJsonCached(filePath, fallback) {
+  try { return readFileCached(filePath, (raw) => JSON.parse(raw)); }
+  catch { return fallback; }
+}
+
+function writeJsonAtomic(filePath, obj) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), 'utf8');
+  fs.renameSync(tmp, filePath);
+  _fileCache.delete(filePath); // naechster Read sieht garantiert den neuen Stand
+}
+
 function readConfig() {
-  const raw = fs.readFileSync(CONFIG_PATH, 'utf8');
-  return yaml.load(raw) || {};
+  return readFileCached(CONFIG_PATH, (raw) => yaml.load(raw) || {});
 }
 
 const http  = require('http');
@@ -25,17 +69,23 @@ const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { Client: SSHClient } = require('ssh2');
 const { WebSocket, WebSocketServer } = require('ws');
+const registry = require('./server/registry');
 
-// Kein Bug soll den ganzen Container unkontrolliert mit rohem Stacktrace
-// crashen lassen — sauber loggen und beenden, Docker startet dank
+// Ein echter uncaughtException laesst den Prozess in undefiniertem Zustand
+// zurueck — sauber loggen und beenden, Docker startet dank
 // restart:unless-stopped ohnehin neu.
 process.on('uncaughtException', (err) => {
   console.error('FATAL uncaughtException:', err);
   process.exit(1);
 });
+// Eine unbehandelte Rejection ist dagegen fast immer ein einzelner
+// fehlgeschlagener Integrations-Abruf (Upstream weg, Timeout, 500er). Den
+// ganzen Container dafuer zu beenden wuerde bei ~15 dauerhaft pollenden
+// Quellen regelmaessig alle Sampler-Ringpuffer (Netz-/WAN-Verlauf) wegwerfen
+// und das Dashboard fuer Sekunden schwarz schalten. Also: laut loggen,
+// weiterlaufen — die betroffene Kachel faellt selbst auf _stale/Fehler zurueck.
 process.on('unhandledRejection', (reason) => {
-  console.error('FATAL unhandledRejection:', reason);
-  process.exit(1);
+  console.error('unhandledRejection (nicht fatal):', reason);
 });
 
 /* ============================================================
@@ -245,23 +295,18 @@ const DASHBOARD_CFG_PATH = path.join(__dirname, 'config', 'dashboard.json');
 const VM_CFG_PATH        = path.join(__dirname, 'config', 'vms.json');
 
 function readDiskCfg() {
-  try {
-    const d = JSON.parse(fs.readFileSync(DISKS_CFG_PATH, 'utf8'));
-    return { labels: (d && d.labels && typeof d.labels === 'object') ? d.labels : {} };
-  } catch { return { labels: {} }; }
+  const d = readJsonCached(DISKS_CFG_PATH, null);
+  return { labels: (d && d.labels && typeof d.labels === 'object') ? d.labels : {} };
 }
 
 // Per-VM-Einstellungen (Windows-Flag, erkanntes OS, RDP-Host/-User).
 // { [vmId]: { win?: bool (manuelle Uebersteuerung), osAuto?: str, rdpHost?, rdpUser? } }
 function readVmCfg() {
-  try {
-    const d = JSON.parse(fs.readFileSync(VM_CFG_PATH, 'utf8'));
-    return (d && typeof d === 'object') ? d : {};
-  } catch { return {}; }
+  const d = readJsonCached(VM_CFG_PATH, null);
+  return (d && typeof d === 'object') ? d : {};
 }
 function writeVmCfg(obj) {
-  fs.mkdirSync(path.dirname(VM_CFG_PATH), { recursive: true });
-  fs.writeFileSync(VM_CFG_PATH, JSON.stringify(obj, null, 2), 'utf8');
+  writeJsonAtomic(VM_CFG_PATH, obj);
 }
 // Effektives Windows-Flag: manuelle Uebersteuerung schlaegt Auto-Erkennung.
 function vmIsWindows(entry) {
@@ -272,15 +317,12 @@ function vmIsWindows(entry) {
 }
 
 function readQuicklinks() {
-  try { return JSON.parse(fs.readFileSync(QUICKLINKS_PATH, 'utf8')); }
-  catch { return null; }
+  return readJsonCached(QUICKLINKS_PATH, null);
 }
 
 function readLayoutCfg() {
-  try {
-    const d = JSON.parse(fs.readFileSync(LAYOUT_CFG_PATH, 'utf8'));
-    return Array.isArray(d) ? d : [];
-  } catch { return []; }
+  const d = readJsonCached(LAYOUT_CFG_PATH, null);
+  return Array.isArray(d) ? d : [];
 }
 
 // Neues Dashboard-Modell: { version, pages:[{id,name,icon}],
@@ -329,11 +371,14 @@ function sanitizeDashboard(body) {
     let page = String(t.page || '').trim().slice(0, 40);
     if (!pageIds.has(page)) page = pages[0].id;
     const type = t.type === 'heading' ? 'heading' : 'widget';
+    const x = clampInt(t.x, 0, 11, 0);
     const entry = {
       id, type, page,
-      x: clampInt(t.x, 0, 11, 0),
+      x,
       y: clampInt(t.y, 0, 1000, 0),
-      w: clampInt(t.w, 1, 12, 4),
+      // Breite gegen die Restspalten clampen — sonst waere x=11,w=12 gueltig
+      // und die Kachel ragte aus dem 12-Spalten-Raster heraus.
+      w: clampInt(t.w, 1, 12 - x, Math.min(4, 12 - x)),
       h: clampInt(t.h, 1, 40, 2),
       hidden: !!t.hidden,
     };
@@ -349,18 +394,28 @@ function sanitizeDashboard(body) {
 
 let _secrets = {};
 function loadSecrets() {
-  try { _secrets = JSON.parse(fs.readFileSync(SECRETS_PATH, 'utf8')); }
-  catch { _secrets = {}; }
+  const d = readJsonCached(SECRETS_PATH, null);
+  _secrets = (d && typeof d === 'object' && !Array.isArray(d)) ? d : {};
 }
 loadSecrets();
 
+// Env schlaegt UI-Wert — so, wie README und .env.example es zusagen. (Vorher
+// war die Reihenfolge umgekehrt: ein einmal in der UI gesetzter Wert
+// ueberschattete die Env dauerhaft, und ein per Env erzwungenes
+// UNRAID_DANGER_ACTIONS liess sich aus der UI aushebeln.)
 function getSecret(key) {
-  return _secrets[key] || process.env[key] || '';
+  return process.env[key] || _secrets[key] || '';
+}
+
+// true, wenn der Wert von aussen vorgegeben ist und die UI ihn nicht
+// ueberschreiben kann — das Frontend zeigt solche Felder read-only an.
+function isEnvSecret(key) {
+  return !!process.env[key];
 }
 
 function readStatusCfg() {
-  try { return JSON.parse(fs.readFileSync(STATUS_CFG_PATH, 'utf8')); }
-  catch { return { services: [] }; }
+  const d = readJsonCached(STATUS_CFG_PATH, null);
+  return (d && typeof d === 'object') ? d : { services: [] };
 }
 
 // Prueft einen Dienst und liefert immer die gleiche Form
@@ -376,7 +431,29 @@ function checkService(name, url) {
   if (!isValidHost(host)) {
     return Promise.resolve({ name, online: false, statusCode: null, responseMs: null, error: 'invalid' });
   }
-  return port != null ? checkTcp(name, host, port) : checkPing(name, host);
+  if (port != null) return checkTcp(name, host, port);
+  // Reiner Hostname/IP -> ICMP. Als Nicht-Root (USER node im Container) darf
+  // der Kernel den Raw-Socket verweigern, solange auf dem Host
+  // net.ipv4.ping_group_range nicht gesetzt ist. Statt den Dienst dann faelsch
+  // als „offline" zu melden, faellt die Pruefung auf einen TCP-Connect gegen
+  // gaengige Ports zurueck — das beantwortet die eigentliche Frage („laeuft der
+  // Host?") in fast allen Homelab-Faellen genauso gut.
+  return checkPing(name, host).then((r) =>
+    (r.error === 'ping_unavailable' ? checkTcpFallback(name, host) : r));
+}
+
+// Reihum ein paar uebliche Ports probieren; der erste Handshake gilt als
+// erreichbar. Bewusst kurz gehalten — das ist ein Fallback, kein Portscan.
+// Kurzes Timeout je Port, damit ein toter Host insgesamt nicht laenger braucht
+// als der Ping, den wir ersetzen (3 x 2 s statt 3 x 5 s).
+const PING_FALLBACK_PORTS = [80, 443, 22];
+const PING_FALLBACK_TIMEOUT = 2000;
+async function checkTcpFallback(name, host) {
+  for (const port of PING_FALLBACK_PORTS) {
+    const r = await checkTcp(name, host, port, PING_FALLBACK_TIMEOUT);
+    if (r.online) return r;
+  }
+  return { name, online: false, statusCode: null, responseMs: null, error: 'ping_unavailable' };
 }
 
 function checkHttp(name, url) {
@@ -447,7 +524,7 @@ function checkPing(name, host) {
 }
 
 // TCP-Connect-Reachability: online, sobald der Handshake steht.
-function checkTcp(name, host, port) {
+function checkTcp(name, host, port, timeoutMs = 5000) {
   return new Promise((resolve) => {
     const t0 = Date.now();
     let done = false;
@@ -458,7 +535,7 @@ function checkTcp(name, host, port) {
       try { socket.destroy(); } catch { /* ignore */ }
       resolve(result);
     };
-    socket.setTimeout(5000);
+    socket.setTimeout(timeoutMs);
     socket.on('connect', () => finish({ name, online: true,  statusCode: null, responseMs: Date.now() - t0 }));
     socket.on('timeout', () => finish({ name, online: false, statusCode: null, responseMs: null, error: 'timeout' }));
     socket.on('error',   () => finish({ name, online: false, statusCode: null, responseMs: null, error: 'unreachable' }));
@@ -470,6 +547,72 @@ function checkTcp(name, host, port) {
 app.use(compression({
   filter: (req, res) => (req.path === '/api/glances/stream' ? false : compression.filter(req, res)),
 }));
+/* ============================================================
+   Host-Allowlist (Schutz vor DNS-Rebinding)
+   ------------------------------------------------------------
+   Das Dashboard hat bewusst keine Authentifizierung — es soll im LAN stehen.
+   Klassisches CSRF scheitert schon daran, dass alle schreibenden Endpunkte
+   application/json erwarten (das erzwingt einen Preflight, den wir nicht
+   beantworten). DNS-Rebinding umgeht das aber vollstaendig: eine
+   Angreifer-Domain, die auf die LAN-IP des Dashboards aufloest, ist fuer den
+   Browser same-origin und darf damit auch POST /api/unraid/system/action
+   (Reboot/Shutdown) ausloesen.
+
+   Gegenmittel ist der Host-Header: der traegt bei so einem Angriff die Domain
+   des Angreifers, nicht die LAN-Adresse. Erlaubt sind daher nur localhost,
+   private IP-Bereiche und .local/.lan/.home/.internal — also genau das, worauf
+   ein LAN-Dashboard erreichbar ist. Wer hinter einem Reverse-Proxy mit eigenem
+   Hostnamen arbeitet, traegt ihn in TRUSTED_HOSTS ein (kommagetrennt);
+   TRUSTED_HOSTS=* schaltet die Pruefung ganz ab.
+   ============================================================ */
+const TRUSTED_HOSTS = String(process.env.TRUSTED_HOSTS || '')
+  .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+const HOST_CHECK_OFF = TRUSTED_HOSTS.includes('*');
+
+function isPrivateHost(host) {
+  if (host === 'localhost' || host === '::1' || host === '[::1]') return true;
+  if (/\.(local|lan|home|internal|localdomain)$/.test(host)) return true;
+  // IPv4: 10/8, 172.16/12, 192.168/16, 127/8, 169.254/16
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (m) {
+    const [a, b] = [+m[1], +m[2]];
+    if ([a, b, +m[3], +m[4]].some((n) => n > 255)) return false;
+    return a === 10 || a === 127
+        || (a === 172 && b >= 16 && b <= 31)
+        || (a === 192 && b === 168)
+        || (a === 169 && b === 254);
+  }
+  // IPv6 Unique-Local (fc00::/7) und Link-Local (fe80::/10)
+  const v6 = host.replace(/^\[|\]$/g, '');
+  if (/^(f[cd]|fe[89ab])/i.test(v6) && v6.includes(':')) return true;
+  return false;
+}
+
+function hostAllowed(hostHeader) {
+  if (HOST_CHECK_OFF) return true;
+  if (!hostHeader) return false;
+  // Port abtrennen (IPv6 in eckigen Klammern beruecksichtigen)
+  const host = String(hostHeader).toLowerCase().replace(/:\d+$/, '');
+  return TRUSTED_HOSTS.includes(host) || isPrivateHost(host);
+}
+
+let _hostWarned = new Set();
+app.use((req, res, next) => {
+  if (hostAllowed(req.headers.host)) return next();
+  const host = String(req.headers.host || '').slice(0, 100);
+  if (!_hostWarned.has(host)) {
+    _hostWarned.add(host);
+    if (_hostWarned.size > 50) _hostWarned = new Set([host]); // kein unbegrenztes Wachstum
+    console.warn(`Zugriff mit unbekanntem Host-Header abgelehnt: "${host}" `
+      + '— falls gewollt, Hostnamen in TRUSTED_HOSTS eintragen.');
+  }
+  res.status(403).json({
+    error: 'host_not_allowed',
+    message: `Host "${host}" ist nicht freigegeben. Bei Zugriff ueber einen Reverse-Proxy `
+           + 'den Hostnamen in der Umgebungsvariablen TRUSTED_HOSTS eintragen (kommagetrennt).',
+  });
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res, filePath) => {
     // Versionsstabile Vendor-Libs (gridstack, noVNC, sortable) lange & unveraenderlich
@@ -482,7 +625,10 @@ app.use(express.static(path.join(__dirname, 'public'), {
     }
   },
 }));
-app.use(express.json());
+// Das Default-Limit (100 kB) liegt unter dem, was sanitizeDashboard zulaesst
+// (bis 300 Kacheln x 4 kB config) — ein grosses Layout waere sonst mit einem
+// nackten 413 gescheitert, statt sauber validiert zu werden.
+app.use(express.json({ limit: '1mb' }));
 
 // Dienste-Konfiguration. Wird bei jedem Request frisch von der Platte gelesen
 // -> Aenderungen an services.yaml sind nach einem Reload sofort sichtbar.
@@ -633,12 +779,10 @@ function cleanDisks(fsList) {
 const cache = {
   glances:  { ts: 0, data: null },
   docker:   { ts: 0, data: null },
-  adguard:  { ts: 0, data: null },
   plexLib:  { ts: 0, data: null },
   plexSess: { ts: 0, data: null },
   plexRecent: { ts: 0, data: null },
   status:   { ts: 0, data: null },
-  weather:  { ts: 0, data: null },
   unifi:    { ts: 0, data: null },
   nextcloud:{ ts: 0, data: null },
   unraid:   { ts: 0, data: null },
@@ -650,16 +794,42 @@ const cache = {
   unraidUps:    { ts: 0, data: null },
   jdownloader:  { ts: 0, data: null },
 };
+
+// In-Flight-Dedupe je Cache-Slot: treffen zwei Cache-Misses gleichzeitig ein
+// (Push-Hub-Tick + REST-Fallback, oder ein zweiter Tab), teilen sie sich
+// denselben Upstream-Abruf, statt ihn zu verdoppeln. Vorher hatten das nur die
+// Unraid-Slots — jetzt nutzen es alle Integrationen.
+const _inflight = {}; // slot -> Promise|null
+function withInflight(slot, fn) {
+  let p = _inflight[slot];
+  if (!p) {
+    p = (async () => { try { return await fn(); } finally { _inflight[slot] = null; } })();
+    _inflight[slot] = p;
+  }
+  return p;
+}
+
+/* ============================================================
+   Modul-Registry
+   ------------------------------------------------------------
+   Jede Datei in server/modules/ beschreibt eine Integration
+   deklarativ; Cache-Slot, TTL, GET-Route, Push-Hub-Eintrag,
+   Secrets-Keys und Maskierung entstehen daraus automatisch
+   (siehe server/modules/README.md). Eine neue Integration kostet
+   damit eine Datei statt ~8 verteilter Aenderungen hier.
+   ============================================================ */
+const MODULES = registry.loadModules();
+const moduleRuntime = registry.createRuntime(MODULES, { getSecret, cache, withInflight });
+const MODULE_SECRETS = registry.secretsMeta(MODULES);
+console.log(`Modul-Registry: ${MODULES.length} geladen (${MODULES.map((m) => m.id).join(', ') || '–'})`);
 const GLANCES_TTL   = 500;    // ms – Glances-Metriken hoechstens 2x/s abrufen; muss unter dem
                               // kleinsten Client-Poll-Intervall (400 ms Slider-Minimum) liegen,
                               // sonst bekommen Clients periodisch identische Samples zurueck
 const DOCKER_TTL    = 8000;   // ms – Container-Liste aendert sich selten
-const ADGUARD_TTL   = 30000;  // ms – aggregierte Stats, aendern sich langsam
 const PLEX_LIB_TTL    = 300000; // ms – Bibliothekszahlen (5 min)
 const PLEX_SESS_TTL   = 4000;   // ms – aktive Sessions (Frontend pollt alle 5s)
 const PLEX_RECENT_TTL = 300000; // ms – zuletzt hinzugefügte Titel (5 min)
 const STATUS_TTL    = 30000;  // ms – Dienste-Verfügbarkeit (30 s)
-const WEATHER_TTL   = 600000; // ms – Wetterdaten (10 min)
 const UNIFI_TTL     = 10000;  // ms – UniFi-Netzwerkdaten (10 s)
 const NEXTCLOUD_TTL = 60000;  // ms – Nextcloud-Speicher/Nutzer (60 s)
 const JDOWNLOADER_TTL = 4000; // ms – Downloads bewegen sich schnell, kurz cachen
@@ -1627,7 +1797,10 @@ function mapContainer(c) {
 
 // Liefert (bzw. aktualisiert) den Docker-Status. Wird von der REST-Route und
 // vom Server-Push-Hub genutzt; der TTL-Cache dedupliziert beide Wege.
-async function refreshDocker() {
+// Dedupe ueber den Slot `docker`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshDocker = () => withInflight('docker', _refreshDocker);
+async function _refreshDocker() {
   const { url } = glancesCfg();
   if (!url) return { ok: false, error: 'not_configured' };
 
@@ -1674,84 +1847,6 @@ async function refreshDocker() {
 app.get('/api/docker', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json(await refreshDocker());
-});
-
-/* ============================================================
-   AdGuard Home Integration
-   Basic-Auth-Proxy gegen /control/status + /control/stats.
-   Zugangsdaten kommen ausschliesslich aus Env-Vars.
-   ============================================================ */
-
-function adguardCfg() {
-  return {
-    url:  (getSecret('ADGUARD_URL')  || '').replace(/\/+$/, ''),
-    user: getSecret('ADGUARD_USER')  || '',
-    pass: getSecret('ADGUARD_PASS')  || '',
-  };
-}
-
-function adguardAuth(user, pass) {
-  return 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
-}
-
-async function agFetch(base, path, auth) {
-  const res = await fetch(`${base}${path}`, {
-    headers: { Authorization: auth },
-    signal: AbortSignal.timeout(4000),
-  });
-  if (!res.ok) throw new Error(`${path} HTTP ${res.status}`);
-  return res.json();
-}
-
-function topBlockedList(list) {
-  if (!Array.isArray(list)) return [];
-  return list
-    .filter((item) => item && typeof item === 'object')
-    .slice(0, 10)
-    .map((item) => ({ domain: Object.keys(item)[0], count: Object.values(item)[0] }))
-    .filter((item) => item.domain);
-}
-
-async function refreshAdguard() {
-  const { url, user, pass } = adguardCfg();
-  if (!url) return { ok: false, error: 'not_configured' };
-
-  if (cache.adguard.data && Date.now() - cache.adguard.ts < ADGUARD_TTL) {
-    return cache.adguard.data;
-  }
-
-  const auth = adguardAuth(user, pass);
-  try {
-    const [status, stats] = await Promise.all([
-      agFetch(url, '/control/status', auth),
-      agFetch(url, '/control/stats',  auth),
-    ]);
-
-    const total   = stats.num_dns_queries       || 0;
-    const blocked = stats.num_blocked_filtering || 0;
-    const result  = {
-      ok:         true,
-      version:    status.version || null,
-      running:    !!status.running,
-      protection: !!status.protection_enabled,
-      total,
-      blocked,
-      blockedPct: total > 0 ? Math.round(blocked / total * 100) : 0,
-      topBlocked: topBlockedList(stats.top_blocked_domains),
-      avgMs:      typeof stats.avg_processing_time === 'number'
-                    ? +(stats.avg_processing_time * 1000).toFixed(1) : null,
-    };
-    cache.adguard = { ts: Date.now(), data: result };
-    return result;
-  } catch (err) {
-    console.error('AdGuard-Abruf fehlgeschlagen:', err.message);
-    return { ok: false, error: 'fetch_failed', message: err.message };
-  }
-}
-
-app.get('/api/adguard', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  res.json(await refreshAdguard());
 });
 
 /* ============================================================
@@ -1973,7 +2068,10 @@ async function jdownloaderFetch(cfg) {
   }
 }
 
-async function refreshJdownloader() {
+// Dedupe ueber den Slot `jdownloader`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshJdownloader = () => withInflight('jdownloader', _refreshJdownloader);
+async function _refreshJdownloader() {
   const cfg = jdownloaderCfg();
   if (!jdownloaderReady(cfg)) return { ok: false, error: 'not_configured' };
 
@@ -2118,7 +2216,10 @@ function normRecent(metadata) {
   }));
 }
 
-async function refreshPlex() {
+// Dedupe ueber den Slot `plexSess`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshPlex = () => withInflight('plexSess', _refreshPlex);
+async function _refreshPlex() {
   const { url, token } = plexCfg();
   if (!url || !token) return { ok: false, error: 'not_configured' };
 
@@ -2248,7 +2349,7 @@ app.post('/api/status/config', (req, res) => {
     .map((s) => ({ name: s.name.trim().slice(0, 80), url: s.url.trim().slice(0, 500) }))
     .filter((s) => s.name && s.url);
   try {
-    fs.writeFileSync(STATUS_CFG_PATH, JSON.stringify({ services: clean }, null, 2), 'utf8');
+    writeJsonAtomic(STATUS_CFG_PATH, { services: clean });
     cache.status = { ts: 0, data: null }; // Cache invalidieren
     res.json({ ok: true, count: clean.length });
   } catch (err) {
@@ -2257,7 +2358,10 @@ app.post('/api/status/config', (req, res) => {
   }
 });
 
-async function refreshStatus() {
+// Dedupe ueber den Slot `status`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshStatus = () => withInflight('status', _refreshStatus);
+async function _refreshStatus() {
   if (cache.status.data && Date.now() - cache.status.ts < STATUS_TTL) {
     return cache.status.data;
   }
@@ -2307,8 +2411,7 @@ app.post('/api/disks/config', (req, res) => {
     if (v) labels[String(mnt).slice(0, 200)] = v;
   }
   try {
-    fs.mkdirSync(path.dirname(DISKS_CFG_PATH), { recursive: true });
-    fs.writeFileSync(DISKS_CFG_PATH, JSON.stringify({ labels }, null, 2), 'utf8');
+    writeJsonAtomic(DISKS_CFG_PATH, { labels });
     cache.glances.ts = 0; // nächster Poll liefert Disks mit aktualisierten Labels
     res.json({ ok: true, count: Object.keys(labels).length });
   } catch (err) {
@@ -2334,8 +2437,7 @@ app.post('/api/dashboard/layout', (req, res) => {
       hidden: !!e.hidden,
     }));
   try {
-    fs.mkdirSync(path.dirname(LAYOUT_CFG_PATH), { recursive: true });
-    fs.writeFileSync(LAYOUT_CFG_PATH, JSON.stringify(clean, null, 2), 'utf8');
+    writeJsonAtomic(LAYOUT_CFG_PATH, clean);
     res.json({ ok: true, count: clean.length });
   } catch (err) {
     console.error('Dashboard-Layout konnte nicht gespeichert werden:', err.message);
@@ -2356,8 +2458,7 @@ app.post('/api/dashboard', (req, res) => {
   const clean = sanitizeDashboard(req.body);
   if (!clean) return res.status(400).json({ ok: false, error: 'expected object' });
   try {
-    fs.mkdirSync(path.dirname(DASHBOARD_CFG_PATH), { recursive: true });
-    fs.writeFileSync(DASHBOARD_CFG_PATH, JSON.stringify(clean, null, 2), 'utf8');
+    writeJsonAtomic(DASHBOARD_CFG_PATH, clean);
     res.json({ ok: true, pages: clean.pages.length, tiles: clean.tiles.length });
   } catch (err) {
     console.error('Dashboard konnte nicht gespeichert werden:', err.message);
@@ -2393,36 +2494,45 @@ app.post('/api/quicklinks', (req, res) => {
     return out;
   }).filter(l => l.name && l.url);
   try {
-    fs.mkdirSync(path.dirname(QUICKLINKS_PATH), { recursive: true });
-    fs.writeFileSync(QUICKLINKS_PATH, JSON.stringify(clean, null, 2));
+    writeJsonAtomic(QUICKLINKS_PATH, clean);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'ADGUARD_URL', 'ADGUARD_USER', 'ADGUARD_PASS', 'PLEX_URL', 'PLEX_TOKEN', 'WEATHER_CITY', 'WEATHER_UNIT', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'UNIFI_LOCAL_URL', 'UNIFI_LOCAL_USER', 'UNIFI_LOCAL_PASS', 'UNIFI_LOCAL_SITE', 'UNIFI_GW_SSH_HOST', 'UNIFI_GW_SSH_PORT', 'UNIFI_GW_SSH_USER', 'UNIFI_GW_SSH_PASSWORD', 'UNIFI_GW_SSH_KEY', 'UNIFI_GW_WAN_IFACE', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH', 'UNRAID_URL', 'UNRAID_API_KEY', 'UNRAID_SSH_HOST', 'UNRAID_SSH_PORT', 'UNRAID_SSH_USER', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'UNRAID_DANGER_ACTIONS', 'JDOWNLOADER_EMAIL', 'JDOWNLOADER_PASS', 'JDOWNLOADER_DEVICE', 'JDOWNLOADER_APPKEY'];
-const SECRETS_MASKED = new Set(['ADGUARD_PASS', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'UNIFI_LOCAL_PASS', 'UNIFI_GW_SSH_PASSWORD', 'UNIFI_GW_SSH_KEY', 'NEXTCLOUD_PASS', 'UNRAID_API_KEY', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'JDOWNLOADER_PASS']);
+const SECRETS_KEYS = ['GLANCES_URL', 'GLANCES_LABEL', 'PLEX_URL', 'PLEX_TOKEN', 'UNIFI_API_KEY', 'UNIFI_HOST_ID', 'UNIFI_CAMERA_ID', 'UNIFI_LOCAL_URL', 'UNIFI_LOCAL_USER', 'UNIFI_LOCAL_PASS', 'UNIFI_LOCAL_SITE', 'UNIFI_GW_SSH_HOST', 'UNIFI_GW_SSH_PORT', 'UNIFI_GW_SSH_USER', 'UNIFI_GW_SSH_PASSWORD', 'UNIFI_GW_SSH_KEY', 'UNIFI_GW_WAN_IFACE', 'NEXTCLOUD_URL', 'NEXTCLOUD_USER', 'NEXTCLOUD_PASS', 'NEXTCLOUD_SHARE_PATH', 'UNRAID_URL', 'UNRAID_API_KEY', 'UNRAID_SSH_HOST', 'UNRAID_SSH_PORT', 'UNRAID_SSH_USER', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'UNRAID_DANGER_ACTIONS', 'JDOWNLOADER_EMAIL', 'JDOWNLOADER_PASS', 'JDOWNLOADER_DEVICE', 'JDOWNLOADER_APPKEY'];
+const SECRETS_MASKED = new Set(['PLEX_TOKEN', 'UNIFI_API_KEY', 'UNIFI_LOCAL_PASS', 'UNIFI_GW_SSH_PASSWORD', 'UNIFI_GW_SSH_KEY', 'NEXTCLOUD_PASS', 'UNRAID_API_KEY', 'UNRAID_SSH_PASSWORD', 'UNRAID_SSH_KEY', 'JDOWNLOADER_PASS']);
+
+// Kern-Keys (Glances, UniFi, Unraid, Plex, Nextcloud, JDownloader) plus alles,
+// was die geladenen Module deklarieren — so muss ein neues Modul seine Secrets
+// nicht mehr hier eintragen.
+const ALL_SECRET_KEYS = SECRETS_KEYS.concat(MODULE_SECRETS.keys.filter((k) => !SECRETS_KEYS.includes(k)));
+const ALL_SECRETS_MASKED = new Set([...SECRETS_MASKED, ...MODULE_SECRETS.masked]);
 
 app.get('/api/secrets', (req, res) => {
   const out = {};
-  for (const k of SECRETS_KEYS) {
+  const env = [];
+  for (const k of ALL_SECRET_KEYS) {
     const v = getSecret(k);
-    out[k] = (v && SECRETS_MASKED.has(k)) ? '***' : v;
+    out[k] = (v && ALL_SECRETS_MASKED.has(k)) ? '***' : v;
+    // Per Env gesetzte Werte kann die UI nicht ueberschreiben (Env hat Vorrang)
+    // — das Frontend zeigt solche Felder deshalb read-only an.
+    if (isEnvSecret(k)) env.push(k);
   }
+  out._env = env;
   res.json(out);
 });
 
 app.post('/api/secrets', (req, res) => {
   for (const [k, v] of Object.entries(req.body || {})) {
-    if (!SECRETS_KEYS.includes(k)) continue;
+    if (!ALL_SECRET_KEYS.includes(k)) continue;
     if (v === '***') continue;
     if (v === '') delete _secrets[k];
     else _secrets[k] = String(v);
   }
   try {
-    fs.mkdirSync(path.dirname(SECRETS_PATH), { recursive: true });
-    fs.writeFileSync(SECRETS_PATH, JSON.stringify(_secrets, null, 2));
+    writeJsonAtomic(SECRETS_PATH, _secrets);
     // Caches invalidieren damit naechster Poll sofort mit neuen Creds laeuft
     for (const k of Object.keys(cache)) cache[k] = { ts: 0, data: null };
     unifiLocalSession = null; // ggf. geaenderte lokale UniFi-Creds erzwingen Re-Login
@@ -2438,72 +2548,12 @@ app.post('/api/secrets', (req, res) => {
 });
 
 /* ============================================================
-   Wetter-Integration (Open-Meteo – kein API-Key noetig)
-   Geocoding  → open-meteo Geocoding API  → lat/lon
-   Wetterdaten → open-meteo Forecast API  → Temperatur + WMO-Code
-   Cache: 10 Minuten (Wetter aendert sich langsam)
-   ============================================================ */
-async function refreshWeather() {
-  const city = getSecret('WEATHER_CITY');
-  const unit = getSecret('WEATHER_UNIT') || 'C';
-
-  if (!city) return { ok: false, configured: false };
-
-  if (cache.weather.data && Date.now() - cache.weather.ts < WEATHER_TTL) {
-    return cache.weather.data;
-  }
-
-  try {
-    // 1) Geocoding: Stadtname → Koordinaten
-    const geoRes = await fetch(
-      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=de&format=json`,
-      { signal: AbortSignal.timeout(5000) }
-    );
-    if (!geoRes.ok) throw new Error(`Geocoding HTTP ${geoRes.status}`);
-    const geo = await geoRes.json();
-    if (!geo.results || !geo.results.length) {
-      return { ok: false, configured: true, error: 'city_not_found', city };
-    }
-    const { latitude, longitude, name, country } = geo.results[0];
-
-    // 2) Wetterdaten: Koordinaten → aktuelles Wetter
-    const tempUnit = unit === 'F' ? 'fahrenheit' : 'celsius';
-    const wRes = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,is_day&temperature_unit=${tempUnit}&forecast_days=1`,
-      { signal: AbortSignal.timeout(5000) }
-    );
-    if (!wRes.ok) throw new Error(`Forecast HTTP ${wRes.status}`);
-    const w = await wRes.json();
-
-    const cur = w.current;
-    const data = {
-      ok: true,
-      configured: true,
-      temp: Math.round(cur.temperature_2m),
-      unit,
-      wmoCode: cur.weather_code,
-      isDay: cur.is_day === 1,
-      city: name,
-      country,
-    };
-    cache.weather = { ts: Date.now(), data };
-    return data;
-  } catch (err) {
-    console.error('Wetter-Fetch fehlgeschlagen:', err.message);
-    if (cache.weather.data) return { ...cache.weather.data, _stale: true };
-    return { ok: false, configured: true, error: 'fetch_failed' };
-  }
-}
-
-app.get('/api/weather', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  res.json(await refreshWeather());
-});
-
-/* ============================================================
    UniFi Network Application + Protect  (Cloud API)
    ============================================================ */
-async function refreshUnifi() {
+// Dedupe ueber den Slot `unifi`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshUnifi = () => withInflight('unifi', _refreshUnifi);
+async function _refreshUnifi() {
   const cfg = unifiCfg();
   if (!cfg.apiKey) return { ok: false, error: 'not_configured' };
 
@@ -2694,7 +2744,10 @@ async function ncFetch(cfg, apiPath, timeoutMs = 6000) {
   return ocs.data;
 }
 
-async function refreshNextcloud() {
+// Dedupe ueber den Slot `nextcloud`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshNextcloud = () => withInflight('nextcloud', _refreshNextcloud);
+async function _refreshNextcloud() {
   const cfg = nextcloudCfg();
   if (!cfg.url || !cfg.user || !cfg.pass) return { ok: false, error: 'not_configured' };
 
@@ -2922,7 +2975,10 @@ function enrichVmsResult(result) {
   return { ...result, vms };
 }
 
-async function refreshVms() {
+// Dedupe ueber den Slot `unraid`: paralleler Push-Hub-Tick und
+// REST-Fallback teilen sich denselben Abruf.
+const refreshVms = () => withInflight('unraid', _refreshVms);
+async function _refreshVms() {
   const cfg = unraidCfg();
   if (!cfg) return { ok: false, error: 'not_configured' };
 
@@ -3073,33 +3129,19 @@ function unraidDangerEnabled() { return getSecret('UNRAID_DANGER_ACTIONS') === '
 // BigInt-/String-Zahlenfelder der API robust in Number wandeln.
 function unraidNum(v) { const n = parseFloat(v); return Number.isFinite(n) ? n : null; }
 
-// Laufende Fetches je Slot, damit parallele Cache-Misses sich einen Abruf teilen.
-const _unraidInflight = {}; // slot -> Promise|null
-
 // Gemeinsames GET-Boilerplate der Unraid-Endpoints:
-// cfg-Check -> Cache-Hit -> Fetch -> bei Fehler letzte Daten als _stale.
-// Liefert (bzw. aktualisiert) einen Unraid-Slot als Payload — genutzt von der
-// REST-Route (serveUnraid) und vom Server-Push-Hub. cfg-Check -> Cache-Hit ->
-// Fetch (mit In-Flight-Dedupe) -> bei Fehler letzte Daten als _stale.
+// cfg-Check -> Cache-Hit -> Fetch (mit In-Flight-Dedupe) -> bei Fehler letzte
+// Daten als _stale. Genutzt von der REST-Route (serveUnraid) und vom Push-Hub.
 async function getUnraid(slot, ttl, fetchFn) {
   const cfg = unraidCfg();
   if (!cfg) return { ok: false, error: 'not_configured' };
   if (cache[slot].data && Date.now() - cache[slot].ts < ttl) return cache[slot].data;
   try {
-    // In-Flight-Dedupe: zwei parallele Cache-Misses (zweiter Tab / SSE+REST)
-    // teilen sich denselben fetchFn-Aufruf, statt die Abfrage-Lawine zu doppeln.
-    let p = _unraidInflight[slot];
-    if (!p) {
-      p = (async () => {
-        try {
-          const result = await fetchFn(cfg);
-          cache[slot] = { ts: Date.now(), data: result };
-          return result;
-        } finally { _unraidInflight[slot] = null; }
-      })();
-      _unraidInflight[slot] = p;
-    }
-    return await p;
+    return await withInflight(slot, async () => {
+      const result = await fetchFn(cfg);
+      cache[slot] = { ts: Date.now(), data: result };
+      return result;
+    });
   } catch (err) {
     console.error(`Unraid-Abruf (${slot}) fehlgeschlagen:`, err.message);
     if (cache[slot].data) return { ...cache[slot].data, _stale: true };
@@ -4052,6 +4094,77 @@ async function handleVncWs(ws, id) {
   pending.length = 0;
 }
 
+/* ---------- Dienst-Icons: einmal holen, dann lokal ausliefern ----------
+   Der Icon-Picker zeigt ~300 Dienst-Logos. Vorher lud jeder Browser sie direkt
+   von cdn.jsdelivr.net — das widerspricht „no telemetry, nothing phoning home"
+   (das CDN sieht jeden Aufruf) und laesst den Picker in Homelabs ohne
+   Internetzugang komplett leer. Jetzt holt der Server ein Icon genau einmal,
+   legt es im Config-Volume ab und liefert es danach offline aus. */
+const ICON_UPSTREAM = 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons@main/png/';
+const ICON_CACHE_DIR = path.join(__dirname, 'config', 'icon-cache');
+
+app.get('/api/icon/:name', async (req, res) => {
+  // Streng validieren: der Name landet in einem Dateipfad und einer URL.
+  // Nur [a-z0-9._-] und keine Punkt-Folgen -> kein Path-Traversal moeglich.
+  const name = String(req.params.name || '');
+  if (!/^[a-zA-Z0-9._-]{1,64}\.png$/.test(name) || name.includes('..')) {
+    return res.status(400).json({ ok: false, error: 'bad_name' });
+  }
+  const file = path.join(ICON_CACHE_DIR, name);
+  // Icons sind unveraenderlich (fester CDN-Tag) -> lange cachen.
+  res.set('Cache-Control', 'public, max-age=2592000');
+
+  if (fs.existsSync(file)) return res.type('png').send(fs.readFileSync(file));
+
+  try {
+    const r = await fetch(ICON_UPSTREAM + encodeURIComponent(name), { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return res.status(404).json({ ok: false, error: 'not_found' });
+    const buf = Buffer.from(await r.arrayBuffer());
+    // PNG-Magic pruefen, damit keine Fehlerseite als Icon im Cache landet.
+    if (buf.length < 8 || buf.readUInt32BE(0) !== 0x89504e47) {
+      return res.status(502).json({ ok: false, error: 'not_png' });
+    }
+    try {
+      fs.mkdirSync(ICON_CACHE_DIR, { recursive: true });
+      const tmp = `${file}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, buf);
+      fs.renameSync(tmp, file);
+    } catch (e) { console.warn('Icon-Cache-Schreiben fehlgeschlagen:', e.message); }
+    res.type('png').send(buf);
+  } catch (err) {
+    // Ohne Internetzugang und ohne Cache-Treffer: 404 statt Haenger — der
+    // Picker blendet fehlgeschlagene Icons ohnehin aus (img.onerror).
+    res.status(404).json({ ok: false, error: 'unavailable', message: err.message });
+  }
+});
+
+/* ---------- Frontend-Module gebuendelt ausliefern ----------
+   Gegenstueck zum Auto-Discovery im Backend: alle Dateien aus public/modules/
+   werden in Dateinamen-Reihenfolge zu EINEM Script zusammengefasst. Damit
+   genuegt fuers Hinzufuegen einer Kachel weiterhin eine neue Datei — ohne
+   Build-Step, ohne Eintrag in index.html und ohne asynchrones Nachladen (das
+   wuerde nach app.js landen und die abgeleiteten Tabellen verpassen). */
+const FRONTEND_MODULE_DIR = path.join(__dirname, 'public', 'modules');
+app.get('/modules.js', (req, res) => {
+  res.type('application/javascript; charset=utf-8');
+  let files = [];
+  try { files = fs.readdirSync(FRONTEND_MODULE_DIR).filter((f) => f.endsWith('.js') && !f.startsWith('_')).sort(); }
+  catch { /* Verzeichnis fehlt -> leeres Bundle */ }
+  // Ein kaputtes Modul darf die uebrigen nicht mitreissen: jede Datei laeuft
+  // in einem eigenen try/catch, der Fehler landet in der Browser-Konsole.
+  const parts = files.map((f) => {
+    const code = fs.readFileSync(path.join(FRONTEND_MODULE_DIR, f), 'utf8');
+    return `/* ---- modules/${f} ---- */\ntry {\n${code}\n} catch (e) { console.error('[Dash] Modul ${f} fehlgeschlagen:', e); }`;
+  });
+  res.set('Cache-Control', 'no-cache');
+  res.send(parts.join('\n\n') || '/* keine Frontend-Module */\n');
+});
+
+// GET /api/<id> (+ optionale Aktions-Routen) fuer jedes registrierte Modul.
+// Bewusst nach den Kern-Routen, damit ein Modul eine bestehende Route nicht
+// versehentlich verdeckt — Express nimmt den zuerst registrierten Handler.
+registry.registerRoutes(app, MODULES, moduleRuntime, { getSecret, cache });
+
 // Healthcheck fuer Docker / Monitoring
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
@@ -4071,11 +4184,9 @@ app.get('/healthz', (req, res) => res.json({ ok: true }));
    ============================================================ */
 const PUSH_SOURCES = [
   { event: 'docker',       interval: DOCKER_TTL,        get: refreshDocker },
-  { event: 'adguard',      interval: ADGUARD_TTL,       get: refreshAdguard },
   { event: 'jdownloader',  interval: JDOWNLOADER_TTL,   get: refreshJdownloader },
   { event: 'plex',         interval: PLEX_SESS_TTL,     get: refreshPlex },
   { event: 'status',       interval: STATUS_TTL,        get: refreshStatus },
-  { event: 'weather',      interval: WEATHER_TTL,       get: refreshWeather },
   { event: 'unifi',        interval: UNIFI_TTL,         get: refreshUnifi },
   { event: 'nextcloud',    interval: NEXTCLOUD_TTL,     get: refreshNextcloud },
   { event: 'vms',          interval: VM_TTL,            get: refreshVms },
@@ -4085,7 +4196,8 @@ const PUSH_SOURCES = [
   { event: 'unraidNotif',  interval: UNRAID_NOTIF_TTL,  get: () => getUnraid('unraidNotif',  UNRAID_NOTIF_TTL,  fetchUnraidNotifications) },
   { event: 'unraidSystem', interval: UNRAID_SYSTEM_TTL, get: () => getUnraid('unraidSystem', UNRAID_SYSTEM_TTL, fetchUnraidSystem) },
   { event: 'unraidUps',    interval: UNRAID_UPS_TTL,    get: () => getUnraid('unraidUps',    UNRAID_UPS_TTL,    fetchUnraidUps) },
-];
+  // Alles, was als Modul in server/modules/ liegt, haengt sich hier selbst ein.
+].concat(registry.pushSources(MODULES, moduleRuntime));
 
 let _pushHubStarted = false;
 function startPushHub() {

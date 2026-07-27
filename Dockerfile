@@ -20,6 +20,19 @@ COPY config/services.yaml ./defaults/services.yaml
 COPY docker-entrypoint.sh ./
 RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
 
+# Nicht als root laufen: der Prozess haelt SSH-Keys, API-Tokens und
+# VNC-Passwoerter im Speicher und liest/schreibt das gemountete Config-Volume.
+# Das node-Image bringt den Benutzer `node` (uid 1000) bereits mit.
+#
+# Trade-off ICMP: unprivilegiertes ping braucht auf dem HOST
+#   sysctl -w net.ipv4.ping_group_range="0 2147483647"
+# Fehlt das, meldet die Service-Status-Kachel fuer reine Hostnamen/IPs
+# „ping_unavailable" und faellt automatisch auf einen TCP-Reachability-Check
+# zurueck (siehe checkService in server.js) — HTTP- und host:port-Ziele sind
+# davon ohnehin nicht betroffen.
+RUN mkdir -p /app/config && chown -R node:node /app
+USER node
+
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

@@ -8,9 +8,13 @@ npm-debug.log*
 .env.example
 config/secrets.json
 config/dashboard-layout.json
+config/dashboard.json
 config/disks.json
 config/quicklinks.json
 config/status.json
+config/vms.json
+config/icon-cache/
+config/*.tmp
 Dockerfile
 docker-compose.yml
 .github

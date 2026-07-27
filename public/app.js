@@ -1,7 +1,18 @@
 'use strict';
 
 /* ---------- Icon database ---------- */
-const ICON_CDN = 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons@main/png/';
+// Dienst-Icons laufen ueber den eigenen Server (/api/icon/<name>.png), der sie
+// einmal von jsDelivr holt und danach aus dem Config-Volume ausliefert. Vorher
+// lud jeder Browser sie direkt vom CDN — das widerspricht „nothing phoning
+// home" und liess den Icon-Picker in Homelabs ohne Internetzugang leer.
+const ICON_CDN = '/api/icon/';
+// Vor dieser Aenderung gespeicherte Quicklinks tragen die absolute CDN-URL.
+// Beim Anzeigen auf den Proxy umbiegen, damit auch Bestandskonfigurationen
+// offline funktionieren — die gespeicherten Werte bleiben unangetastet.
+const ICON_CDN_LEGACY = /^https?:\/\/cdn\.jsdelivr\.net\/gh\/walkxcode\/dashboard-icons@[^/]+\/png\//;
+function iconUrl(url) {
+  return typeof url === 'string' ? url.replace(ICON_CDN_LEGACY, ICON_CDN) : url;
+}
 const ICON_DB = [
   // Media & Streaming
   { id:'plex',              name:'Plex',              cat:'Media' },
@@ -538,6 +549,14 @@ function setHtmlIfChanged(el, html) {
   el._lastHtml = html;
   el.innerHTML = html;
 }
+// HTML-Escaping fuer die wenigen Stellen, an denen Fremddaten (Geraete-/Disk-/
+// Dateinamen aus Upstream-APIs bzw. der lokalen Dateiauswahl) in ein
+// Template-Literal fuer innerHTML fliessen. Ueberall sonst arbeiten die
+// Row-Builder mit statischem innerHTML + textContent.
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 function hexA(hex, a) {
   const m = String(hex).replace('#', '');
   const n = m.length === 3 ? m.split('').map((c) => c + c).join('') : m;
@@ -874,7 +893,7 @@ function updateDiskRow(wrap, d, prev) {
   if (!prev || prev.name !== name || prev.label !== d.label || prev._accent !== accent)
     wrap._icon.innerHTML = diskIconSvg(d, accent);
   if (!prev || prev.name !== name || prev.label !== d.label || prev.fsType !== d.fsType)
-    wrap._name.innerHTML = `${name}<span style="color:var(--text-3)"> · ${d.fsType}</span>`;
+    wrap._name.innerHTML = `${esc(name)}<span style="color:var(--text-3)"> · ${esc(d.fsType)}</span>`;
   if (!prev || prev.usedBytes !== d.usedBytes || prev.sizeBytes !== d.sizeBytes || prev._accent !== accent) {
     wrap._size.style.color = accent || 'var(--text-3)';
     wrap._size.textContent = `${fmtSize(d.usedBytes)} / ${fmtSize(d.sizeBytes)}`;
@@ -1030,23 +1049,6 @@ let _esFails = 0;
 let _pushMode = false;
 // Routing der Server-Push-Events (Event-Namen = PUSH_SOURCES in server.js) auf die
 // vorhandenen Kachel-Handler. Dieselben Handler nutzt auch der REST-Fallback.
-const PUSH_HANDLERS = {
-  docker:       handleDocker,
-  vms:          handleVms,
-  adguard:      handleAdGuard,
-  jdownloader:  handleJDownloader,
-  plex:         handlePlex,
-  status:       renderServiceStatus,
-  weather:      renderWeather,
-  unifi:        handleUnifi,
-  nextcloud:    handleNextcloud,
-  unraidDocker: (d) => handleUnraid(d, 'udkBadge', renderUnraidDocker),
-  unraidArray:  (d) => handleUnraid(d, 'uarBadge', (x) => { renderUnraidArray(x); renderUnraidDisks(x); }),
-  unraidShares: (d) => handleUnraid(d, 'ushBadge', renderUnraidShares),
-  unraidNotif:  (d) => handleUnraid(d, 'unoBadge', renderUnraidNotifications),
-  unraidSystem: (d) => handleUnraid(d, 'usyBadge', renderUnraidSystem),
-  unraidUps:    (d) => handleUnraid(d, 'uupBadge', renderUnraidUps),
-};
 function openMetricsStream() {
   closeMetricsStream();
   clearInterval(dataTimer); dataTimer = null;
@@ -1080,6 +1082,8 @@ function openMetricsStream() {
     es.addEventListener(ev, (e) => {
       let d; try { d = JSON.parse(e.data); } catch (_) { return; }
       _esConnected = true; _esFails = 0;
+      // Wie die poll*-Funktionen: bei abgeschalteten Live-Updates nicht rendern.
+      if (!state.liveOn) return;
       try { PUSH_HANDLERS[ev](d); } catch (err) { console.warn('Push-Handler', ev, err && err.message); }
     });
   }
@@ -1997,7 +2001,7 @@ function unraidSystemAction(action, btn) {
   unraidAction('/api/unraid/system/action', { action }, btn, null, pollUnraidSystem);
 }
 
-function usyEsc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+const usyEsc = esc; // Alias: die Kachel nutzte frueher einen eigenen Escaper
 function usyGiB(bytes) { return (bytes / 1073741824).toLocaleString('de-DE', { maximumFractionDigits: 1 }) + ' GiB'; }
 function usySetWidth(id, pct) { const el = $(id); if (el) el.style.width = Math.max(0, Math.min(100, pct)) + '%'; }
 function usyShowChip(id, show) { const el = $(id); if (el) el.style.display = show ? '' : 'none'; }
@@ -3340,7 +3344,7 @@ function updateUnifiDeviceChip(chip, dev, prev) {
     : dev.cpu != null ? ` · ${dev.cpu.toFixed(0)}%` : '';
   if (!prev || prev.online !== dev.online) chip._dot.style.color = dot;
   if (!prev || prev.type !== dev.type || prev.name !== dev.name || prev.clients !== dev.clients || prev.cpu !== dev.cpu) {
-    chip._label.innerHTML = `${label}:&nbsp;${dev.name}${extra}`;
+    chip._label.innerHTML = `${esc(label)}:&nbsp;${esc(dev.name)}${esc(extra)}`;
   }
 }
 function renderUnifi(d) {
@@ -3589,17 +3593,17 @@ function ncUploadFiles(files) {
   Array.from(files).forEach((file) => {
     const row = document.createElement('div');
     row.style.cssText = "display:flex;align-items:center;gap:8px;font:500 11px 'JetBrains Mono',monospace;color:var(--text-3)";
-    row.innerHTML = `<span style="color:#5b9dff">⏳</span><span style="${ell}">${file.name}</span><span style="flex-shrink:0">uploading…</span>`;
+    row.innerHTML = `<span style="color:#5b9dff">⏳</span><span style="${ell}">${esc(file.name)}</span><span style="flex-shrink:0">uploading…</span>`;
     box.appendChild(row);
     fetch(`/api/nextcloud/upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file })
       .then((r) => r.json())
       .then((res) => {
         if (res && res.ok) {
-          row.innerHTML = `<span style="color:#3ddc97">✓</span><span style="${ell};color:var(--text-15)">${file.name}</span><span style="color:#3ddc97;flex-shrink:0">uploaded</span>`;
+          row.innerHTML = `<span style="color:#3ddc97">✓</span><span style="${ell};color:var(--text-15)">${esc(file.name)}</span><span style="color:#3ddc97;flex-shrink:0">uploaded</span>`;
           pollNextcloud();
         } else {
           const e = res && res.error ? res.error : 'Error';
-          row.innerHTML = `<span style="color:#f43f5e">✗</span><span style="${ell}">${file.name}</span><span style="color:#f43f5e;flex-shrink:0">${e}</span>`;
+          row.innerHTML = `<span style="color:#f43f5e">✗</span><span style="${ell}">${esc(file.name)}</span><span style="color:#f43f5e;flex-shrink:0">${esc(e)}</span>`;
         }
       })
       .catch(() => {
@@ -3650,6 +3654,10 @@ const GLANCES_WIDGETS = ['system-load', 'network-throughput', 'disk-storage'];
 // Kamera-Snapshot als Parameter-Endpoint) laufen weiter. Ohne EventSource-Support
 // faellt alles transparent auf das klassische Polling zurueck.
 function startLive() {
+  // „Live-Updates aus" muss auch hier greifen: startLive() wird u.a. vom
+  // visibilitychange-Handler beim Zurueckkehren auf den Tab aufgerufen und
+  // wuerde den Stream sonst gegen den Willen des Users wieder oeffnen.
+  if (!state.liveOn) { pauseLive(); return; }
   _pushMode = (typeof window !== 'undefined' && !!window.EventSource);
   if (_pushMode) {
     openMetricsStream();   // net/wan/glances + alle Kachel-Events + Snapshot
@@ -3764,10 +3772,10 @@ function renderQuickLinks(items) {
     const badge = document.createElement('div');
     badge.style.cssText =
       `width:34px;height:34px;border-radius:9px;background:${hexA(color, 0.16)};color:${color};display:flex;align-items:center;justify-content:center;font:700 15px 'Space Grotesk',sans-serif;flex-shrink:0`;
-    const isImg = typeof s.icon === 'string' && (/^https?:\/\//.test(s.icon) || /\.(png|svg|jpe?g|webp|gif)$/i.test(s.icon));
+    const isImg = typeof s.icon === 'string' && (/^\/?api\/icon\//.test(s.icon) || /^https?:\/\//.test(s.icon) || /\.(png|svg|jpe?g|webp|gif)$/i.test(s.icon));
     if (isImg) {
       const img = document.createElement('img');
-      img.src = s.icon; img.alt = ''; img.style.cssText = 'width:100%;height:100%;object-fit:contain;border-radius:9px';
+      img.src = iconUrl(s.icon); img.alt = ''; img.style.cssText = 'width:100%;height:100%;object-fit:contain;border-radius:9px';
       badge.appendChild(img);
     } else {
       badge.textContent = s.icon || (s.name ? s.name[0].toUpperCase() : '?');
@@ -3938,56 +3946,46 @@ async function saveQlItems() {
    ausgeliefert und beim Aufbau aus #tilePool in die GridStack-Items der
    aktiven Seite verschoben — kein renderX() muss angefasst werden.
    ============================================================================ */
-const DASHBOARD_WIDGETS = [
-  { id: 'system-load',        section: 'system',          label: 'System Load',           defaultSize: { w: 5,  h: 6 }, minSize: { w: 3, h: 4 } },
-  { id: 'network-throughput', section: 'system',          label: 'Network Throughput',    defaultSize: { w: 7,  h: 4 }, minSize: { w: 4, h: 3 } },
-  { id: 'disk-storage',       section: 'system',          label: 'Storage · Unraid Array', defaultSize: { w: 7, h: 4 }, minSize: { w: 4, h: 3 } },
-  { id: 'service-status',     section: 'dienste',         label: 'Service Status',        defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
-  { id: 'docker',             section: 'dienste',         label: 'Docker',                defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
-  { id: 'adguard',            section: 'dienste',         label: 'AdGuard Home',          defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 4 } },
-  { id: 'jdownloader',        section: 'dienste',         label: 'JDownloader',           defaultSize: { w: 4,  h: 6 }, minSize: { w: 3, h: 4 } },
-  { id: 'unraid-vms',         section: 'dienste',         label: 'Unraid VMs',            defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
-  // Unraid-Suite: Sektion 'unraid' liegt bewusst nicht in LEGACY_SECTION_ORDER,
-  // damit die Kacheln nur im Katalog erscheinen (reconcileDashboard legt sie
-  // automatisch als versteckte Einträge an).
-  { id: 'unraid-docker',        section: 'unraid',        label: 'Unraid Docker',         defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
-  { id: 'unraid-array',         section: 'unraid',        label: 'Unraid Array',          defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 4 } },
-  { id: 'unraid-disks',         section: 'unraid',        label: 'Unraid Disks',          defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
-  { id: 'unraid-shares',        section: 'unraid',        label: 'Unraid Shares',         defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
-  { id: 'unraid-notifications', section: 'unraid',        label: 'Unraid Meldungen',      defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 } },
-  { id: 'unraid-system',        section: 'unraid',        label: 'Unraid System',         defaultSize: { w: 5,  h: 11 }, minSize: { w: 4, h: 8 } },
-  { id: 'unraid-ups',           section: 'unraid',        label: 'Unraid USV',            defaultSize: { w: 3,  h: 4 }, minSize: { w: 3, h: 3 } },
-  { id: 'plex',               section: 'media',           label: 'Plex',                  defaultSize: { w: 7,  h: 5 }, minSize: { w: 4, h: 3 } },
-  { id: 'nextcloud',          section: 'media',           label: 'Nextcloud',             defaultSize: { w: 5,  h: 5 }, minSize: { w: 3, h: 4 } },
-  { id: 'unifi-network',      section: 'netzwerk',        label: 'UniFi · Network',       defaultSize: { w: 12, h: 3 }, minSize: { w: 4, h: 3 } },
-  { id: 'unifi-aps',          section: 'netzwerk-detail', label: 'WiFi · Access Points',  defaultSize: { w: 7,  h: 4 }, minSize: { w: 4, h: 3 } },
-  { id: 'unifi-cameras',      section: 'netzwerk-detail', label: 'UniFi Protect',         defaultSize: { w: 5,  h: 5 }, minSize: { w: 3, h: 4 } },
-];
+/* ============================================================================
+   Kachel-Registrierung
+   ----------------------------------------------------------------------------
+   Jede Kachel wird hier EINMAL vollstaendig beschrieben — Groesse, Sektion,
+   Live-Event, Nachlade-Funktion und Kachel-Einstellungen. Vorher lagen diese
+   fuenf Angaben in fuenf getrennten Tabellen (DASHBOARD_WIDGETS,
+   WIDGET_OPTIONS, WIDGET_REFRESH, PUSH_HANDLERS, SETTINGS_TREE); fehlte eine
+   davon, war die Kachel still kaputt statt fehlerhaft.
 
-/* Anpassbare Optionen je Widget (Kachel-Einstellungen, gespeichert in
-   tile.config). „title" gibt es implizit für jede Kachel.
-   type 'toggle' → blendet [data-cfg="key"]-Blöcke der Shell aus/ein
-                   (bzw. setzt via `cls` eine Shell-Klasse für JS-Inhalte,
-                   via `filter` nur einen Render-Filter).
-   type 'count'  → Zahl, 0 = unbegrenzt (Zeilenlimit im Renderer). */
-const WIDGET_OPTIONS = {
-  'system-load': [
+   Die fuenf Tabellen leitet Dash (public/registry.js) unten daraus ab. Neue
+   Module brauchen hier nichts mehr einzutragen: eine Datei in public/modules/
+   registriert sich beim Laden selbst (siehe public/modules/README.md).
+   ============================================================================ */
+
+Dash.registerModule({
+  id: 'system-load', section: 'system', label: 'System Load',
+  defaultSize: { w: 5,  h: 6 }, minSize: { w: 3, h: 4 },
+  options: [
     { key: 'rings', label: 'CPU/RAM-Ringe',                 type: 'toggle', default: true },
     { key: 'stats', label: 'Kennzahlen (Temp/Threads/RAM)', type: 'toggle', default: true },
     { key: 'chart', label: 'Verlaufs-Chart',                type: 'toggle', default: true },
   ],
-  'network-throughput': [
+});
+
+Dash.registerModule({
+  id: 'network-throughput', section: 'system', label: 'Network Throughput',
+  defaultSize: { w: 7,  h: 4 }, minSize: { w: 4, h: 3 },
+  refresh: () => applyNetworkConfig(),
+  options: [
     // Gruppe: Animierte Grafik (Flow-SVG rechts)
     { key: 'flow',  label: 'Animierte Grafik', type: 'toggle', default: true, group: 'Animierte Grafik' },
     { key: 'flowSize', label: 'Größe', type: 'select', default: 'm', group: 'Animierte Grafik',
-      options: [{ v: 's', l: 'Klein' }, { v: 'm', l: 'Mittel' }, { v: 'l', l: 'Groß' }] },
+    options: [{ v: 's', l: 'Klein' }, { v: 'm', l: 'Mittel' }, { v: 'l', l: 'Groß' }] },
     { key: 'packetShape', label: 'Paket-Form', type: 'select', default: 'block', group: 'Animierte Grafik',
-      options: [{ v: 'block', l: 'Block' }, { v: 'dot', l: 'Punkt' }] },
+    options: [{ v: 'block', l: 'Block' }, { v: 'dot', l: 'Punkt' }] },
     { key: 'flowTrail', label: 'Paket-Schweif', type: 'toggle', default: true, group: 'Animierte Grafik' },
     { key: 'localFlow', label: 'Lokaler Server↔LAN-Verkehr', type: 'toggle', default: true, group: 'Animierte Grafik' },
     { key: 'flowLabels', label: 'Werte an den Linien', type: 'toggle', default: true, cls: 'cfg-flow-labels-off', group: 'Animierte Grafik' },
     { key: 'rateFmt', label: 'Werte-Format', type: 'select', default: 'mbit', group: 'Animierte Grafik',
-      options: [{ v: 'mbit', l: 'Mbit/s' }, { v: 'mbyte', l: 'MB/s' }, { v: 'auto', l: 'Auto (Gbit)' }] },
+    options: [{ v: 'mbit', l: 'Mbit/s' }, { v: 'mbyte', l: 'MB/s' }, { v: 'auto', l: 'Auto (Gbit)' }] },
     // Gruppe: Knoten-Namen
     { key: 'ispName',  label: 'Internet-Name', type: 'text', default: 'willy.tel', group: 'Knoten-Namen' },
     { key: 'srvName',  label: 'Server-Name',  type: 'text', default: 'Unraid', group: 'Knoten-Namen' },
@@ -3995,101 +3993,240 @@ const WIDGET_OPTIONS = {
     // Gruppe: Verlaufs-Chart (Liniendiagramm links)
     { key: 'chart', label: 'Verlaufs-Chart',   type: 'toggle', default: true, group: 'Verlaufs-Chart' },
     { key: 'chartSeries', label: 'Chart-Datenquelle', type: 'select', default: 'unraid', group: 'Verlaufs-Chart',
-      options: [{ v: 'unraid', l: 'Unraid' }, { v: 'wan', l: 'Internet (WAN)' }, { v: 'both', l: 'Beide' }] },
+    options: [{ v: 'unraid', l: 'Unraid' }, { v: 'wan', l: 'Internet (WAN)' }, { v: 'both', l: 'Beide' }] },
     { key: 'grid', label: 'Gitternetz', type: 'toggle', default: true, group: 'Verlaufs-Chart' },
     { key: 'range', label: 'Zeitraum',         type: 'select', default: '1m', group: 'Verlaufs-Chart',
-      options: [{ v: '10s', l: '10s' }, { v: '1m', l: '1m' }, { v: '10m', l: '10m' }, { v: '1h', l: '1h' }] },
+    options: [{ v: '10s', l: '10s' }, { v: '1m', l: '1m' }, { v: '10m', l: '10m' }, { v: '1h', l: '1h' }] },
     { key: 'scaleMode', label: 'Skala', type: 'select', default: 'auto', group: 'Verlaufs-Chart',
-      options: [
-        { v: 'auto', l: 'Auto' }, { v: '100', l: '100 Mbit/s' }, { v: '250', l: '250 Mbit/s' },
-        { v: '500', l: '500 Mbit/s' }, { v: '1000', l: '1 Gbit/s' },
-        { v: 'custom', l: 'Eigener Wert…' },
-      ] },
+  options: [
+    { v: 'auto', l: 'Auto' }, { v: '100', l: '100 Mbit/s' }, { v: '250', l: '250 Mbit/s' },
+    { v: '500', l: '500 Mbit/s' }, { v: '1000', l: '1 Gbit/s' },
+    { v: 'custom', l: 'Eigener Wert…' },
+    ] },
     { key: 'scaleMax', label: 'Max (Mbit/s)', type: 'number', default: 0, group: 'Verlaufs-Chart' },
     // Gruppe: Interface
     { key: 'iface',    label: 'Interface',    type: 'select', default: '', options: 'ifaces', group: 'Interface' },
   ],
-  'service-status': [
+});
+
+Dash.registerModule({
+  id: 'disk-storage', section: 'system', label: 'Storage · Unraid Array',
+  defaultSize: { w: 7, h: 4 }, minSize: { w: 4, h: 3 },
+});
+
+Dash.registerModule({
+  id: 'service-status', section: 'dienste', label: 'Service Status',
+  defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 },
+  event: 'status', handler: renderServiceStatus,
+  refresh: () => pollServiceStatus(),
+  options: [
     { key: 'maxRows', label: 'Max. Einträge', type: 'count', default: 0 },
   ],
-  'docker': [
+});
+
+Dash.registerModule({
+  id: 'docker', section: 'dienste', label: 'Docker',
+  defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 },
+  event: 'docker', handler: handleDocker,
+  refresh: () => pollDocker(),
+  options: [
     { key: 'summary',     label: 'Zusammenfassung (Anzahl)', type: 'toggle', default: true },
     { key: 'hideStopped', label: 'Gestoppte ausblenden',     type: 'toggle', default: false, filter: true },
     { key: 'maxRows',     label: 'Max. Container',           type: 'count',  default: 0 },
   ],
-  'adguard': [
+});
+
+Dash.registerModule({
+  id: 'adguard', section: 'dienste', label: 'AdGuard Home',
+  defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 4 },
+  event: 'adguard', handler: handleAdGuard,
+  refresh: () => pollAdGuard(),
+  options: [
     { key: 'toplist', label: 'Top-Blocked-Liste', type: 'toggle', default: true },
     { key: 'topN',    label: 'Top-Einträge',      type: 'count',  default: 0 },
   ],
-  'jdownloader': [
+});
+
+Dash.registerModule({
+  id: 'jdownloader', section: 'dienste', label: 'JDownloader',
+  defaultSize: { w: 4,  h: 6 }, minSize: { w: 3, h: 4 },
+  event: 'jdownloader', handler: handleJDownloader,
+  refresh: () => pollJDownloader(),
+  options: [
     { key: 'speed',     label: 'Speed & Status',        type: 'toggle', default: true },
     { key: 'queue',     label: 'Queue-Zahlen',          type: 'toggle', default: true },
     { key: 'totals',    label: 'Fertige / Verbleibend', type: 'toggle', default: true },
     { key: 'downloads', label: 'Download-Liste',        type: 'toggle', default: true },
     { key: 'maxRows',   label: 'Max. Downloads',        type: 'count',  default: 0 },
   ],
-  'unraid-vms': [
+});
+
+Dash.registerModule({
+  id: 'unraid-vms', section: 'dienste', label: 'Unraid VMs',
+  defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 },
+  event: 'vms', handler: handleVms,
+  refresh: () => pollVms(),
+  options: [
     { key: 'summary', label: 'Zusammenfassung (Anzahl)', type: 'toggle', default: true },
     { key: 'actions', label: 'Aktions-Buttons',          type: 'toggle', default: true, cls: 'cfg-hide-actions' },
     { key: 'maxRows', label: 'Max. VMs',                 type: 'count',  default: 0 },
   ],
-  'unraid-docker': [
+});
+
+Dash.registerModule({
+  id: 'unraid-docker', section: 'unraid', label: 'Unraid Docker',
+  defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 },
+  event: 'unraidDocker', handler: (d) => handleUnraid(d, 'udkBadge', renderUnraidDocker),
+  refresh: () => pollUnraidDocker(),
+  options: [
     { key: 'summary',     label: 'Zusammenfassung (Anzahl)', type: 'toggle', default: true },
     { key: 'hideStopped', label: 'Gestoppte ausblenden',     type: 'toggle', default: false, filter: true },
     { key: 'updates',     label: 'Update-Hinweise',          type: 'toggle', default: true,  filter: true },
     { key: 'actions',     label: 'Aktions-Buttons',          type: 'toggle', default: true,  cls: 'cfg-hide-actions' },
     { key: 'maxRows',     label: 'Max. Container',           type: 'count',  default: 0 },
   ],
-  'unraid-array': [
+});
+
+Dash.registerModule({
+  id: 'unraid-array', section: 'unraid', label: 'Unraid Array',
+  defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 4 },
+  event: 'unraidArray', handler: (d) => handleUnraid(d, 'uarBadge', (x) => { renderUnraidArray(x); renderUnraidDisks(x); }),
+  refresh: () => pollUnraidArray(),
+  options: [
     { key: 'capacity', label: 'Kapazitätsbalken', type: 'toggle', default: true },
     { key: 'parity',   label: 'Parity-Status',    type: 'toggle', default: true },
     { key: 'actions',  label: 'Aktions-Buttons',  type: 'toggle', default: true, cls: 'cfg-hide-actions' },
   ],
-  'unraid-disks': [
+});
+
+Dash.registerModule({
+  id: 'unraid-disks', section: 'unraid', label: 'Unraid Disks',
+  defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 },
+  refresh: () => pollUnraidArray(),
+  options: [
     { key: 'showParity', label: 'Parity-Disks',  type: 'toggle', default: true, filter: true },
     { key: 'showCache',  label: 'Cache-Pools',   type: 'toggle', default: true, filter: true },
     { key: 'temp',       label: 'Temperaturen',  type: 'toggle', default: true, filter: true },
     { key: 'maxRows',    label: 'Max. Disks',    type: 'count',  default: 0 },
   ],
-  'unraid-shares': [
+});
+
+Dash.registerModule({
+  id: 'unraid-shares', section: 'unraid', label: 'Unraid Shares',
+  defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 },
+  event: 'unraidShares', handler: (d) => handleUnraid(d, 'ushBadge', renderUnraidShares),
+  refresh: () => pollUnraidShares(),
+  options: [
     { key: 'bars',    label: 'Füllstands-Balken', type: 'toggle', default: true, filter: true },
     { key: 'maxRows', label: 'Max. Shares',       type: 'count',  default: 0 },
   ],
-  'unraid-notifications': [
+});
+
+Dash.registerModule({
+  id: 'unraid-notifications', section: 'unraid', label: 'Unraid Meldungen',
+  defaultSize: { w: 4,  h: 5 }, minSize: { w: 3, h: 3 },
+  event: 'unraidNotif', handler: (d) => handleUnraid(d, 'unoBadge', renderUnraidNotifications),
+  refresh: () => pollUnraidNotifications(),
+  options: [
     { key: 'summary', label: 'Zusammenfassung', type: 'toggle', default: true },
     { key: 'actions', label: 'Aktions-Buttons', type: 'toggle', default: true, cls: 'cfg-hide-actions' },
     { key: 'maxRows', label: 'Max. Meldungen',  type: 'count',  default: 0 },
   ],
-  'unraid-system': [
+});
+
+Dash.registerModule({
+  id: 'unraid-system', section: 'unraid', label: 'Unraid System',
+  defaultSize: { w: 5,  h: 11 }, minSize: { w: 4, h: 8 },
+  event: 'unraidSystem', handler: (d) => handleUnraid(d, 'usyBadge', renderUnraidSystem),
+  refresh: () => pollUnraidSystem(),
+  options: [
     { key: 'live',    label: 'CPU/RAM live',     type: 'toggle', default: true },
     { key: 'meta',    label: 'Versionen & Host', type: 'toggle', default: true },
     { key: 'actions', label: 'Aktions-Buttons',  type: 'toggle', default: true, cls: 'cfg-hide-actions' },
   ],
-  'unraid-ups': [
+});
+
+Dash.registerModule({
+  id: 'unraid-ups', section: 'unraid', label: 'Unraid USV',
+  defaultSize: { w: 3,  h: 4 }, minSize: { w: 3, h: 3 },
+  event: 'unraidUps', handler: (d) => handleUnraid(d, 'uupBadge', renderUnraidUps),
+  refresh: () => pollUnraidUps(),
+  options: [
     { key: 'power', label: 'Leistungsdaten', type: 'toggle', default: true },
   ],
-  'plex': [
+});
+
+Dash.registerModule({
+  id: 'plex', section: 'media', label: 'Plex',
+  defaultSize: { w: 7,  h: 5 }, minSize: { w: 4, h: 3 },
+  event: 'plex', handler: handlePlex,
+  refresh: () => pollPlex(),
+  options: [
     { key: 'posters',     label: 'Poster',        type: 'toggle', default: true, cls: 'cfg-hide-posters' },
     { key: 'maxSessions', label: 'Max. Sessions', type: 'count',  default: 0 },
   ],
-  'nextcloud': [
+});
+
+Dash.registerModule({
+  id: 'nextcloud', section: 'media', label: 'Nextcloud',
+  defaultSize: { w: 5,  h: 5 }, minSize: { w: 3, h: 4 },
+  event: 'nextcloud', handler: handleNextcloud,
+  refresh: () => pollNextcloud(),
+  options: [
     { key: 'users',   label: 'Nutzerliste',       type: 'toggle', default: true },
     { key: 'upload',  label: 'ToLeech-Upload',    type: 'toggle', default: true },
     { key: 'version', label: 'Versions-Fußzeile', type: 'toggle', default: true },
   ],
-  'unifi-network': [
+});
+
+Dash.registerModule({
+  id: 'unifi-network', section: 'netzwerk', label: 'UniFi · Network',
+  defaultSize: { w: 12, h: 3 }, minSize: { w: 4, h: 3 },
+  event: 'unifi', handler: handleUnifi,
+  refresh: () => pollUnifi(),
+  options: [
     { key: 'wan',        label: 'Spalte WAN',        type: 'toggle', default: true },
     { key: 'clients',    label: 'Spalte Clients',    type: 'toggle', default: true },
     { key: 'connection', label: 'Spalte Verbindung', type: 'toggle', default: true },
     { key: 'devices',    label: 'Spalte Geräte',     type: 'toggle', default: true },
   ],
-  'unifi-aps': [
+});
+
+Dash.registerModule({
+  id: 'unifi-aps', section: 'netzwerk-detail', label: 'WiFi · Access Points',
+  defaultSize: { w: 7,  h: 4 }, minSize: { w: 4, h: 3 },
+  refresh: () => pollUnifi(),
+  options: [
     { key: 'maxAps', label: 'Max. Access Points', type: 'count', default: 0 },
   ],
-  'unifi-cameras': [
+});
+
+Dash.registerModule({
+  id: 'unifi-cameras', section: 'netzwerk-detail', label: 'UniFi Protect',
+  defaultSize: { w: 5,  h: 5 }, minSize: { w: 3, h: 4 },
+  refresh: () => pollUnifiSnapshot(),
+  options: [
     { key: 'timestamp', label: 'Zeitstempel', type: 'toggle', default: true },
   ],
-};
+});
+
+// Push-Event ohne eigene Kachel: das Wetter sitzt in der Kopfzeile.
+Dash.registerHandler('weather', renderWeather);
+
+/* ---------- Aus den Manifesten abgeleitet ---------- */
+const DASHBOARD_WIDGETS = Dash.widgets();
+const WIDGET_OPTIONS    = Dash.options();
+// Nach einer Config-Aenderung bzw. beim Seitenwechsel die Kachel neu laden.
+const WIDGET_REFRESH    = Dash.refreshers();
+// Routing der Server-Push-Events (Event-Namen = PUSH_SOURCES in server.js) auf
+// die Kachel-Handler. Dieselben Handler nutzt auch der REST-Fallback.
+const PUSH_HANDLERS     = Dash.pushHandlers();
+/* Anpassbare Optionen je Widget (Kachel-Einstellungen, gespeichert in
+   tile.config). „title" gibt es implizit für jede Kachel.
+   type 'toggle' → blendet [data-cfg="key"]-Blöcke der Shell aus/ein
+                   (bzw. setzt via `cls` eine Shell-Klasse für JS-Inhalte,
+                   via `filter` nur einen Render-Filter).
+   type 'count'  → Zahl, 0 = unbegrenzt (Zeilenlimit im Renderer). */
 const WIDGET_BY_ID = new Map(DASHBOARD_WIDGETS.map((w) => [w.id, w]));
 const GRID_COLUMNS = 12;
 const GRID_CELL_HEIGHT = 66;
@@ -4119,7 +4256,22 @@ let _tabSortable = null;
 function _uid(prefix) { return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 function _clone(o) { return JSON.parse(JSON.stringify(o)); }
 function _tilePool() { return $('tilePool'); }
-function _shellFor(id) { return document.querySelector(`[data-widget-id="${id}"]`); }
+// Liefert die Kachel-„Shell". Die eingebauten Kacheln stehen als statisches
+// Markup in index.html (#tilePool); Module aus public/modules/ bringen ihr
+// Markup stattdessen als template() mit und werden hier beim ersten Zugriff
+// erzeugt — so kostet ein nicht platziertes Modul kein DOM.
+function _shellFor(id) {
+  const existing = document.querySelector(`[data-widget-id="${id}"]`);
+  if (existing) return existing;
+  const mod = Dash.get(id);
+  if (!mod || typeof mod.template !== 'function') return null;
+  const host = document.createElement('div');
+  host.setAttribute('data-widget-id', id);
+  try { host.innerHTML = mod.template(); }
+  catch (e) { console.error(`[Dash] template() von "${id}" fehlgeschlagen:`, e); return null; }
+  _tilePool().appendChild(host);
+  return host;
+}
 
 /* ---------- Model builders / migration ---------- */
 
@@ -4284,27 +4436,6 @@ function applyAllTileConfigs() { DASHBOARD_WIDGETS.forEach((w) => applyTileConfi
 
 // Nach einer Config-Änderung die Live-Daten der Kachel einmal neu rendern
 // (nur nötig für Optionen, die im Renderer greifen: Limits/Filter).
-const WIDGET_REFRESH = {
-  'network-throughput':   () => applyNetworkConfig(),
-  'service-status':       () => pollServiceStatus(),
-  'docker':               () => pollDocker(),
-  'adguard':              () => pollAdGuard(),
-  'jdownloader':          () => pollJDownloader(),
-  'unraid-vms':           () => pollVms(),
-  'unraid-docker':        () => pollUnraidDocker(),
-  'unraid-array':         () => pollUnraidArray(),
-  'unraid-disks':         () => pollUnraidArray(),
-  'unraid-shares':        () => pollUnraidShares(),
-  'unraid-notifications': () => pollUnraidNotifications(),
-  'unraid-system':        () => pollUnraidSystem(),
-  'unraid-ups':           () => pollUnraidUps(),
-  'plex':                 () => pollPlex(),
-  'nextcloud':            () => pollNextcloud(),
-  'unifi-network':        () => pollUnifi(),
-  'unifi-aps':            () => pollUnifi(),
-  'unifi-cameras':        () => pollUnifiSnapshot(),
-};
-
 // Änderungen werden immer verzögert (leise) gespeichert — auch im Design-Modus,
 // damit Layout-Anpassungen (Größe/Position, Ein-/Ausblenden, Kachel-Optionen)
 // einen Reload überleben, ohne dass zwingend „✓ Fertig" geklickt werden muss.
@@ -4537,6 +4668,9 @@ function _syncGlancesStream() {
 // Oeffnen einer Unterseite sofort Daten erscheinen statt erst beim naechsten Tick.
 function _refreshActivePageWidgets() {
   if (!_dashboard || !Array.isArray(_dashboard.tiles)) return;
+  // Im Push-Modus liegen die Daten bereits an (SSE-Snapshot + laufende Events);
+  // ein zusaetzlicher REST-Burst pro Seitenwechsel waere reine Doppelarbeit.
+  if (_pushMode && metricsEs) return;
   _dashboard.tiles.forEach((t) => {
     if (t.type !== 'widget' || t.hidden || t.page !== _activePage) return;
     try { WIDGET_REFRESH[t.id]?.(); } catch { /* ignore */ }
@@ -4617,6 +4751,8 @@ function _initTabSortable() {
     onEnd: () => {
       const ids = Array.from($('dashPages').querySelectorAll('.dash-tab:not(.dash-tab-add)')).map((el) => el.dataset.page);
       _dashboard.pages.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+      renderPageTabs();
+      _saveIfLive();
     },
   });
 }
@@ -4627,6 +4763,7 @@ function addPage() {
   const id = _uid('page:');
   _dashboard.pages.push({ id, name: name.slice(0, 60), icon: '' });
   showPage(id);
+  _saveIfLive();
   toast(`Seite „${name}" angelegt`);
 }
 
@@ -4637,6 +4774,7 @@ function renamePage(pageId) {
   if (!name) return;
   p.name = name.slice(0, 60);
   renderPageTabs();
+  _saveIfLive();
 }
 
 function deletePage(pageId) {
@@ -4655,6 +4793,7 @@ function deletePage(pageId) {
   _dashboard.pages = _dashboard.pages.filter((x) => x.id !== pageId);
   _activePage = _dashboard.pages[0].id;
   showPage(_activePage);
+  _saveIfLive();
   toast(`Seite „${p.name}" gelöscht`);
 }
 
@@ -5310,7 +5449,22 @@ async function loadSecrets() {
     set('secretUnraidSshKey',  d.UNRAID_SSH_KEY);
     const danger = $('unraidDangerToggle');
     if (danger) danger.checked = d.UNRAID_DANGER_ACTIONS === 'true';
+    renderEnvLockNote(d._env);
   } catch { /* ignore, fields stay empty */ }
+}
+
+// Umgebungsvariablen haben Vorrang vor den in der UI gespeicherten Werten
+// (so dokumentiert es .env.example). Ohne Hinweis wirkt ein per Env gesetztes
+// Feld hier wie ein stummes Eingabefeld: speichern geht, aendern nichts.
+function renderEnvLockNote(envKeys) {
+  const box = $('envLockNote');
+  if (!box) return;
+  const keys = Array.isArray(envKeys) ? envKeys : [];
+  if (!keys.length) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  box.innerHTML = '<b>Per Umgebungsvariable gesetzt</b> — diese Werte haben Vorrang; '
+    + 'Änderungen in den Feldern unten bleiben wirkungslos, solange die Variable gesetzt ist:<br>'
+    + keys.map((k) => `<code>${esc(k)}</code>`).join(', ');
 }
 
 async function saveSecrets(card) {
@@ -5368,7 +5522,7 @@ async function saveSecrets(card) {
 }
 
 /* ---------- Settings: category tree ---------- */
-const SETTINGS_TREE = [
+const SETTINGS_CORE = [
   {
     id: 'general', label: 'General',
     children: [
@@ -5396,6 +5550,10 @@ const SETTINGS_TREE = [
     ],
   },
 ];
+// Kern-Kategorien plus die Eintraege, die Module aus public/modules/ selbst
+// mitbringen (Dash.registerModule({ settings: {...} })).
+const SETTINGS_TREE = Dash.settingsTree(SETTINGS_CORE);
+
 const SETTINGS_LEAF_MAP = {};
 SETTINGS_TREE.forEach((cat) => cat.children.forEach((child) => { SETTINGS_LEAF_MAP[child.id] = { ...child, catId: cat.id }; }));
 
@@ -5436,7 +5594,7 @@ function renderSettingsTree() {
       const itemEl = document.createElement('div');
       itemEl.className = 'tree-item';
       itemEl.dataset.tab = child.id;
-      itemEl.innerHTML = `${leafIconHtml(child, 14)}<span>${child.label}</span>` +
+      itemEl.innerHTML = `${leafIconHtml(child, 14)}<span>${esc(child.label)}</span>` +
         (child.statusEl ? '<span class="tree-status-dot" style="display:none"></span>' : '');
       itemEl.addEventListener('click', () => selectTab(child.id));
       childrenEl.appendChild(itemEl);
@@ -5459,7 +5617,7 @@ function renderCategoryGrid(catId) {
     card.dataset.tab = child.id;
     card.innerHTML =
       `<div class="grid-card-icon">${leafIconHtml(child, 26)}</div>` +
-      `<div class="grid-card-label">${child.label}</div>` +
+      `<div class="grid-card-label">${esc(child.label)}</div>` +
       (child.statusEl ? '<span class="grid-card-status" style="display:none"></span>' : '');
     card.addEventListener('click', () => selectTab(child.id));
     grid.appendChild(card);
