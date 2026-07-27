@@ -222,9 +222,13 @@ Two things Dash# does do on its own:
   attacker domain resolving to your LAN IP would otherwise be same-origin and could trigger the control
   actions. Behind a reverse proxy with its own hostname, add it to `TRUSTED_HOSTS` (comma-separated);
   `TRUSTED_HOSTS=*` turns the check off.
-- **Non-root container.** The process runs as `node`, not root. Note that unprivileged ICMP needs
-  `sysctl -w net.ipv4.ping_group_range="0 2147483647"` on the host; without it, the Service Status tile
-  falls back to a TCP reachability check for bare hostnames (HTTP and `host:port` targets are unaffected).
+- **Non-root container.** The entrypoint starts as root, adopts the ownership of your mounted
+  `/app/config` (so it always matches your volume — no permission surprises on existing installs) and
+  drops privileges before starting the app. Override with `PUID`/`PGID` if you want a specific user;
+  if the volume turns out not to be writable, it stays root and says so in the log rather than dying.
+  Note that unprivileged ICMP needs `sysctl -w net.ipv4.ping_group_range="0 2147483647"` on the host;
+  without it, the Service Status tile falls back to a TCP reachability check for bare hostnames
+  (HTTP and `host:port` targets are unaffected).
 
 ## Build from source
 
