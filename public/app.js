@@ -4638,15 +4638,13 @@ async function loadDashboard() {
     model = (Array.isArray(legacy) && legacy.length) ? migrateLegacy(legacy) : buildDefaultDashboard();
   }
   _dashboard = reconcileDashboard(model);
-  _activePage = _restoreActivePage();
+  // Jeder Aufruf startet auf der ersten Unterseite ("Dashboard"); die zuletzt
+  // besuchte Seite wird bewusst NICHT gemerkt.
+  _activePage = _dashboard.pages[0].id;
+  // Altlast aus frueheren Versionen entfernen, damit nichts mehr wiederhergestellt wird.
+  try { localStorage.removeItem('dash.activePage'); } catch { /* ignore */ }
   renderPageTabs();
   showPage(_activePage);
-}
-
-function _restoreActivePage() {
-  const saved = localStorage.getItem('dash.activePage');
-  if (saved && _dashboard.pages.some((p) => p.id === saved)) return saved;
-  return _dashboard.pages[0].id;
 }
 
 // Oeffnet/schliesst den geteilten Glances-SSE-Stream je nach aktiver Unterseite
@@ -4680,7 +4678,6 @@ function _refreshActivePageWidgets() {
 function showPage(pageId) {
   if (!_dashboard.pages.some((p) => p.id === pageId)) pageId = _dashboard.pages[0].id;
   _activePage = pageId;
-  try { localStorage.setItem('dash.activePage', pageId); } catch { /* ignore */ }
   buildGridForPage(pageId);
   _applyGridVisibility();
   renderPageTabs();
