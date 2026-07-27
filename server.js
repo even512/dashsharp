@@ -4163,7 +4163,7 @@ app.get('/modules.js', (req, res) => {
 // GET /api/<id> (+ optionale Aktions-Routen) fuer jedes registrierte Modul.
 // Bewusst nach den Kern-Routen, damit ein Modul eine bestehende Route nicht
 // versehentlich verdeckt — Express nimmt den zuerst registrierten Handler.
-registry.registerRoutes(app, MODULES, moduleRuntime, { getSecret, cache });
+registry.registerRoutes(app, MODULES, moduleRuntime, { getSecret, cache, pushNow });
 
 // Healthcheck fuer Docker / Monitoring
 app.get('/healthz', (req, res) => res.json({ ok: true }));
@@ -4200,22 +4200,33 @@ const PUSH_SOURCES = [
 ].concat(registry.pushSources(MODULES, moduleRuntime));
 
 let _pushHubStarted = false;
+async function pushTick(src) {
+  try {
+    const payload = await src.get();
+    if (payload === undefined) return;
+    lastPush[src.event] = payload;   // Snapshot fuer neu verbundene Clients
+    broadcast(src.event, payload);   // an alle offenen Streams (No-op bei 0 Clients)
+  } catch (err) {
+    console.warn(`Push-Hub (${src.event}) fehlgeschlagen:`, err.message);
+  }
+}
+
+// Ein einzelnes Push-Ziel sofort aktualisieren, statt bis zum naechsten Tick zu
+// warten. Noetig, wenn eine Aktion die Datenlage aendert und das Intervall lang
+// ist: die News-Quellen werden alle 10 min geholt — ohne das hier zeigten
+// andere Tabs (und der Snapshot fuer frisch verbundene Clients) nach dem
+// Aendern der Quellen bis zu 10 Minuten den alten Stand.
+async function pushNow(event) {
+  const src = PUSH_SOURCES.find((s) => s.event === event);
+  if (src) await pushTick(src);
+}
+
 function startPushHub() {
   if (_pushHubStarted) return;
   _pushHubStarted = true;
-  const tick = async (src) => {
-    try {
-      const payload = await src.get();
-      if (payload === undefined) return;
-      lastPush[src.event] = payload;   // Snapshot fuer neu verbundene Clients
-      broadcast(src.event, payload);   // an alle offenen Streams (No-op bei 0 Clients)
-    } catch (err) {
-      console.warn(`Push-Hub (${src.event}) fehlgeschlagen:`, err.message);
-    }
-  };
   for (const src of PUSH_SOURCES) {
-    tick(src);                                        // sofort einmal warmlaufen
-    src._timer = setInterval(() => tick(src), src.interval);
+    pushTick(src);                                    // sofort einmal warmlaufen
+    src._timer = setInterval(() => pushTick(src), src.interval);
   }
   console.log(`Push-Hub aktiv: ${PUSH_SOURCES.length} Quellen werden dauerhaft vorgehalten`);
 }
