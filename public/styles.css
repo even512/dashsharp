@@ -1458,7 +1458,32 @@ body.design-mode[data-theme="win9x"] .grid-stack-item:hover > .grid-stack-item-c
    Meldungsliste, Detailfenster und das Quellen-Panel in den Einstellungen.
    Durchgehend ueber die Theme-Variablen, damit hell/dunkel/win9x mitlaufen.
    ============================================================================ */
-.news-list { gap: 12px; }
+/* Schriftgroesse, Bildmasse, Abstand und Trennung sind Kachel-Optionen
+   (public/modules/news.js, applyNewsLayout): jede Achse setzt eine Klasse auf
+   #newsList, die hier ausschliesslich die Variablen umschreibt. Die Zeilen der
+   Liste kennen die Optionen dadurch gar nicht. */
+.news-list {
+  --news-title-fs: 12.5px;
+  --news-teaser-fs: 11.5px;
+  --news-meta-fs: 10px;
+  --news-thumb-w: 56px;
+  --news-thumb-h: 42px;
+  --news-gap: 10px;
+  --news-pad: 6px;
+  --news-title-lines: 2;
+  --news-teaser-lines: 2;
+  gap: var(--news-gap);
+}
+.news-list.news-text-s  { --news-title-fs: 11px;   --news-teaser-fs: 10px;   --news-meta-fs: 9px; }
+.news-list.news-text-l  { --news-title-fs: 14px;   --news-teaser-fs: 12.5px; --news-meta-fs: 11px; }
+.news-list.news-text-xl { --news-title-fs: 15.5px; --news-teaser-fs: 13.5px; --news-meta-fs: 12px; }
+
+.news-list.news-img-s  { --news-thumb-w: 40px;  --news-thumb-h: 30px; }
+.news-list.news-img-l  { --news-thumb-w: 78px;  --news-thumb-h: 58px; }
+.news-list.news-img-xl { --news-thumb-w: 104px; --news-thumb-h: 78px; }
+
+.news-list.news-space-tight { --news-gap: 4px;  --news-pad: 4px; }
+.news-list.news-space-wide  { --news-gap: 18px; --news-pad: 9px; }
 
 .news-row {
   display: flex;
@@ -1466,20 +1491,45 @@ body.design-mode[data-theme="win9x"] .grid-stack-item:hover > .grid-stack-item-c
   gap: 10px;
   cursor: pointer;
   border-radius: 9px;
-  padding: 4px;
-  margin: -4px;
+  padding: var(--news-pad);
+  border: 1px solid transparent; /* Platz fuer den Karten-Rahmen, damit die Wahl der Trennung die Zeilen nicht verschiebt */
   transition: background .12s;
 }
 .news-row:hover,
 .news-row:focus-visible { background: var(--accent-subtle); outline: none; }
+
+/* ---------- Trennung der Meldungen (Option „Trennung") ---------- */
+
+/* Trennlinie: sitzt mittig im Abstand zwischen zwei Meldungen, deshalb die
+   halbe Luecke als Innenabstand nach oben und als negativer Aussenabstand
+   wieder heraus. Die Hoverflaeche bleibt so unter der Linie. */
+.news-list.news-sep-line .news-row + .news-row {
+  border-top-color: var(--border-3);
+  margin-top: calc(var(--news-gap) * -0.5);
+  padding-top: calc(var(--news-pad) + var(--news-gap) * 0.5);
+  border-radius: 0 0 9px 9px;
+}
+
+/* Karten: jede Meldung als eigener Block mit Rahmen. */
+.news-list.news-sep-card .news-row {
+  background: var(--bg-glass);
+  border-color: var(--border-4);
+}
+.news-list.news-sep-card .news-row:hover,
+.news-list.news-sep-card .news-row:focus-visible { background: var(--accent-subtle); }
+
+/* Zebra: ruhiger als Rahmen — nur jede zweite Meldung leicht getoent. */
+.news-list.news-sep-zebra .news-row:nth-child(even) { background: var(--bg-glass); }
+.news-list.news-sep-zebra .news-row:nth-child(even):hover,
+.news-list.news-sep-zebra .news-row:nth-child(even):focus-visible { background: var(--accent-subtle); }
 
 /* Feste Bildspalte, auch wenn eine Meldung kein Bild mitbringt: sonst
    springt der Text zwischen den Zeilen hin und her. Ohne Bild steht dort
    das Kuerzel der Quelle. */
 .news-thumb {
   position: relative;
-  width: 56px;
-  height: 42px;
+  width: var(--news-thumb-w);
+  height: var(--news-thumb-h);
   flex-shrink: 0;
   border-radius: 6px;
   overflow: hidden;
@@ -1493,27 +1543,28 @@ body.design-mode[data-theme="win9x"] .grid-stack-item:hover > .grid-stack-item-c
   display: flex;
   align-items: center;
   justify-content: center;
-  font: 700 11px 'JetBrains Mono', monospace;
+  /* Waechst mit der Bildspalte mit, faellt aber nicht unter lesbare 10px. */
+  font: 700 max(10px, calc(var(--news-thumb-h) / 4)) 'JetBrains Mono', monospace;
   color: var(--text-4);
 }
 
-.news-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.news-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 
 .news-title {
-  font: 500 12px/1.35 'JetBrains Mono', monospace;
+  font: 500 var(--news-title-fs)/1.4 'JetBrains Mono', monospace;
   color: var(--text-15);
-  /* Zwei Zeilen, danach abschneiden — sonst sprengt eine lange Ueberschrift
-     die Zeilenhoehe und die Liste wird unruhig. */
+  /* Nach den eingestellten Zeilen abschneiden — sonst sprengt eine lange
+     Ueberschrift die Zeilenhoehe und die Liste wird unruhig. */
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: var(--news-title-lines);
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 .news-teaser {
-  font: 500 11px/1.4 'JetBrains Mono', monospace;
+  font: 500 var(--news-teaser-fs)/1.5 'JetBrains Mono', monospace;
   color: var(--text-dim);
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: var(--news-teaser-lines);
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -1521,7 +1572,7 @@ body.design-mode[data-theme="win9x"] .grid-stack-item:hover > .grid-stack-item-c
   display: flex;
   align-items: center;
   gap: 8px;
-  font: 500 10px 'JetBrains Mono', monospace;
+  font: 500 var(--news-meta-fs) 'JetBrains Mono', monospace;
   color: var(--text-3);
 }
 .news-src { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
