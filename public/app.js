@@ -1,7 +1,18 @@
 'use strict';
 
 /* ---------- Icon database ---------- */
-const ICON_CDN = 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons@main/png/';
+// Dienst-Icons laufen ueber den eigenen Server (/api/icon/<name>.png), der sie
+// einmal von jsDelivr holt und danach aus dem Config-Volume ausliefert. Vorher
+// lud jeder Browser sie direkt vom CDN — das widerspricht „nothing phoning
+// home" und liess den Icon-Picker in Homelabs ohne Internetzugang leer.
+const ICON_CDN = '/api/icon/';
+// Vor dieser Aenderung gespeicherte Quicklinks tragen die absolute CDN-URL.
+// Beim Anzeigen auf den Proxy umbiegen, damit auch Bestandskonfigurationen
+// offline funktionieren — die gespeicherten Werte bleiben unangetastet.
+const ICON_CDN_LEGACY = /^https?:\/\/cdn\.jsdelivr\.net\/gh\/walkxcode\/dashboard-icons@[^/]+\/png\//;
+function iconUrl(url) {
+  return typeof url === 'string' ? url.replace(ICON_CDN_LEGACY, ICON_CDN) : url;
+}
 const ICON_DB = [
   // Media & Streaming
   { id:'plex',              name:'Plex',              cat:'Media' },
@@ -3761,10 +3772,10 @@ function renderQuickLinks(items) {
     const badge = document.createElement('div');
     badge.style.cssText =
       `width:34px;height:34px;border-radius:9px;background:${hexA(color, 0.16)};color:${color};display:flex;align-items:center;justify-content:center;font:700 15px 'Space Grotesk',sans-serif;flex-shrink:0`;
-    const isImg = typeof s.icon === 'string' && (/^https?:\/\//.test(s.icon) || /\.(png|svg|jpe?g|webp|gif)$/i.test(s.icon));
+    const isImg = typeof s.icon === 'string' && (/^\/?api\/icon\//.test(s.icon) || /^https?:\/\//.test(s.icon) || /\.(png|svg|jpe?g|webp|gif)$/i.test(s.icon));
     if (isImg) {
       const img = document.createElement('img');
-      img.src = s.icon; img.alt = ''; img.style.cssText = 'width:100%;height:100%;object-fit:contain;border-radius:9px';
+      img.src = iconUrl(s.icon); img.alt = ''; img.style.cssText = 'width:100%;height:100%;object-fit:contain;border-radius:9px';
       badge.appendChild(img);
     } else {
       badge.textContent = s.icon || (s.name ? s.name[0].toUpperCase() : '?');

@@ -13,6 +13,7 @@ config/disks.json
 config/quicklinks.json
 config/status.json
 config/vms.json
+config/icon-cache/
 config/*.tmp
 Dockerfile
 docker-compose.yml

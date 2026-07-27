@@ -41,7 +41,7 @@ and no build step.
 - 🖥️ **Unraid suite** — eight tiles on the official GraphQL API: VMs (incl. VNC console), Docker containers (start/stop/restart), array & parity (status, capacity, check control), per-disk health, shares, notifications (incl. archive), system info (live CPU/RAM, versions, reboot/shutdown via SSH) and UPS — risky actions locked behind a server-side opt-in
 - 🟢 **Service monitoring** — the Service Status tile checks your services and shows online/offline + latency; the check method is picked automatically from what you enter: a URL (`http(s)://…`) → HTTP, `host:port` → TCP connect, a bare hostname or IP → ICMP ping
 - ⚙️ **Configure in the browser** — everything under `/settings`, no config files to hand-edit
-- 🔒 **Private by design** — no telemetry, no tracking; secrets stay in your mounted config volume
+- 🔒 **Private by design** — no telemetry, no tracking, and no third-party requests from the browser: fonts ship with the image and service icons are proxied and cached by Dash# itself, so the dashboard works fully offline; secrets stay in your mounted config volume
 - 🐳 **One container** — `node:20-alpine`, multi-arch (amd64/arm64), healthcheck, ~48 MB
 
 > [!NOTE]
@@ -215,6 +215,17 @@ The dashboard has **no built-in authentication** — anyone who can reach the po
 your LAN, or put it behind a VPN or an authenticated reverse proxy. **Do not** expose port 8085 directly
 to the internet.
 
+Two things Dash# does do on its own:
+
+- **Host allowlist.** Requests are only accepted when the `Host` header looks like a LAN address
+  (localhost, private IP ranges, `.local`/`.lan`/`.home`/`.internal`). This blocks DNS rebinding — an
+  attacker domain resolving to your LAN IP would otherwise be same-origin and could trigger the control
+  actions. Behind a reverse proxy with its own hostname, add it to `TRUSTED_HOSTS` (comma-separated);
+  `TRUSTED_HOSTS=*` turns the check off.
+- **Non-root container.** The process runs as `node`, not root. Note that unprivileged ICMP needs
+  `sysctl -w net.ipv4.ping_group_range="0 2147483647"` on the host; without it, the Service Status tile
+  falls back to a TCP reachability check for bare hostnames (HTTP and `host:port` targets are unaffected).
+
 ## Build from source
 
 ```bash
@@ -227,6 +238,12 @@ npm run dev
 
 `npm run dev` starts the app at `http://localhost:3000`. The `.env` copy is optional.
 
+Run the checks (syntax, module manifests, core endpoints, host allowlist):
+
+```bash
+npm test
+```
+
 Build the image yourself: `docker build -t dashsharp .`
 
 Regenerate the logo/icons after editing [`logo.svg`](logo.svg):
@@ -234,6 +251,44 @@ Regenerate the logo/icons after editing [`logo.svg`](logo.svg):
 ```bash
 npm i -D sharp && node scripts/render-icon.mjs
 ```
+
+## Adding a module
+
+Dash# is built so a new integration is **two files** — no changes to `server.js`, `app.js` or
+`index.html`, and no build step:
+
+```
+server/modules/<id>.js    fetch, normalize, cache, push
+public/modules/<id>.js    render the tile
+```
+
+The backend file declares what it needs and how to get it:
+
+```js
+module.exports = {
+  id: 'uptimekuma',
+  label: 'Uptime Kuma',
+  ttl: 30000,
+  secrets: [{ key: 'KUMA_URL', label: 'URL' },
+            { key: 'KUMA_TOKEN', label: 'API token', masked: true }],
+  configured: (get) => !!get('KUMA_URL'),
+  async fetch(get, ctx) {
+    const d = await ctx.httpJson(`${get('KUMA_URL')}/api/status`);
+    return { ok: true, up: d.up, down: d.down };
+  },
+};
+```
+
+From that, the registry derives the cache slot, the TTL, `GET /api/uptimekuma`, the SSE push event,
+the entries in `/api/secrets` (incl. masking), in-flight de-duplication, the `not_configured`
+response and a `_stale` fallback to the last good data when the upstream is down.
+
+The frontend file registers the tile — size, options, live event and markup in one manifest — and
+the tile catalog, per-tile settings, push routing and settings entry follow from it.
+
+Both directories carry a `README.md` with the full contract and a commented `_example.js` template
+(files starting with `_` are not loaded). `npm test` validates every manifest, so a typo fails the
+build instead of silently producing a blank tile.
 
 ## Contributing
 

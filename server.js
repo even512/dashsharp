@@ -431,7 +431,29 @@ function checkService(name, url) {
   if (!isValidHost(host)) {
     return Promise.resolve({ name, online: false, statusCode: null, responseMs: null, error: 'invalid' });
   }
-  return port != null ? checkTcp(name, host, port) : checkPing(name, host);
+  if (port != null) return checkTcp(name, host, port);
+  // Reiner Hostname/IP -> ICMP. Als Nicht-Root (USER node im Container) darf
+  // der Kernel den Raw-Socket verweigern, solange auf dem Host
+  // net.ipv4.ping_group_range nicht gesetzt ist. Statt den Dienst dann faelsch
+  // als „offline" zu melden, faellt die Pruefung auf einen TCP-Connect gegen
+  // gaengige Ports zurueck — das beantwortet die eigentliche Frage („laeuft der
+  // Host?") in fast allen Homelab-Faellen genauso gut.
+  return checkPing(name, host).then((r) =>
+    (r.error === 'ping_unavailable' ? checkTcpFallback(name, host) : r));
+}
+
+// Reihum ein paar uebliche Ports probieren; der erste Handshake gilt als
+// erreichbar. Bewusst kurz gehalten — das ist ein Fallback, kein Portscan.
+// Kurzes Timeout je Port, damit ein toter Host insgesamt nicht laenger braucht
+// als der Ping, den wir ersetzen (3 x 2 s statt 3 x 5 s).
+const PING_FALLBACK_PORTS = [80, 443, 22];
+const PING_FALLBACK_TIMEOUT = 2000;
+async function checkTcpFallback(name, host) {
+  for (const port of PING_FALLBACK_PORTS) {
+    const r = await checkTcp(name, host, port, PING_FALLBACK_TIMEOUT);
+    if (r.online) return r;
+  }
+  return { name, online: false, statusCode: null, responseMs: null, error: 'ping_unavailable' };
 }
 
 function checkHttp(name, url) {
@@ -502,7 +524,7 @@ function checkPing(name, host) {
 }
 
 // TCP-Connect-Reachability: online, sobald der Handshake steht.
-function checkTcp(name, host, port) {
+function checkTcp(name, host, port, timeoutMs = 5000) {
   return new Promise((resolve) => {
     const t0 = Date.now();
     let done = false;
@@ -513,7 +535,7 @@ function checkTcp(name, host, port) {
       try { socket.destroy(); } catch { /* ignore */ }
       resolve(result);
     };
-    socket.setTimeout(5000);
+    socket.setTimeout(timeoutMs);
     socket.on('connect', () => finish({ name, online: true,  statusCode: null, responseMs: Date.now() - t0 }));
     socket.on('timeout', () => finish({ name, online: false, statusCode: null, responseMs: null, error: 'timeout' }));
     socket.on('error',   () => finish({ name, online: false, statusCode: null, responseMs: null, error: 'unreachable' }));
@@ -525,6 +547,72 @@ function checkTcp(name, host, port) {
 app.use(compression({
   filter: (req, res) => (req.path === '/api/glances/stream' ? false : compression.filter(req, res)),
 }));
+/* ============================================================
+   Host-Allowlist (Schutz vor DNS-Rebinding)
+   ------------------------------------------------------------
+   Das Dashboard hat bewusst keine Authentifizierung — es soll im LAN stehen.
+   Klassisches CSRF scheitert schon daran, dass alle schreibenden Endpunkte
+   application/json erwarten (das erzwingt einen Preflight, den wir nicht
+   beantworten). DNS-Rebinding umgeht das aber vollstaendig: eine
+   Angreifer-Domain, die auf die LAN-IP des Dashboards aufloest, ist fuer den
+   Browser same-origin und darf damit auch POST /api/unraid/system/action
+   (Reboot/Shutdown) ausloesen.
+
+   Gegenmittel ist der Host-Header: der traegt bei so einem Angriff die Domain
+   des Angreifers, nicht die LAN-Adresse. Erlaubt sind daher nur localhost,
+   private IP-Bereiche und .local/.lan/.home/.internal — also genau das, worauf
+   ein LAN-Dashboard erreichbar ist. Wer hinter einem Reverse-Proxy mit eigenem
+   Hostnamen arbeitet, traegt ihn in TRUSTED_HOSTS ein (kommagetrennt);
+   TRUSTED_HOSTS=* schaltet die Pruefung ganz ab.
+   ============================================================ */
+const TRUSTED_HOSTS = String(process.env.TRUSTED_HOSTS || '')
+  .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+const HOST_CHECK_OFF = TRUSTED_HOSTS.includes('*');
+
+function isPrivateHost(host) {
+  if (host === 'localhost' || host === '::1' || host === '[::1]') return true;
+  if (/\.(local|lan|home|internal|localdomain)$/.test(host)) return true;
+  // IPv4: 10/8, 172.16/12, 192.168/16, 127/8, 169.254/16
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (m) {
+    const [a, b] = [+m[1], +m[2]];
+    if ([a, b, +m[3], +m[4]].some((n) => n > 255)) return false;
+    return a === 10 || a === 127
+        || (a === 172 && b >= 16 && b <= 31)
+        || (a === 192 && b === 168)
+        || (a === 169 && b === 254);
+  }
+  // IPv6 Unique-Local (fc00::/7) und Link-Local (fe80::/10)
+  const v6 = host.replace(/^\[|\]$/g, '');
+  if (/^(f[cd]|fe[89ab])/i.test(v6) && v6.includes(':')) return true;
+  return false;
+}
+
+function hostAllowed(hostHeader) {
+  if (HOST_CHECK_OFF) return true;
+  if (!hostHeader) return false;
+  // Port abtrennen (IPv6 in eckigen Klammern beruecksichtigen)
+  const host = String(hostHeader).toLowerCase().replace(/:\d+$/, '');
+  return TRUSTED_HOSTS.includes(host) || isPrivateHost(host);
+}
+
+let _hostWarned = new Set();
+app.use((req, res, next) => {
+  if (hostAllowed(req.headers.host)) return next();
+  const host = String(req.headers.host || '').slice(0, 100);
+  if (!_hostWarned.has(host)) {
+    _hostWarned.add(host);
+    if (_hostWarned.size > 50) _hostWarned = new Set([host]); // kein unbegrenztes Wachstum
+    console.warn(`Zugriff mit unbekanntem Host-Header abgelehnt: "${host}" `
+      + '— falls gewollt, Hostnamen in TRUSTED_HOSTS eintragen.');
+  }
+  res.status(403).json({
+    error: 'host_not_allowed',
+    message: `Host "${host}" ist nicht freigegeben. Bei Zugriff ueber einen Reverse-Proxy `
+           + 'den Hostnamen in der Umgebungsvariablen TRUSTED_HOSTS eintragen (kommagetrennt).',
+  });
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res, filePath) => {
     // Versionsstabile Vendor-Libs (gridstack, noVNC, sortable) lange & unveraenderlich
@@ -4005,6 +4093,50 @@ async function handleVncWs(ws, id) {
   for (const d of pending) { try { stream.write(d); } catch (_) {} }
   pending.length = 0;
 }
+
+/* ---------- Dienst-Icons: einmal holen, dann lokal ausliefern ----------
+   Der Icon-Picker zeigt ~300 Dienst-Logos. Vorher lud jeder Browser sie direkt
+   von cdn.jsdelivr.net — das widerspricht „no telemetry, nothing phoning home"
+   (das CDN sieht jeden Aufruf) und laesst den Picker in Homelabs ohne
+   Internetzugang komplett leer. Jetzt holt der Server ein Icon genau einmal,
+   legt es im Config-Volume ab und liefert es danach offline aus. */
+const ICON_UPSTREAM = 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons@main/png/';
+const ICON_CACHE_DIR = path.join(__dirname, 'config', 'icon-cache');
+
+app.get('/api/icon/:name', async (req, res) => {
+  // Streng validieren: der Name landet in einem Dateipfad und einer URL.
+  // Nur [a-z0-9._-] und keine Punkt-Folgen -> kein Path-Traversal moeglich.
+  const name = String(req.params.name || '');
+  if (!/^[a-zA-Z0-9._-]{1,64}\.png$/.test(name) || name.includes('..')) {
+    return res.status(400).json({ ok: false, error: 'bad_name' });
+  }
+  const file = path.join(ICON_CACHE_DIR, name);
+  // Icons sind unveraenderlich (fester CDN-Tag) -> lange cachen.
+  res.set('Cache-Control', 'public, max-age=2592000');
+
+  if (fs.existsSync(file)) return res.type('png').send(fs.readFileSync(file));
+
+  try {
+    const r = await fetch(ICON_UPSTREAM + encodeURIComponent(name), { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return res.status(404).json({ ok: false, error: 'not_found' });
+    const buf = Buffer.from(await r.arrayBuffer());
+    // PNG-Magic pruefen, damit keine Fehlerseite als Icon im Cache landet.
+    if (buf.length < 8 || buf.readUInt32BE(0) !== 0x89504e47) {
+      return res.status(502).json({ ok: false, error: 'not_png' });
+    }
+    try {
+      fs.mkdirSync(ICON_CACHE_DIR, { recursive: true });
+      const tmp = `${file}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, buf);
+      fs.renameSync(tmp, file);
+    } catch (e) { console.warn('Icon-Cache-Schreiben fehlgeschlagen:', e.message); }
+    res.type('png').send(buf);
+  } catch (err) {
+    // Ohne Internetzugang und ohne Cache-Treffer: 404 statt Haenger — der
+    // Picker blendet fehlgeschlagene Icons ohnehin aus (img.onerror).
+    res.status(404).json({ ok: false, error: 'unavailable', message: err.message });
+  }
+});
 
 /* ---------- Frontend-Module gebuendelt ausliefern ----------
    Gegenstueck zum Auto-Discovery im Backend: alle Dateien aus public/modules/
