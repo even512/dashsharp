@@ -19,6 +19,38 @@ const NEWS_LANGS = [
   { v: 'en', l: 'Englischsprachig' },
 ];
 
+/* Darstellungs-Optionen. Jede Achse setzt genau eine Klasse auf #newsList;
+   die Klasse schreibt in styles.css nur CSS-Variablen um (Schriftgroessen,
+   Bildmasse, Abstaende). Die Meldungen selbst muessen dafuer nicht neu
+   gebaut werden. */
+const NEWS_SIZES = [
+  { v: 's',  l: 'Klein' },
+  { v: 'm',  l: 'Normal' },
+  { v: 'l',  l: 'Groß' },
+  { v: 'xl', l: 'Sehr groß' },
+];
+const NEWS_SPACINGS = [
+  { v: 'tight',  l: 'Eng' },
+  { v: 'normal', l: 'Normal' },
+  { v: 'wide',   l: 'Weit' },
+];
+const NEWS_SEPARATORS = [
+  { v: 'none',  l: 'Ohne' },
+  { v: 'line',  l: 'Trennlinie' },
+  { v: 'card',  l: 'Karten' },
+  { v: 'zebra', l: 'Abwechselnd getönt' },
+];
+
+// „Vollständig" heisst: nicht abschneiden. -webkit-line-clamp braucht dafuer
+// trotzdem eine Zahl — 99 Zeilen erreicht keine Ueberschrift.
+const NEWS_NO_CLAMP = '99';
+function _newsLineOptions(max) {
+  const out = [];
+  for (let n = 1; n <= max; n++) out.push({ v: String(n), l: n === 1 ? '1 Zeile' : `${n} Zeilen` });
+  out.push({ v: '0', l: 'Vollständig' });
+  return out;
+}
+
 let _newsData = null;      // letzte Payload (fuer Re-Render nach Options-Aenderung)
 let _newsArticle = null;   // gerade geoeffneter Artikel
 let _newsLastFocus = null; // Fokus vor dem Oeffnen des Detailfensters
@@ -117,6 +149,29 @@ function _newsUpdateRow(row, item, prev) {
   }
 }
 
+// Darstellung aus der Kachel-Config auf die Liste uebertragen. Laeuft bei
+// jedem Render mit: Klassen zu setzen, die schon stehen, kostet nichts, und
+// so greift eine Aenderung auch ohne frische Daten sofort.
+function applyNewsLayout() {
+  const list = $('newsList');
+  if (!list) return;
+  const pick = (prefix, key, options) => {
+    const cur = String(_cfgVal('news', key));
+    for (const o of options) list.classList.toggle(prefix + o.v, o.v === cur);
+  };
+  pick('news-text-', 'textSize', NEWS_SIZES);
+  pick('news-img-', 'thumbSize', NEWS_SIZES);
+  pick('news-space-', 'spacing', NEWS_SPACINGS);
+  pick('news-sep-', 'separator', NEWS_SEPARATORS);
+
+  const lines = (key) => {
+    const n = Math.floor(+_cfgVal('news', key)) || 0;
+    return n > 0 ? String(n) : NEWS_NO_CLAMP;
+  };
+  list.style.setProperty('--news-title-lines', lines('titleLines'));
+  list.style.setProperty('--news-teaser-lines', lines('teaserLines'));
+}
+
 function setNewsEmpty(text) {
   const el = $('newsEmpty');
   if (!el) return;
@@ -126,6 +181,7 @@ function setNewsEmpty(text) {
 
 function renderNews(d) {
   _newsData = d || _newsData;
+  applyNewsLayout();
   const badge = $('newsBadge');
   const list = $('newsList');
   const data = _newsData;
@@ -492,6 +548,8 @@ Dash.registerModule({
 
   event: 'news',
   handler: renderNews,
+  // renderNews() traegt die Darstellungs-Optionen mit auf die Liste — eine
+  // reine Design-Aenderung wirkt damit sofort, auch ohne frische Daten.
   refresh: () => { renderNews(null); pollNews(); },
 
   template: () => `
@@ -514,6 +572,13 @@ Dash.registerModule({
     { key: 'thumbs',  label: 'Vorschaubilder', type: 'toggle', default: true, cls: 'cfg-hide-news-thumbs', group: 'Anzeige' },
     { key: 'teaser',  label: 'Kurztext',       type: 'toggle', default: false, cls: 'cfg-hide-news-teaser', group: 'Anzeige' },
     { key: 'stamps',  label: 'Zeitstempel',    type: 'toggle', default: true, cls: 'cfg-hide-news-time', group: 'Anzeige' },
+
+    { key: 'textSize',    label: 'Schriftgröße',       type: 'select', default: 'm',      options: NEWS_SIZES,          group: 'Darstellung' },
+    { key: 'titleLines',  label: 'Zeilen Überschrift', type: 'select', default: '2',      options: _newsLineOptions(3), group: 'Darstellung' },
+    { key: 'teaserLines', label: 'Zeilen Kurztext',    type: 'select', default: '2',      options: _newsLineOptions(5), group: 'Darstellung' },
+    { key: 'thumbSize',   label: 'Bildgröße',          type: 'select', default: 'm',      options: NEWS_SIZES,          group: 'Darstellung' },
+    { key: 'spacing',     label: 'Abstand',            type: 'select', default: 'normal', options: NEWS_SPACINGS,       group: 'Darstellung' },
+    { key: 'separator',   label: 'Trennung',           type: 'select', default: 'line',   options: NEWS_SEPARATORS,     group: 'Darstellung' },
   ],
 
   settings: {
