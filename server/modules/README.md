@@ -65,7 +65,10 @@ Das war's — Route, Cache, Push-Event, Secrets-Verwaltung und der
 ## Aktions-Endpunkte
 
 Module, die etwas auslösen (Container starten, Meldung archivieren), definieren
-`routes`. Aktionen **immer** gegen eine Whitelist prüfen — nie einen Wert aus dem
+`routes`. Der zweite Parameter liefert `get` (Secret-Getter), `run()` (Abruf über den
+Cache), `ctx`, `invalidate()` (Cache-Slot leeren) und `refresh()` — neu holen **und**
+sofort über SSE an alle offenen Clients schicken, statt bis zum nächsten Hub-Tick zu
+warten (wichtig bei langen TTLs). Aktionen **immer** gegen eine Whitelist prüfen — nie einen Wert aus dem
 Request in ein Kommando oder eine Mutation einsetzen:
 
 ```js

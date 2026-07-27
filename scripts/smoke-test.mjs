@@ -24,6 +24,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createContext, runInContext } from 'node:vm';
+import { createRequire } from 'node:module';
 import { get as httpGet } from 'node:http';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -95,6 +96,70 @@ for (const m of mods) {
 }
 // Vorlagen (_-Praefix) duerfen nicht geladen werden
 is(!mods.some((m) => m.id === 'example'), '_example.js wird nicht geladen');
+
+/* ---------- 2b. News-Feed-Parser ----------
+   Der Parser ist handgeschrieben (keine XML-Dependency) und bekommt
+   ausschliesslich Fremddaten zu sehen: CDATA, doppelt kodierte Entities,
+   relative Links, Bilder mal als enclosure, mal im Beschreibungs-HTML.
+   Faellt er auf die Nase, bleibt die Kachel leer — deshalb hier festgenagelt. */
+head('News-Feed-Parser');
+{
+  const news = createRequire(import.meta.url)(join(ROOT, 'server/modules/news.js'));
+  const rss = `<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+    <channel><title>Test-Feed</title>
+      <item>
+        <title><![CDATA[GPU mit 24 GB &amp; mehr]]></title>
+        <link>https://example.com/a/1</link>
+        <guid isPermaLink="false">abc-1</guid>
+        <pubDate>Mon, 27 Jul 2026 10:15:00 +0200</pubDate>
+        <description><![CDATA[<p>Ein <b>Teaser</b>.</p><img src="https://cdn.example.com/bild.jpg">]]></description>
+      </item>
+      <item>
+        <title>Zweite Meldung &#8211; Test</title>
+        <link>/relativ/2</link>
+        <enclosure url="https://cdn.example.com/enc.png" type="image/png" length="1234"/>
+        <description>Kurz und knapp</description>
+      </item>
+    </channel></rss>`;
+  const atom = `<feed xmlns="http://www.w3.org/2005/Atom"><title>Atom-Feed</title>
+    <entry>
+      <title type="html">Atom &lt;Titel&gt;</title>
+      <link rel="alternate" type="text/html" href="https://example.org/a/1"/>
+      <link rel="enclosure" type="image/jpeg" href="https://example.org/img/1.jpg"/>
+      <id>tag:example.org,2026:1</id>
+      <published>2026-07-27T09:00:00Z</published>
+      <summary type="html">&lt;p&gt;Doppelt kodiert&lt;/p&gt;</summary>
+    </entry></feed>`;
+
+  const r = news.parseFeed(rss);
+  is(r.items.length === 2, `RSS: ${r.items.length} Eintraege (erwartet 2)`);
+  is(r.items[0].title === 'GPU mit 24 GB & mehr', 'RSS: CDATA + Entity im Titel');
+  is(r.items[0].link === 'https://example.com/a/1', 'RSS: Link');
+  is(r.items[0].published === '2026-07-27T08:15:00.000Z', 'RSS: pubDate als ISO');
+  is(r.items[0].summary === 'Ein Teaser.', 'RSS: HTML aus dem Teaser entfernt');
+  is(r.items[0].image === 'https://cdn.example.com/bild.jpg', 'RSS: Bild aus dem Beschreibungs-HTML');
+  is(r.items[1].image === 'https://cdn.example.com/enc.png', 'RSS: Bild aus <enclosure>');
+
+  const a = news.parseFeed(atom);
+  is(a.items.length === 1, 'Atom: 1 Eintrag');
+  is(a.items[0].title === 'Atom <Titel>', 'Atom: escapte Klammern bleiben Text');
+  is(a.items[0].link === 'https://example.org/a/1', 'Atom: rel="alternate" gewinnt');
+  is(a.items[0].image === 'https://example.org/img/1.jpg', 'Atom: Bild aus rel="enclosure"');
+  is(a.items[0].summary === 'Doppelt kodiert', 'Atom: doppelt kodiertes HTML entfernt');
+
+  // Muell darf nie werfen — ein kaputter Feed kostet hoechstens seine Eintraege.
+  for (const junk of ['', '<html>kaputt', '<rss><channel><item></item></channel></rss>', null]) {
+    try { is(Array.isArray(news.parseFeed(junk).items), `robust gegen ${JSON.stringify(junk)}`); }
+    catch (e) { bad(`parseFeed(${JSON.stringify(junk)}) wirft: ${e.message}`); }
+  }
+  is(news.CATALOG.length > 0 && news.CATALOG.every((s) => s.id && s.url && s.category && s.lang),
+     `Katalog: ${news.CATALOG.length} Quellen, alle mit id/url/category/lang`);
+  is(new Set(news.CATALOG.map((s) => s.id)).size === news.CATALOG.length, 'Katalog: keine doppelten Quellen-ids');
+  is(news.CATALOG.every((s) => news.CATEGORIES.some((c) => c.id === s.category)),
+     'Katalog: nur bekannte Kategorien');
+  is(news.CATALOG.every((s) => /^https:\/\//.test(s.url)), 'Katalog: nur https-Feeds');
+}
 
 /* ---------- 3. Frontend-Registry ---------- */
 head('Frontend-Registry');
@@ -169,6 +234,8 @@ try {
       ['/api/status',     (d) => d.ok === true],
       ['/api/quicklinks', (d) => Array.isArray(d)],
       ['/api/secrets',    (d) => Array.isArray(d._env)],
+      // Zusatz-Route eines Moduls (news): Katalog fuer das Einstellungs-Panel
+      ['/api/news/config', (d) => Array.isArray(d.catalog) && Array.isArray(d.enabled)],
     ]) {
       try {
         const r = await get(path);
@@ -185,6 +252,19 @@ try {
         // Ohne Zugangsdaten ist not_configured die erwartete Antwort.
         is(r.ok && typeof d === 'object', `GET /api/${m.id} (${d.error || 'ok'})`);
       } catch (e) { bad(`GET /api/${m.id}: ${e.message}`); }
+    }
+
+    // Bild-Proxy der News-Kachel: es gibt keinen Weg, ihm ein Ziel
+    // unterzuschieben — er kennt nur Ids aus den zuletzt geholten Feeds.
+    for (const [path, want] of [
+      ['/api/news/image/..%2f..%2fetc%2fpasswd', 400],
+      ['/api/news/image/nichthex', 400],
+      ['/api/news/image/0123456789abcdef', 404],
+    ]) {
+      try {
+        const r = await get(path);
+        is(r.status === want, `GET ${path} -> ${r.status} (erwartet ${want})`);
+      } catch (e) { bad(`GET ${path}: ${e.message}`); }
     }
 
     // Frontend-Bundle

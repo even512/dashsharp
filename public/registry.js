@@ -25,6 +25,7 @@ window.Dash = (function () {
   const byId = new Map();
   const handlers = {};   // SSE-Event-Name -> Handler
   const settingsCats = new Map(); // Kategorie-Id -> { id, label, children[] }
+  const tabLoadersById = {};      // Settings-Tab-Id -> Loader (beim Oeffnen)
 
   function fail(msg) {
     // Laut sein, aber den Rest des Dashboards nicht mitreissen: eine kaputte
@@ -77,6 +78,10 @@ window.Dash = (function () {
       label: s.label || mod.label,
       badge: s.badge, color: s.color, icon: s.icon, statusEl: s.statusEl,
     });
+    // Panels, die ihren Inhalt erst beim Oeffnen holen (Quellenlisten, Kataloge),
+    // bringen ihren Loader selbst mit — bisher ging das nur fuer die
+    // Kern-Kategorien, die in app.js fest eingetragen sind.
+    if (typeof s.load === 'function') tabLoadersById[s.id || mod.id] = s.load;
   }
 
   /* ---------- Abgeleitete Tabellen (von app.js konsumiert) ---------- */
@@ -106,6 +111,9 @@ window.Dash = (function () {
   // { sseEvent: (data) => void }
   function pushHandlers() { return { ...handlers }; }
 
+  // { settingsTabId: () => void } — beim Oeffnen des Tabs aufgerufen
+  function tabLoaders() { return { ...tabLoadersById }; }
+
   // Baut den Settings-Baum: die Kern-Kategorien geben Reihenfolge und Labels
   // vor, die Module haengen ihre Eintraege in die passende Kategorie.
   function settingsTree(coreCategories) {
@@ -120,7 +128,7 @@ window.Dash = (function () {
 
   return {
     registerModule, registerHandler,
-    widgets, options, refreshers, pushHandlers, settingsTree,
+    widgets, options, refreshers, pushHandlers, settingsTree, tabLoaders,
     get, all,
   };
 })();

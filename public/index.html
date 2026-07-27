@@ -952,6 +952,24 @@
             </div>
           </div>
 
+          <!-- TAB: NEWS
+               Der Inhalt (Quellen-Katalog + eigene Feeds) wird von
+               public/modules/news.js beim Oeffnen des Tabs erzeugt — der
+               Katalog liegt im Backend-Modul, nicht hier im Markup. -->
+          <div class="tab" data-tab="news">
+            <div class="cfg-row">
+              <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+                <span style="font:700 11px 'JetBrains Mono',monospace;color:#5b9dff;min-width:22px;background:rgba(91,157,255,0.1);border-radius:4px;padding:2px 5px;text-align:center">NW</span>
+                <div>
+                  <div class="cfg-key">News-Quellen</div>
+                  <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">RSS/Atom · IT, Technik, Hardware, Gaming</div>
+                </div>
+              </div>
+              <span id="newsSettingsStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-status)">● –</span>
+            </div>
+            <div id="newsSettingsBody"></div>
+          </div>
+
           <!-- TAB: UNIFI / PROTECT -->
           <div class="tab" data-tab="unifi">
             <div class="cfg-section">UniFi / Protect</div>

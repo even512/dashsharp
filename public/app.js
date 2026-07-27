@@ -5121,9 +5121,21 @@ function closeTileSettings() {
   setTimeout(() => { modal.style.display = 'none'; }, 180);
 }
 
-// Optionen fuer ein 'select'-Control. 'ifaces' wird dynamisch aus der zuletzt
-// gemeldeten Interface-Liste aufgebaut (plus "Auto").
+// Optionen fuer ein 'select'-Control. Neben der statischen Liste sind zwei
+// dynamische Formen erlaubt: 'ifaces' (aus der zuletzt gemeldeten
+// Interface-Liste, plus "Auto") und eine Funktion, die das Modul selbst
+// mitbringt — etwa fuer Werte, die erst aus der Live-Payload entstehen
+// (News: Themen und Quellen inklusive selbst eingetragener Feeds).
 function _tileSelectOptions(widgetId, opt) {
+  if (typeof opt.options === 'function') {
+    try {
+      const list = opt.options(widgetId);
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      console.warn('[Dash] options() fuer', widgetId, opt.key, 'fehlgeschlagen:', e && e.message);
+      return [];
+    }
+  }
   if (opt.options === 'ifaces') {
     const list = [{ v: '', l: 'Auto' }];
     for (const n of (state.netIfaces || [])) list.push({ v: n, l: n });
@@ -5559,6 +5571,9 @@ const SETTINGS_TAB_LOADERS = {
   layout:         () => renderLayoutEditor(),
   disks:          () => loadDiskSettings(),
   unraid:         () => loadVmCfg(),
+  // Module aus public/modules/ bringen ihren Loader im Manifest mit
+  // (settings.load) — sonst muesste jedes neue Panel hier eingetragen werden.
+  ...Dash.tabLoaders(),
 };
 function runTabLoader(tab) {
   const fn = SETTINGS_TAB_LOADERS[tab];

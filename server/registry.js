@@ -182,6 +182,10 @@ function registerRoutes(app, mods, runtime, deps) {
         run: () => runtime.run(mod),
         ctx: runtime.ctxFor(mod),
         invalidate: () => { deps.cache[mod.id].ts = 0; },
+        // Neu holen UND sofort an alle offenen Streams schicken. Ohne das
+        // sehen andere Tabs eine Aenderung erst beim naechsten Hub-Tick — bei
+        // langen TTLs (News: 10 min) viel zu spaet.
+        refresh: () => (deps.pushNow ? deps.pushNow(mod.event) : runtime.run(mod)),
       });
     }
   }

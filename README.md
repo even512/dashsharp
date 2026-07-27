@@ -37,7 +37,8 @@ and no build step.
 
 - 🧩 **Design mode** — freely place & resize tiles on a grid, add/hide them from a catalog, rename section headings, and spread widgets across multiple pages; the layout is saved server-side
 - 🎛️ **Per-tile settings** — hover a tile, open ⋯ → Einstellungen: rename the tile, toggle its building blocks (rings, charts, summaries, posters, columns …) and cap list lengths; stored with the dashboard layout
-- ⚡ **Live widgets** — System (via [Glances](https://nicolargo.github.io/glances/)), Docker, AdGuard Home, JDownloader, Plex, UniFi Network & Protect, Nextcloud, Unraid, weather
+- ⚡ **Live widgets** — System (via [Glances](https://nicolargo.github.io/glances/)), Docker, AdGuard Home, JDownloader, Plex, UniFi Network & Protect, Nextcloud, Unraid, weather, news
+- 📰 **News tile** — aggregates RSS/Atom feeds into one time-sorted list: pick sources from a curated IT/tech/hardware/gaming catalogue (split into German and English) or add your own feed URLs, then filter per tile by language, topic, source or keyword. Clicking a headline opens a window with the teaser, the lead image and a link to the original article — images are fetched and served by Dash# itself, so the browser never talks to the news sites
 - 🖥️ **Unraid suite** — eight tiles on the official GraphQL API: VMs (incl. VNC console), Docker containers (start/stop/restart), array & parity (status, capacity, check control), per-disk health, shares, notifications (incl. archive), system info (live CPU/RAM, versions, reboot/shutdown via SSH) and UPS — risky actions locked behind a server-side opt-in
 - 🟢 **Service monitoring** — the Service Status tile checks your services and shows online/offline + latency; the check method is picked automatically from what you enter: a URL (`http(s)://…`) → HTTP, `host:port` → TCP connect, a bare hostname or IP → ICMP ping
 - ⚙️ **Configure in the browser** — everything under `/settings`, no config files to hand-edit
@@ -187,12 +188,14 @@ config/
 ├── dashboard-layout.json
 ├── quicklinks.json
 ├── disks.json
+├── news.json
 └── status.json
 ```
 
 `services.yaml` holds title, search and quicklinks and is auto-created on first run. `secrets.json`
 holds your API keys/tokens, set via the UI. The rest track dashboard state: tile order and visibility,
-quick-access tiles, custom disk names, and health-check targets (URL, `host:port` or a bare host/IP).
+quick-access tiles, custom disk names, the selected news feeds, and health-check targets (URL,
+`host:port` or a bare host/IP).
 
 Back up that folder and you've backed up everything. Image updates never touch it.
 

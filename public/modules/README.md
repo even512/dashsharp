@@ -43,6 +43,24 @@ Dash.registerModule({
 
 Alles außer `id`, `label` und `defaultSize` ist optional.
 
+## Einstellungs-Panel
+
+`settings` hängt einen Eintrag in die Kategorie *Module* der Einstellungen. Braucht das
+Panel Inhalte, die erst beim Öffnen feststehen (eine Quellenliste, ein Katalog vom
+Server), kommt der Loader mit ins Manifest:
+
+```js
+settings: {
+  badge: 'NW', color: '#5b9dff',
+  statusEl: 'newsSettingsStatus',   // Statuszeile -> Punkt im Settings-Baum
+  load: () => loadNewsSettings(),   // läuft bei jedem Öffnen des Tabs
+},
+```
+
+Das Markup des Panels selbst steht wie bei allen Modulen in `index.html`
+(`<div class="tab" data-tab="<id>">`) — für dynamische Inhalte genügt dort ein leerer
+Container, den der Loader füllt.
+
 ## Optionen
 
 Erscheinen im ⋯-Menü der Kachel und landen in `tile.config`:
@@ -51,7 +69,7 @@ Erscheinen im ⋯-Menü der Kachel und landen in `tile.config`:
 |---|---|
 | `toggle` | blendet die `[data-cfg="<key>"]`-Blöcke des Templates aus/ein |
 | `count` | Zahl; `0` = unbegrenzt, im Renderer über `_cfgLimit(id, key, items)` |
-| `select` | Auswahl aus `options: [{ v, l }]` |
+| `select` | Auswahl aus `options: [{ v, l }]` — oder aus `options: () => [{ v, l }]`, wenn die Werte erst zur Laufzeit feststehen (z. B. aus der letzten Push-Payload) |
 | `text` / `number` | freie Eingabe |
 
 Ein `toggle` mit `cls: 'x'` setzt stattdessen eine Klasse auf der Kachel (für
