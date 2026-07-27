@@ -1231,3 +1231,79 @@ body.design-mode[data-theme="win9x"] .grid-stack-item:hover > .grid-stack-item-c
 [data-theme="win9x"] .vm-btn:active,
 [data-theme="win9x"] .dash-tab:active { box-shadow: var(--w9-sunken) !important; }
 [data-theme="win9x"] .dash-tab.active { box-shadow: var(--w9-sunken) !important; color: #000080 !important; }
+
+/* ============================================================================
+   Kachel-Grundgeruest fuer Module (public/modules/*)
+   ----------------------------------------------------------------------------
+   Die eingebauten Kacheln tragen diesen Rahmen bisher als ~300 Zeichen langen
+   inline-style — in index.html steht er rund 20x wortgleich. Neue Module
+   benutzen stattdessen `class="tile"`, damit sie automatisch wie alle anderen
+   aussehen und Theme-Wechsel (hell/dunkel/win9x) mitmachen, statt eine Kopie
+   zu pflegen, die beim naechsten Theme auseinanderlaeuft.
+   ============================================================================ */
+.tile {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 22px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border-2);
+  border-radius: 16px;
+  background: linear-gradient(180deg, var(--bg-card), var(--bg-card-end));
+}
+
+.tile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-shrink: 0;
+  font: 600 12px 'JetBrains Mono', monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.tile-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font: 500 10px 'JetBrains Mono', monospace;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+/* Scrollt selbst, damit lange Listen die Kachelgroesse nicht sprengen. */
+.tile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.tile-list .ex-row,
+.tile-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font: 500 12px 'JetBrains Mono', monospace;
+  color: var(--text-15);
+}
+.tile-list .ex-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.tile-list .ex-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-list .ex-ms { flex-shrink: 0; color: var(--text-3); }
+
+/* Win9x-Theme: flacher Rahmen wie die uebrigen Fenster-Elemente. */
+[data-theme="win9x"] .tile {
+  background: #c0c0c0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: var(--w9-raised) !important;
+  color: #000;
+}
+[data-theme="win9x"] .tile-head { color: #000080 !important; }

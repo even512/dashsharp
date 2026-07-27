@@ -4006,6 +4006,28 @@ async function handleVncWs(ws, id) {
   pending.length = 0;
 }
 
+/* ---------- Frontend-Module gebuendelt ausliefern ----------
+   Gegenstueck zum Auto-Discovery im Backend: alle Dateien aus public/modules/
+   werden in Dateinamen-Reihenfolge zu EINEM Script zusammengefasst. Damit
+   genuegt fuers Hinzufuegen einer Kachel weiterhin eine neue Datei — ohne
+   Build-Step, ohne Eintrag in index.html und ohne asynchrones Nachladen (das
+   wuerde nach app.js landen und die abgeleiteten Tabellen verpassen). */
+const FRONTEND_MODULE_DIR = path.join(__dirname, 'public', 'modules');
+app.get('/modules.js', (req, res) => {
+  res.type('application/javascript; charset=utf-8');
+  let files = [];
+  try { files = fs.readdirSync(FRONTEND_MODULE_DIR).filter((f) => f.endsWith('.js') && !f.startsWith('_')).sort(); }
+  catch { /* Verzeichnis fehlt -> leeres Bundle */ }
+  // Ein kaputtes Modul darf die uebrigen nicht mitreissen: jede Datei laeuft
+  // in einem eigenen try/catch, der Fehler landet in der Browser-Konsole.
+  const parts = files.map((f) => {
+    const code = fs.readFileSync(path.join(FRONTEND_MODULE_DIR, f), 'utf8');
+    return `/* ---- modules/${f} ---- */\ntry {\n${code}\n} catch (e) { console.error('[Dash] Modul ${f} fehlgeschlagen:', e); }`;
+  });
+  res.set('Cache-Control', 'no-cache');
+  res.send(parts.join('\n\n') || '/* keine Frontend-Module */\n');
+});
+
 // GET /api/<id> (+ optionale Aktions-Routen) fuer jedes registrierte Modul.
 // Bewusst nach den Kern-Routen, damit ein Modul eine bestehende Route nicht
 // versehentlich verdeckt — Express nimmt den zuerst registrierten Handler.

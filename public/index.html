@@ -1182,6 +1182,12 @@
 
 <script src="vendor/gridstack/gridstack-all.js" defer></script>
 <script src="vendor/sortable.min.js" defer></script>
+<!-- Modul-Registry vor allem anderen: public/modules/* tragen sich beim Laden
+     dort ein, app.js leitet daraus Kachel-Katalog, Optionen, Push-Handler und
+     den Settings-Baum ab. Reihenfolge ist bindend (defer laedt in Dokument-
+     Reihenfolge aus). -->
+<script src="registry.js" defer></script>
+<script src="/modules.js" defer></script>
 <script src="app.js" defer></script>
 </body>
 </html>
