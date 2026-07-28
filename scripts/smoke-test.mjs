@@ -121,6 +121,12 @@ head('News-Feed-Parser');
         <enclosure url="https://cdn.example.com/enc.png" type="image/png" length="1234"/>
         <description>Kurz und knapp</description>
       </item>
+      <item>
+        <title>Bild nur im Volltext</title>
+        <link>https://example.com/a/3</link>
+        <description>Teaser ganz ohne Bild.</description>
+        <content:encoded><![CDATA[<p>Volltext</p><img src="https://cdn.example.com/voll.jpg">]]></content:encoded>
+      </item>
     </channel></rss>`;
   const atom = `<feed xmlns="http://www.w3.org/2005/Atom"><title>Atom-Feed</title>
     <entry>
@@ -130,23 +136,36 @@ head('News-Feed-Parser');
       <id>tag:example.org,2026:1</id>
       <published>2026-07-27T09:00:00Z</published>
       <summary type="html">&lt;p&gt;Doppelt kodiert&lt;/p&gt;</summary>
+    </entry>
+    <entry>
+      <title>Bild nur im escapten content</title>
+      <link rel="alternate" type="text/html" href="https://example.org/a/2"/>
+      <id>tag:example.org,2026:2</id>
+      <summary type="html">&lt;p&gt;Teaser ohne Bild&lt;/p&gt;</summary>
+      <content type="html">&lt;img src="https://example.org/img/2.jpg"&gt;&lt;p&gt;Volltext&lt;/p&gt;</content>
     </entry></feed>`;
 
   const r = news.parseFeed(rss);
-  is(r.items.length === 2, `RSS: ${r.items.length} Eintraege (erwartet 2)`);
+  is(r.items.length === 3, `RSS: ${r.items.length} Eintraege (erwartet 3)`);
   is(r.items[0].title === 'GPU mit 24 GB & mehr', 'RSS: CDATA + Entity im Titel');
   is(r.items[0].link === 'https://example.com/a/1', 'RSS: Link');
   is(r.items[0].published === '2026-07-27T08:15:00.000Z', 'RSS: pubDate als ISO');
   is(r.items[0].summary === 'Ein Teaser.', 'RSS: HTML aus dem Teaser entfernt');
   is(r.items[0].image === 'https://cdn.example.com/bild.jpg', 'RSS: Bild aus dem Beschreibungs-HTML');
   is(r.items[1].image === 'https://cdn.example.com/enc.png', 'RSS: Bild aus <enclosure>');
+  // Der Teaser bleibt der Teaser, das Bild darf trotzdem aus dem Volltext kommen.
+  is(r.items[2].summary === 'Teaser ganz ohne Bild.', 'RSS: Kurztext bleibt der Teaser');
+  is(r.items[2].image === 'https://cdn.example.com/voll.jpg', 'RSS: Bild aus <content:encoded>');
 
   const a = news.parseFeed(atom);
-  is(a.items.length === 1, 'Atom: 1 Eintrag');
+  is(a.items.length === 2, 'Atom: 2 Eintraege');
   is(a.items[0].title === 'Atom <Titel>', 'Atom: escapte Klammern bleiben Text');
   is(a.items[0].link === 'https://example.org/a/1', 'Atom: rel="alternate" gewinnt');
   is(a.items[0].image === 'https://example.org/img/1.jpg', 'Atom: Bild aus rel="enclosure"');
   is(a.items[0].summary === 'Doppelt kodiert', 'Atom: doppelt kodiertes HTML entfernt');
+  // Der Fall heise: <content type="html"> liefert das Markup entity-escaped,
+  // ohne zweiten Dekodier-Anlauf bleibt das Aufmacherbild dort unsichtbar.
+  is(a.items[1].image === 'https://example.org/img/2.jpg', 'Atom: Bild aus escaptem <content type="html">');
 
   // Muell darf nie werfen — ein kaputter Feed kostet hoechstens seine Eintraege.
   for (const junk of ['', '<html>kaputt', '<rss><channel><item></item></channel></rss>', null]) {

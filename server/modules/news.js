@@ -63,15 +63,15 @@ const LANGS = [
 const CATALOG = [
   /* --- deutschsprachig --- */
   { id: 'heise',          name: 'heise online',       url: 'https://www.heise.de/rss/heise-atom.xml',                 category: 'it-news',    lang: 'de' },
-  { id: 'golem',          name: 'Golem.de',           url: 'https://www.golem.de/rss.php?feed=RSS2.0',                category: 'it-news',    lang: 'de' },
+  { id: 'golem',          name: 'Golem.de',           url: 'https://rss.golem.de/rss.php?feed=RSS2.0',                category: 'it-news',    lang: 'de' },
   { id: 'winfuture',      name: 'WinFuture',          url: 'https://static.winfuture.de/feeds/WinFuture-News-rss2.0.xml', category: 'it-news', lang: 'de' },
   { id: 't3n',            name: 't3n',                url: 'https://t3n.de/rss.xml',                                  category: 'it-news',    lang: 'de' },
   { id: 'heise-security', name: 'heise Security',     url: 'https://www.heise.de/security/rss/news-atom.xml',          category: 'security',   lang: 'de' },
   { id: 'linuxnews',      name: 'LinuxNews.de',       url: 'https://linuxnews.de/feed/',                              category: 'linux-oss',  lang: 'de' },
   { id: 'heise-developer', name: 'heise Developer',   url: 'https://www.heise.de/developer/rss/news-atom.xml',         category: 'dev',        lang: 'de' },
   { id: 'computerbase',   name: 'ComputerBase',       url: 'https://www.computerbase.de/rss/news.xml',                category: 'hardware',   lang: 'de' },
-  { id: 'hardwareluxx',   name: 'Hardwareluxx',       url: 'https://www.hardwareluxx.de/index.php/news.feed',         category: 'hardware',   lang: 'de' },
-  { id: 'pcgh',           name: 'PC Games Hardware',  url: 'https://www.pcgameshardware.de/feed.cshtml',              category: 'hardware',   lang: 'de' },
+  { id: 'hardwareluxx',   name: 'Hardwareluxx',       url: 'https://www.hardwareluxx.de/hwl.feed',                    category: 'hardware',   lang: 'de' },
+  { id: 'pcgh',           name: 'PC Games Hardware',  url: 'https://www.pcgameshardware.de/feed.cfm?menu_alias=home', category: 'hardware',   lang: 'de' },
   { id: 'gamestar',       name: 'GameStar',           url: 'https://www.gamestar.de/news/rss/news.rss',               category: 'gaming',     lang: 'de' },
   { id: 'eurogamer-de',   name: 'Eurogamer.de',       url: 'https://www.eurogamer.de/feed',                           category: 'gaming',     lang: 'de' },
 
@@ -273,7 +273,26 @@ function pickLink(block) {
   return toPlainText(tagText(block, ['link']));
 }
 
-function pickImage(block, text) {
+// Ein <img> aus einem Textfeld ziehen. RSS legt sein Beschreibungs-HTML
+// ueblicherweise in CDATA — dort steht nach unwrapCdata() echtes Markup.
+// Atom escaped es stattdessen (<content type="html"> liefert &lt;img …&gt;),
+// und genau daran ist der Ausdruck bisher vorbeigelaufen: ohne den zweiten
+// Anlauf ueber decodeEntities() bleiben die Aufmacherbilder aller
+// Atom-Feeds (heise, heise Security, heise Developer …) unsichtbar.
+const IMG_SRC_RE = /<img\b[^>]*?\bsrc\s*=\s*("([^"]+)"|'([^']+)')/i;
+
+function imgFromHtml(raw) {
+  if (!raw) return '';
+  const s = unwrapCdata(raw);
+  let m = IMG_SRC_RE.exec(s);
+  if (!m && /&(?:lt|#0*60|#x0*3c);\s*img/i.test(s)) m = IMG_SRC_RE.exec(decodeEntities(s));
+  return m ? decodeEntities(m[2] || m[3]) : '';
+}
+
+/* pickImage(block, htmls) — htmls sind die Fliesstext-Felder des Eintrags in
+   der Reihenfolge, in der sie als Bildquelle taugen. Explizite Bild-Elemente
+   gehen immer vor, der Teaser ist die letzte Station. */
+function pickImage(block, htmls) {
   // Atom haengt Bilder als <link rel="enclosure" type="image/…" href="…"/> an.
   for (const tag of (block.match(/<(?:[a-zA-Z0-9]+:)?link\b[^>]*>/gi) || [])) {
     if (attr(tag, 'rel') === 'enclosure' && /^image\//i.test(attr(tag, 'type'))) {
@@ -289,11 +308,13 @@ function pickImage(block, text) {
     const medium = attr(tag, 'medium');
     if (type && !/^image\//i.test(type)) continue;
     if (!type && medium && medium.toLowerCase() !== 'image') continue;
-    if (!type && !medium && !/\.(jpe?g|png|gif|webp)(\?|$)/i.test(url)) continue;
-    return url;
+    if (!type && !medium && !/\.(jpe?g|png|gif|webp|avif)(\?|$)/i.test(url)) continue;
+    return decodeEntities(url);
   }
-  const img = /<img\b[^>]*\bsrc\s*=\s*("([^"]+)"|'([^']+)')/i.exec(unwrapCdata(text) || '');
-  if (img) return decodeEntities(img[2] || img[3]);
+  for (const html of htmls) {
+    const src = imgFromHtml(html);
+    if (src) return src;
+  }
   return '';
 }
 
@@ -312,8 +333,13 @@ function parseFeed(xml) {
   const head = clean.slice(0, blocks.length ? clean.indexOf(blocks[0]) : clean.length);
   const items = [];
   for (const block of blocks) {
-    const rawSummary = tagText(block, ['description', 'summary'])
-      || tagText(block, ['encoded', 'content']);
+    // Teaser und Volltext getrennt halten: der Kurztext kommt aus dem
+    // Teaser, das Bild darf aber auch aus dem laengeren <content:encoded>
+    // stammen — bisher wurde nur das erste nicht-leere Feld ueberhaupt
+    // angesehen, und damit blieben Bilder liegen.
+    const summaryHtml = tagText(block, ['description', 'summary']);
+    const contentHtml = tagText(block, ['encoded', 'content']);
+    const rawSummary = summaryHtml || contentHtml;
     const title = toPlainText(tagText(block, ['title']));
     const link = toPlainText(pickLink(block));
     if (!title && !link) continue;
@@ -323,7 +349,7 @@ function parseFeed(xml) {
       guid: toPlainText(tagText(block, ['guid', 'id'])),
       published: parseDate(tagText(block, ['pubDate', 'published', 'updated', 'date'])),
       summary: toPlainText(rawSummary).slice(0, SUMMARY_CHARS),
-      image: pickImage(block, rawSummary),
+      image: pickImage(block, [summaryHtml, contentHtml]),
     });
   }
   return { title: toPlainText(tagText(head, ['title'])), items };
@@ -428,6 +454,9 @@ function imageTypeOf(buf) {
   if (buf.readUInt32BE(0) === 0x89504e47) return 'image/png';
   if (buf.toString('ascii', 0, 4) === 'GIF8') return 'image/gif';
   if (buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  // AVIF liefern die Bild-CDNs deutscher Nachrichtenseiten inzwischen von sich
+  // aus aus; ohne diesen Zweig landete so ein Bild als 'not_an_image' im 404.
+  if (buf.toString('ascii', 4, 8) === 'ftyp' && /^avi[fs]$/.test(buf.toString('ascii', 8, 12))) return 'image/avif';
   return null; // insbesondere SVG: wuerde same-origin ausgeliefert und koennte Skript ausfuehren
 }
 
