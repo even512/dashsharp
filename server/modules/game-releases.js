@@ -65,8 +65,15 @@ const TIMEZONE = 'Europe/Berlin';
    (Port), also ausgerechnet die beiden Titel des Testtags. */
 const GAME_TYPES = [0, 4, 8, 9, 10, 11];
 
+/* In der Tagesliste kommen nur die Typen aus GAME_TYPES vor. DLC, Erweiterung,
+   Episode und Season stehen trotzdem hier, weil die Lupe sie mitliefert — dann
+   soll das Ergebnis auch sagen, was es ist. */
 const GAME_TYPE_DE = {
+  1: 'DLC',
+  2: 'Erweiterung',
   4: 'Standalone-Addon',
+  6: 'Episode',
+  7: 'Season',
   8: 'Remake',
   9: 'Remaster',
   10: 'Erweiterte Fassung',
@@ -702,13 +709,47 @@ async function gameDetail(get, ctx, id) {
 
 /* ---------- Suche ---------- */
 
+/* Die Lupe filtert bewusst ANDERS als die Tagesliste.
+
+   Zum einen inhaltlich: wer nach einem Titel sucht, will auch wissen, wann
+   eine Erweiterung erscheint — in der Tagesliste waeren dieselben Eintraege
+   nur Rauschen. Ausgeschlossen wird deshalb nur, was nie ein eigener Termin
+   ist: Bundles, Mods, Packs, Forks und Updates.
+
+   Zum anderen technisch, und das war ein handfester Fehler: `search` und
+   `where` zusammen ergeben keine gefilterte Suche. IGDB rankt zuerst und
+   filtert das Ergebnis danach — steht das Gesuchte nicht im Ranking-Fenster,
+   ist die Antwort leer. Mit `where game_type = (0,4,8,9,10,11)` und `limit 8`
+   lieferte "world of war" darum NICHTS (oben stehen die WoW-Erweiterungen,
+   alle vom Filter verworfen), waehrend "world" und "world of warcraft"
+   sauber funktionierten. Jetzt geht die Suche ungefiltert an IGDB, holt ein
+   breiteres Fenster und sortiert erst hier aus. */
+const SEARCH_SKIP = new Set([3, 5, 12, 13, 14]);
+const SEARCH_FETCH = 30;
+const SEARCH_FIELDS = 'fields id, name, first_release_date, hypes, cover.image_id,'
+  + ' game_type, platforms.id, platforms.name, platforms.abbreviation;';
+
 async function searchGames(get, ctx, q) {
-  const rows = await igdb(get, ctx, 'games',
-    `search "${quote(q)}";`
-    + ' fields id, name, first_release_date, hypes, cover.image_id,'
-    + ' game_type, platforms.id, platforms.name, platforms.abbreviation;'
-    + ` where game_type = (${GAME_TYPES.join(',')}); limit ${SEARCH_LIMIT};`);
-  return (Array.isArray(rows) ? rows : []).map((g) => ({
+  let rows = await igdb(get, ctx, 'games',
+    `search "${quote(q)}"; ${SEARCH_FIELDS} limit ${SEARCH_FETCH};`);
+  let hits = pickSearchHits(rows);
+
+  // Der Suchindex greift nicht bei jeder Wortfolge. `name ~ *"…"*` ist ein
+  // schlichter Teilstring-Vergleich und damit vorhersagbar — als Netz
+  // darunter, nicht als Ersatz: die Relevanzsortierung von `search` ist
+  // fuer normale Anfragen die bessere.
+  if (!hits.length) {
+    rows = await igdb(get, ctx, 'games',
+      `${SEARCH_FIELDS} where name ~ *"${quote(q)}"*; limit ${SEARCH_FETCH};`);
+    hits = pickSearchHits(rows);
+  }
+  return hits.slice(0, SEARCH_LIMIT);
+}
+
+function pickSearchHits(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((g) => g && g.name && !SEARCH_SKIP.has(g.game_type))
+    .map((g) => ({
     id: g.id,
     name: g.name,
     date: isoOf(g.first_release_date),
@@ -717,7 +758,8 @@ async function searchGames(get, ctx, q) {
     cover: imageUrl(g.cover && g.cover.image_id, 't_cover_big_2x'),
     platforms: (g.platforms || []).map(platformOf).filter(Boolean)
       .map((p) => ({ label: p.label, family: p.family })),
-  })).sort(searchOrder);
+  }))
+    .sort(searchOrder);
 }
 
 /* IGDBs eigene Trefferreihenfolge stellt bei "gothic" das Remake, nach dem
@@ -986,6 +1028,7 @@ module.exports = {
     GAME_TYPES, GENRES_DE, PLATFORMS, GAME_MODES_DE, PERSPECTIVES_DE,
     AGE_ORGS, AGE_CATEGORIES, GAME_TYPE_DE, STATUS_DE, WEBSITE_DE,
     isValidIso, dayBounds, todayIso, quote, toId, allowedImageUrl, looksGerman,
+    SEARCH_SKIP, SEARCH_FETCH, pickSearchHits,
     imageTypeOf, groupReleases, sortByRelevance, clip,
     releasesForDay, searchGames, gameDetail, upcoming, getToken,
   },

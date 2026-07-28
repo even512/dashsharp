@@ -557,6 +557,7 @@ async function openGameDetail(id, seed) {
     summary: seed.teaser, summaryLang: seed.teaserLang, summarySource: null,
   } : { name: '…' }, true);
 
+  grLockPageScroll(true);
   modal.style.display = 'flex';
   requestAnimationFrame(() => {
     modal.classList.add('open');
@@ -704,6 +705,25 @@ function grFillDetail(g, loading) {
   }
 }
 
+/* Solange das Detailfenster offen ist, soll das Mausrad nur darin wirken —
+   sonst scrollt die Seite darunter weg, und beim Schliessen steht man
+   woanders. Die App hat dafuer kein Muster, also hier eines: eine Klasse auf
+   <body>, mehr nicht. Die Breite der verschwindenden Scrollleiste wird
+   ausgeglichen, damit der Inhalt beim Oeffnen nicht seitlich springt. */
+function grLockPageScroll(on) {
+  const body = document.body;
+  if (!body) return;
+  if (on) {
+    if (body.classList.contains('gr-scroll-locked')) return;
+    const gap = window.innerWidth - document.documentElement.clientWidth;
+    if (gap > 0) body.style.setProperty('--gr-scrollbar-gap', `${gap}px`);
+    body.classList.add('gr-scroll-locked');
+  } else {
+    body.classList.remove('gr-scroll-locked');
+    body.style.removeProperty('--gr-scrollbar-gap');
+  }
+}
+
 function grSyncShotStrip() {
   const shots = $('grDetailShots');
   if (shots) shots.style.display = shots.childNodes.length ? '' : 'none';
@@ -780,6 +800,7 @@ function closeGameDetail() {
   // Ein offenes Bild darf nicht ueber dem geschlossenen Fenster stehenbleiben.
   if (grLightboxOpen()) closeGrLightbox();
   _grDetail = null;
+  grLockPageScroll(false);
   if (!modal) return;
   modal.classList.remove('open');
   setTimeout(() => { modal.style.display = 'none'; }, 180);

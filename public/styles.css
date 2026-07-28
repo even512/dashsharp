@@ -2082,3 +2082,12 @@ body.design-mode[data-theme="win9x"] .grid-stack-item:hover > .grid-stack-item-c
 }
 .gr-detail-stores { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .gr-detail-stores .cfg-btn { text-decoration: none; display: inline-flex; align-items: center; }
+
+/* Seite hinter dem Detailfenster festhalten: das Mausrad soll nur im Fenster
+   wirken, sonst scrollt das Dashboard darunter weg. --gr-scrollbar-gap gleicht
+   die Breite der verschwindenden Scrollleiste aus, damit beim Oeffnen nichts
+   seitlich springt (public/modules/game-releases.js, grLockPageScroll). */
+body.gr-scroll-locked {
+  overflow: hidden;
+  padding-right: var(--gr-scrollbar-gap, 0);
+}

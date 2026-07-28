@@ -307,6 +307,19 @@ head('Game Releases');
      'Spracherkennung: englischer Text wird nicht als deutsch durchgewinkt');
   is(!gr.looksGerman('Kurz'), 'Spracherkennung: zu kurze Texte gelten nicht als deutsch');
 
+  /* Die Lupe darf NICHT dieselbe Typen-Allowlist benutzen wie die Tagesliste:
+     `search` und `where` zusammen ergeben in IGDB keine gefilterte Suche —
+     erst wird gerankt, dann gefiltert. Mit der engen Liste lieferte
+     "world of war" nichts, weil oben nur WoW-Erweiterungen standen. */
+  is(gr.SEARCH_SKIP.has(3) && gr.SEARCH_SKIP.has(14),
+     'Suche: Bundles und Updates bleiben draussen');
+  is(!gr.SEARCH_SKIP.has(1) && !gr.SEARCH_SKIP.has(2),
+     'Suche: DLC und Erweiterungen kommen durch (haben eigene Termine)');
+  is(gr.SEARCH_FETCH > 8,
+     `Suche: holt ein breiteres Fenster (${gr.SEARCH_FETCH}) als sie anzeigt`);
+  is(gr.GAME_TYPE_DE[1] && gr.GAME_TYPE_DE[2],
+     'Suche: DLC und Erweiterung haben ein deutsches Label');
+
   is(gr.clip('a  b\n c') === 'a b c', 'Textaufbereitung: Leerraum wird normalisiert');
   is(gr.clip('x'.repeat(50), 10).length === 10, 'Textaufbereitung: lange Texte werden gekuerzt');
 }
