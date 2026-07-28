@@ -671,8 +671,12 @@ async function gameDetail(get, ctx, id) {
       (game.artworks || [])[0] && game.artworks[0].image_id,
       't_720p',
     ),
+    // Zwei Groessen: der Streifen zeigt 104px hohe Vorschauen, die Lightbox
+    // darf gross werden. t_screenshot_huge liefert dieselben Bytes wie
+    // t_720p — t_1080p ist die einzige Stufe, die wirklich mehr bringt.
     screenshots: (game.screenshots || []).slice(0, 6)
-      .map((s) => imageUrl(s.image_id, 't_720p')).filter(Boolean),
+      .filter((s) => s.image_id)
+      .map((s) => ({ thumb: imageUrl(s.image_id, 't_720p'), full: imageUrl(s.image_id, 't_1080p') })),
     summary: german ? german.text : clip(game.summary),
     summaryLang: german ? 'de' : 'en',
     summarySource: german ? german.source : 'IGDB',

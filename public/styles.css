@@ -1938,6 +1938,11 @@ body.design-mode[data-theme="win9x"] .grid-stack-item:hover > .grid-stack-item-c
 
 /* ---------- Detailfenster ---------- */
 .gr-detail-body { padding: 0 0 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+/* Der Spalten-Flexcontainer wuerde seine Kinder zusammenquetschen, statt zu
+   scrollen: bei einem langen Beschreibungstext blieb vom Bilderstreifen ein
+   6px hoher Rest mit Scrollbalken uebrig, waehrend die Bilder darin ihre
+   vollen 104px behielten. Nichts hier darf schrumpfen. */
+.gr-detail-body > * { flex-shrink: 0; }
 .gr-detail-body > *:not(.gr-detail-hero):not(.gr-detail-shots) { margin: 0 20px; }
 /* Artwork als Kopfbild, Cover halb darueber gelegt — wie ein Spielekarton
    vor dem Hintergrundbild. */
@@ -2004,6 +2009,70 @@ body.design-mode[data-theme="win9x"] .grid-stack-item:hover > .grid-stack-item-c
   border-radius: 7px;
   border: 1px solid var(--border-4);
   object-fit: cover;
+  cursor: zoom-in;
+  transition: border-color .15s, transform .15s;
+}
+.gr-shot:hover, .gr-shot:focus-visible {
+  border-color: var(--accent-border);
+  transform: translateY(-2px);
+  outline: none;
+}
+
+/* ---------- Lightbox ----------
+   Liegt ueber dem Detailfenster (dessen .picker-modal steht auf z-index 320). */
+.gr-lightbox {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  background: rgba(0, 0, 0, .88);
+  align-items: center;
+  justify-content: center;
+  padding: 40px 64px;
+  opacity: 0;
+  transition: opacity .16s ease;
+}
+.gr-lightbox.open { opacity: 1; }
+.gr-lb-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .7);
+}
+.gr-lb-nav, .gr-lb-close {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .18);
+  color: #fff;
+  cursor: pointer;
+  line-height: 1;
+}
+.gr-lb-nav:hover, .gr-lb-close:hover { background: rgba(255, 255, 255, .18); }
+.gr-lb-nav { top: 50%; transform: translateY(-50%); width: 40px; height: 56px; font-size: 24px; }
+.gr-lb-prev { left: 14px; }
+.gr-lb-next { right: 14px; }
+.gr-lb-close { top: 14px; right: 14px; width: 34px; height: 34px; font-size: 16px; }
+/* Bei einem einzigen Screenshot waeren die Pfeile nur Dekoration. */
+.gr-lightbox.gr-lb-single .gr-lb-nav { display: none; }
+.gr-lb-count {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, .55);
+  font: 600 11px 'JetBrains Mono', monospace;
+  color: rgba(255, 255, 255, .8);
+}
+@media (max-width: 640px) {
+  .gr-lightbox { padding: 56px 12px; }
+  .gr-lb-nav { width: 34px; height: 46px; }
 }
 .gr-detail-foot {
   display: flex;
