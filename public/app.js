@@ -3421,6 +3421,37 @@ function renderUnifiAps(devices) {
   setHtmlIfChanged(wrap, html);
 }
 
+// Kamera fuer die Protect-Kachel. Bevorzugt die Daten der Netzwerk-Kachel,
+// faellt sonst auf die schlanke, serverseitig gecachte Kameraliste zurueck —
+// sonst blieb die Kachel leer, solange `unifi-network` nicht auf derselben
+// Seite lag (pollUnifi bricht dann ab und _unifiState bleibt null).
+let _camInfo   = null;
+let _camInfoAt = -Infinity;
+let _camError  = null;
+const CAM_INFO_TTL = 60000;
+
+async function unifiCameraInfo() {
+  const fromState = _unifiState?.cameras?.[0];
+  if (fromState?.id) { _camError = _unifiState.camError || null; return fromState; }
+  if (_camInfo && performance.now() - _camInfoAt < CAM_INFO_TTL) return _camInfo;
+  try {
+    const d = await fetch('/api/unifi/cameras', { cache: 'no-store' }).then(r => r.json());
+    _camInfo   = d?.cameras?.[0] || null;
+    _camError  = d?.ok ? null : (d?.error || null);
+    _camInfoAt = performance.now();
+  } catch (e) {
+    _camError = e.message;
+  }
+  return _camInfo;
+}
+
+// Das JPEG wird genau einmal geladen: ueber fetch() in einen Blob, der dann
+// als Object-URL ins <img> geht. Vorher lief der Abruf durch ein Probe-Image
+// und danach nochmal ueber `img.src` — bei `Cache-Control: no-store` sind das
+// zwei vollstaendige Abrufe durch die UniFi-Cloud fuer ein einziges Bild.
+let _snapBusy   = false;
+let _snapObjUrl = null;
+
 async function pollUnifiSnapshot() {
   if (!state.liveOn) return;
   if (!widgetOnActivePage('unifi-cameras')) return;
@@ -3428,45 +3459,56 @@ async function pollUnifiSnapshot() {
   const ph    = $('unifiSnapshotPlaceholder');
   const camSt = $('unifiCamStatus');
   if (!img) return;
-  // No state yet → wait until pollUnifi finishes
-  if (!_unifiState) return;
-  const cam = _unifiState?.cameras?.[0];
-  if (!cam?.id) {
-    // Distinguish: Protect error vs. no camera present
-    const hint = _unifiState.camError
-      ? '● Protect unreachable'
-      : '● no camera found';
-    if (camSt) { camSt.textContent = hint; camSt.style.color = 'var(--orange)'; }
-    // Adjust placeholder text
-    if (ph) ph.textContent = _unifiState.camError
-      ? `Protect API error: ${_unifiState.camError}`
-      : 'No camera found via Protect — enter Camera ID manually';
-    return;
-  }
-  if (!cam.online) {
-    if (camSt) { camSt.textContent = '● offline'; camSt.style.color = 'var(--red)'; }
-    return;
-  }
-  const url = `/api/unifi/snapshot?cam=${encodeURIComponent(cam.id)}&_t=${Date.now()}`;
-  const tmp = new Image();
-  tmp.onload = () => {
-    const swap = () => {
-      img.src = url;
-      img.style.display = 'block';
-      if (ph) ph.style.display = 'none';
-      setText('unifiSnapshotTs', 'Snapshot: ' + new Date().toLocaleTimeString('en-US', { hour12: false }));
-      if (camSt) { camSt.textContent = '● online'; camSt.style.color = 'var(--green)'; }
-      setText('unifiCamName', cam.name);
-    };
+  if (_snapBusy) return; // ein langsamer Abruf soll sich nicht stapeln
+
+  _snapBusy = true;
+  try {
+    const cam = await unifiCameraInfo();
+    if (!cam?.id) {
+      // Distinguish: Protect error vs. no camera present
+      if (camSt) {
+        camSt.textContent = _camError ? '● Protect unreachable' : '● no camera found';
+        camSt.style.color = 'var(--orange)';
+      }
+      if (ph) ph.textContent = _camError
+        ? `Protect API error: ${_camError}`
+        : 'No camera found via Protect — enter Camera ID manually';
+      return;
+    }
+    if (cam.name) setText('unifiCamName', cam.name);
+    if (cam.online === false) {
+      if (camSt) { camSt.textContent = '● offline'; camSt.style.color = 'var(--red)'; }
+      return;
+    }
+
+    const r = await fetch(`/api/unifi/snapshot?cam=${encodeURIComponent(cam.id)}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const blob = await r.blob();
+    if (!blob.size) throw new Error('empty');
+    // Aufnahmezeit kommt vom Server (der Snapshot kann aus dessen Cache
+    // stammen) — sonst zeigt die Kachel die Uhrzeit des Abrufs.
+    const ts  = Number(r.headers.get('X-Snapshot-Ts')) || Date.now();
+    const url = URL.createObjectURL(blob);
+
     // Decode the JPEG off the paint path first; otherwise the swap forces a
     // synchronous full-image decode that drops animation frames every 30s.
-    if (tmp.decode) tmp.decode().then(swap, swap);
-    else swap();
-  };
-  tmp.onerror = () => {
+    const tmp = new Image();
+    tmp.src = url;
+    if (tmp.decode) { try { await tmp.decode(); } catch (_) {} }
+
+    const prev = _snapObjUrl;
+    img.src = url;
+    _snapObjUrl = url;
+    if (prev) URL.revokeObjectURL(prev); // sonst waechst der Speicher pro Bild
+    img.style.display = 'block';
+    if (ph) ph.style.display = 'none';
+    setText('unifiSnapshotTs', 'Snapshot: ' + new Date(ts).toLocaleTimeString('en-US', { hour12: false }));
+    if (camSt) { camSt.textContent = '● online'; camSt.style.color = 'var(--green)'; }
+  } catch (e) {
     if (camSt) { camSt.textContent = '● snapshot error'; camSt.style.color = 'var(--orange)'; }
-  };
-  tmp.src = url;
+  } finally {
+    _snapBusy = false;
+  }
 }
 
 function handleUnifi(d) {
@@ -3504,11 +3546,11 @@ async function pollUnifi() {
 function startUnifi() {
   clearInterval(unifiTimer);
   clearInterval(unifiSnapTimer);
-  pollUnifi().then(() => {
-    // Only start snapshot polling after the first successful poll (Camera ID comes from state)
-    pollUnifiSnapshot();
-    unifiSnapTimer = setInterval(pollUnifiSnapshot, UNIFI_SNAP_MS);
-  });
+  pollUnifi();
+  // Der Snapshot wartet nicht mehr auf den Netzwerk-Poll: die Kamera-ID
+  // besorgt sich pollUnifiSnapshot notfalls selbst (/api/unifi/cameras).
+  pollUnifiSnapshot();
+  unifiSnapTimer = setInterval(pollUnifiSnapshot, UNIFI_SNAP_MS);
   unifiTimer = setInterval(pollUnifi, UNIFI_POLL_MS);
 }
 
@@ -3662,7 +3704,7 @@ function startLive() {
   if (_pushMode) {
     openMetricsStream();   // net/wan/glances + alle Kachel-Events + Snapshot
     startUptimeTicker();   // 1s-Uptime (Systemdaten kommen per SSE)
-    startUnifiSnapshot();  // Kamera-Snapshot bleibt Pull (guarded via _unifiState)
+    startUnifiSnapshot();  // Kamera-Snapshot bleibt Pull (eigener Parameter-Endpoint)
   } else {
     startPollingFallback();
   }
@@ -3700,6 +3742,9 @@ function startUptimeTicker() {
 }
 function startUnifiSnapshot() {
   clearInterval(unifiSnapTimer);
+  // Sofort einen Snapshot holen: vorher erschien im Push-Modus das erste Bild
+  // erst nach einem vollen Intervall (30 s), obwohl die Kachel schon stand.
+  pollUnifiSnapshot();
   unifiSnapTimer = setInterval(pollUnifiSnapshot, UNIFI_SNAP_MS);
 }
 // Counterpart to startLive(): actually clears every live timer (not just a

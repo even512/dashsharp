@@ -96,6 +96,13 @@ process.on('unhandledRejection', (reason) => {
    ============================================================ */
 const UNIFI_BASE = 'https://api.ui.com';
 
+// Keep-Alive gegen api.ui.com: ohne wiederverwendete Verbindung zahlt jeder
+// Abruf — und damit jeder Kamera-Snapshot — einen kompletten TLS-Handshake
+// ueber die Cloud, was bei einem 30-Sekunden-Takt nie aus dem Cache faellt.
+const unifiCloudAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 30000, maxSockets: 8 });
+// Dieselbe Ueberlegung fuer die lokale Console (self-signed, LAN).
+const unifiLocalAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 30000, maxSockets: 8, rejectUnauthorized: false });
+
 function unifiCfg() {
   return {
     apiKey: getSecret('UNIFI_API_KEY')   || '',
@@ -116,6 +123,7 @@ function unifiFetch(cfg, urlPath, timeoutMs = 6000) {
         port:     parsed.port || 443,
         path:     parsed.pathname + parsed.search,
         method:   'GET',
+        agent:    unifiCloudAgent,
         headers:  { 'X-API-Key': cfg.apiKey, Accept: 'application/json' },
       },
       (res) => {
@@ -160,7 +168,9 @@ function unifiLocalReady(cfg = unifiLocalCfg()) {
 let unifiLocalSession = null; // { cookie, csrf } — nach erfolgreichem Login
 
 // Roh-Request gegen die lokale Console (self-signed erlaubt, LAN).
-function unifiLocalRequest(cfg, { method = 'GET', urlPath, body = null, headers = {}, timeoutMs = 5000 }) {
+// `binary: true` liefert statt `raw` einen Buffer in `body` — noetig fuer
+// JPEG-Snapshots, die als String zusammengesetzt zerstoert wuerden.
+function unifiLocalRequest(cfg, { method = 'GET', urlPath, body = null, headers = {}, timeoutMs = 5000, binary = false }) {
   return new Promise((resolve, reject) => {
     let parsed;
     try { parsed = new URL(cfg.url + urlPath); } catch (e) { return reject(e); }
@@ -172,14 +182,25 @@ function unifiLocalRequest(cfg, { method = 'GET', urlPath, body = null, headers 
         port:     parsed.port || 443,
         path:     parsed.pathname + parsed.search,
         method,
+        agent:    unifiLocalAgent,
         rejectUnauthorized: false, // Console nutzt self-signed Zertifikat (LAN)
         headers: {
-          Accept: 'application/json',
+          Accept: binary ? 'image/jpeg,*/*' : 'application/json',
           ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': payload.length } : {}),
           ...headers,
         },
       },
       (res) => {
+        if (binary) {
+          const chunks = [];
+          res.on('data', c => chunks.push(c));
+          res.on('end', () => {
+            if (settled) return; settled = true;
+            clearTimeout(timer);
+            resolve({ statusCode: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) });
+          });
+          return;
+        }
         let raw = '';
         res.on('data', c => raw += c);
         res.on('end', () => {
@@ -244,6 +265,55 @@ async function unifiLocalFetch(cfg, apiPath, timeoutMs = 5000) {
   if (r.statusCode === 401) { unifiLocalSession = null; r = await doGet(); }
   if (r.statusCode >= 400) throw new Error(`HTTP ${r.statusCode}`);
   try { return JSON.parse(r.raw); } catch (e) { throw new Error('JSON-Parse fehlgeschlagen'); }
+}
+
+/* ------------------------------------------------------------
+   UniFi Protect lokal (LAN) — derselbe Login wie oben, aber gegen
+   /proxy/protect/api/... . Der Weg ueber die Cloud (Browser → Dash#
+   → api.ui.com → Console → Protect) kostet fuer ein einzelnes JPEG
+   regelmaessig mehrere Sekunden; im LAN sind es Millisekunden.
+   Schlaegt der lokale Weg fehl, faellt alles auf die Cloud zurueck.
+   ------------------------------------------------------------ */
+// GET auf die lokale Protect-API. Re-Login bei 401 (Session abgelaufen).
+async function unifiLocalProtect(cfg, apiPath, { timeoutMs = 4000, binary = false } = {}) {
+  const doGet = async () => {
+    const sess = unifiLocalSession || await unifiLocalLogin(cfg);
+    return unifiLocalRequest(cfg, {
+      urlPath: `/proxy/protect/api${apiPath}`,
+      headers: { Cookie: sess.cookie, ...(sess.csrf ? { 'X-CSRF-Token': sess.csrf } : {}) },
+      timeoutMs,
+      binary,
+    });
+  };
+  let r = await doGet();
+  if (r.statusCode === 401) { unifiLocalSession = null; r = await doGet(); }
+  if (r.statusCode >= 400) throw new Error(`HTTP ${r.statusCode}`);
+  if (binary) return r.body;
+  try { return JSON.parse(r.raw); } catch (e) { throw new Error('JSON-Parse fehlgeschlagen'); }
+}
+
+// Merkt sich, ob der lokale Protect-Weg gerade nicht funktioniert (kein
+// Protect installiert, Konto ohne Protect-Rechte, Console nicht erreichbar).
+// Ohne das wuerde jeder Snapshot erst in einen Timeout laufen und danach
+// nochmal ueber die Cloud gehen — also langsamer als vorher.
+let _protectLocalBlockedUntil = 0;
+const PROTECT_LOCAL_COOLDOWN = 300000; // 5 min
+function protectLocalUsable(cfg = unifiLocalCfg()) {
+  return unifiLocalReady(cfg) && Date.now() >= _protectLocalBlockedUntil;
+}
+function protectLocalFailed(err) {
+  _protectLocalBlockedUntil = Date.now() + PROTECT_LOCAL_COOLDOWN;
+  console.warn(`UniFi Protect lokal nicht nutzbar (${err && err.message}) — Cloud-Fallback fuer ${PROTECT_LOCAL_COOLDOWN / 60000} min`);
+}
+
+// Kameraliste im einheitlichen Format {id,name,online,model}.
+function mapProtectCameras(list) {
+  return (Array.isArray(list) ? list : (list && list.data) || []).map(c => ({
+    id:     c.id || c._id,
+    name:   c.name || c.displayName || 'Kamera',
+    online: c.state ? c.state === 'CONNECTED' : c.isConnected !== false,
+    model:  c.type || c.modelKey || '',
+  })).filter(c => c.id);
 }
 
 // Gecachte IDs — werden beim ersten erfolgreichen API-Call gesetzt
@@ -2536,6 +2606,7 @@ app.post('/api/secrets', (req, res) => {
     // Caches invalidieren damit naechster Poll sofort mit neuen Creds laeuft
     for (const k of Object.keys(cache)) cache[k] = { ts: 0, data: null };
     unifiLocalSession = null; // ggf. geaenderte lokale UniFi-Creds erzwingen Re-Login
+    resetProtectCaches();     // Kameraliste/Snapshot koennen zu alten Creds gehoeren
     jdSession = null;         // ggf. geaenderte MyJDownloader-Creds erzwingen Reconnect
     _wanSrcLogged = null;     // Quellenwechsel (lokal<->cloud) beim naechsten Poll loggen
     stopGwSsh();              // ggf. geaenderte Gateway-SSH-Creds erzwingen Reconnect
@@ -2565,10 +2636,21 @@ async function _refreshUnifi() {
     // Legacy Local API via Cloud-Connector: vollständige Daten (Signal, WAN-Throughput, CPU, Radios)
     const legBase = `/v1/connector/consoles/${hostId}/proxy/network/api/s/default`;
 
-    const [healthRaw, devRaw, staRaw] = await Promise.all([
+    // Kameras (Protect) laufen mit — der Abruf haengt nicht an den
+    // Netzwerkdaten und hat einen eigenen, laengeren Cache.
+    const camsP = getProtectCameras().then(
+      (cams) => ({ cameras: cams, camError: null }),
+      (e)    => ({
+        cameras: cfg.camId ? [{ id: cfg.camId, name: 'Kamera', online: true, model: '' }] : [],
+        camError: e.message,
+      })
+    );
+
+    const [healthRaw, devRaw, staRaw, cams] = await Promise.all([
       unifiFetch(cfg, `${legBase}/stat/health`),
       unifiFetch(cfg, `${legBase}/stat/device`),
       unifiFetch(cfg, `${legBase}/stat/sta`),
+      camsP,
     ]);
 
     const wan = parseWanHealth(healthRaw);
@@ -2627,23 +2709,7 @@ async function _refreshUnifi() {
       return base;
     });
 
-    // Kameras (UniFi Protect via Cloud-Connector Integration-API)
-    let cameras = [];
-    let camError = null;
-    try {
-      const protBase = `/v1/connector/consoles/${hostId}/proxy/protect/integration/v1`;
-      const camRaw = await unifiFetch(cfg, `${protBase}/cameras`, 5000);
-      const camArr = Array.isArray(camRaw) ? camRaw : (camRaw.data || []);
-      cameras = camArr.map(c => ({
-        id:     c.id,
-        name:   c.name || c.displayName || 'Kamera',
-        online: c.state === 'CONNECTED',
-        model:  c.type || c.modelKey || '',
-      }));
-    } catch (e) {
-      camError = e.message;
-      if (cfg.camId) cameras = [{ id: cfg.camId, name: 'Kamera', online: true, model: '' }];
-    }
+    const { cameras, camError } = cams;
 
     const out = {
       ok: true,
@@ -2668,44 +2734,217 @@ app.get('/api/unifi', async (req, res) => {
   res.json(await refreshUnifi());
 });
 
-app.get('/api/unifi/snapshot', (req, res) => {
-  const cfg    = unifiCfg();
-  const camId  = req.query.cam || cfg.camId;
-  const hostId = cfg.hostId || _cachedHostId;
-  if (!cfg.apiKey || !camId || !hostId)
+/* ------------------------------------------------------------
+   Protect: Kameraliste + Snapshot
+   ------------------------------------------------------------
+   Der Snapshot ist der einzige Endpunkt, auf den ein Mensch wartet,
+   waehrend er auf das Dashboard schaut — er laeuft deshalb nach
+   eigenen Regeln:
+
+     1. lokal vor Cloud   — LAN statt Browser → Dash# → api.ui.com →
+                            Console → Protect
+     2. Stale-while-revalidate — ein vorhandenes Bild geht sofort raus,
+                            das frische wird im Hintergrund geholt
+     3. In-Flight-Dedupe  — mehrere Tabs teilen sich einen Abruf
+     4. Keep-Alive        — kein TLS-Handshake je Snapshot
+
+   Das Ergebnis: nur der allererste Abruf nach dem Start wartet auf
+   Protect, jeder weitere wird aus dem Speicher beantwortet.
+   ------------------------------------------------------------ */
+const SNAP_FRESH_MS = 4000;   // ms – juenger: direkt ausliefern, kein Upstream
+const SNAP_STALE_MS = 120000; // ms – aelter: nicht mehr zumutbar, jetzt warten
+const CAMERAS_TTL   = 60000;  // ms – Kameraliste (aendert sich praktisch nie)
+
+const snapCache    = new Map(); // camId -> { ts, buf, type, via }
+const snapInflight = new Map(); // camId -> Promise
+let   camerasCache = { ts: 0, data: null };
+let   camerasInflight = null;
+
+// Nach einer Aenderung der Zugangsdaten duerfen weder Kameraliste noch
+// Snapshot aus der alten Konfiguration stehenbleiben.
+function resetProtectCaches() {
+  snapCache.clear();
+  camerasCache = { ts: 0, data: null };
+  _protectLocalBlockedUntil = 0; // lokalen Weg sofort wieder probieren
+}
+
+// Kameraliste — lokal (LAN) bevorzugt, sonst ueber den Cloud-Connector.
+// Wird von /api/unifi/cameras, /api/unifi und der camId-Aufloesung geteilt.
+async function getProtectCameras({ maxAge = CAMERAS_TTL } = {}) {
+  if (camerasCache.data && Date.now() - camerasCache.ts < maxAge) return camerasCache.data;
+  if (camerasInflight) return camerasInflight;
+
+  camerasInflight = (async () => {
+    const localCfg = unifiLocalCfg();
+    if (protectLocalUsable(localCfg)) {
+      try {
+        const cams = mapProtectCameras(await unifiLocalProtect(localCfg, '/cameras', { timeoutMs: 4000 }));
+        if (cams.length) {
+          camerasCache = { ts: Date.now(), data: cams };
+          return cams;
+        }
+      } catch (e) { protectLocalFailed(e); }
+    }
+    const cfg = unifiCfg();
+    try {
+      if (!cfg.apiKey) throw new Error('not_configured');
+      const hostId = await getConsoleId(cfg);
+      const raw = await unifiFetch(cfg, `/v1/connector/consoles/${hostId}/proxy/protect/integration/v1/cameras`, 5000);
+      const cams = mapProtectCameras(raw);
+      camerasCache = { ts: Date.now(), data: cams };
+      return cams;
+    } catch (e) {
+      // Eine Kamera, die einmal da war, verschwindet nicht, weil Protect
+      // gerade nicht antwortet — der Snapshot-Cache soll weiter bedient werden.
+      if (camerasCache.data && camerasCache.data.length) return camerasCache.data;
+      throw e;
+    }
+  })().finally(() => { camerasInflight = null; });
+
+  return camerasInflight;
+}
+
+// Snapshot ueber den Cloud-Connector — vollstaendig gepuffert, damit das
+// Ergebnis in den Cache passt (und der Socket sauber wiederverwendbar bleibt).
+function unifiCloudSnapshot(cfg, hostId, camId, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    let parsed;
+    try {
+      parsed = new URL(`${UNIFI_BASE}/v1/connector/consoles/${hostId}/proxy/protect/integration/v1/cameras/${camId}/snapshot`);
+    } catch (e) { return reject(e); }
+
+    let settled = false;
+    const req = https.request(
+      {
+        hostname: parsed.hostname, port: parsed.port || 443,
+        path:     parsed.pathname + parsed.search, method: 'GET',
+        agent:    unifiCloudAgent,
+        headers:  { 'X-API-Key': cfg.apiKey, Accept: 'image/jpeg,*/*' },
+      },
+      (res) => {
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => {
+          if (settled) return; settled = true;
+          clearTimeout(timer);
+          if (res.statusCode >= 400) return reject(new Error(`HTTP ${res.statusCode}`));
+          resolve({ buf: Buffer.concat(chunks), type: res.headers['content-type'] || 'image/jpeg' });
+        });
+      }
+    );
+    const timer = setTimeout(() => {
+      if (settled) return; settled = true;
+      req.destroy();
+      reject(new Error('timeout'));
+    }, timeoutMs);
+    req.on('error', e => { if (settled) return; settled = true; clearTimeout(timer); reject(e); });
+    req.end();
+  });
+}
+
+// Einen frischen Snapshot holen und cachen — lokal zuerst, Cloud als Fallback.
+// Gleichzeitige Aufrufe fuer dieselbe Kamera teilen sich den Abruf.
+function refreshSnapshot(camId) {
+  const running = snapInflight.get(camId);
+  if (running) return running;
+
+  const p = (async () => {
+    const localCfg = unifiLocalCfg();
+    if (protectLocalUsable(localCfg)) {
+      try {
+        const buf = await unifiLocalProtect(
+          localCfg,
+          `/cameras/${encodeURIComponent(camId)}/snapshot?ts=${Date.now()}&force=true`,
+          { timeoutMs: 5000, binary: true }
+        );
+        if (buf && buf.length > 1000) {
+          const entry = { ts: Date.now(), buf, type: 'image/jpeg', via: 'local' };
+          snapCache.set(camId, entry);
+          return entry;
+        }
+        throw new Error('leere Antwort');
+      } catch (e) { protectLocalFailed(e); }
+    }
+
+    const cfg = unifiCfg();
+    if (!cfg.apiKey) throw new Error('not_configured');
+    const hostId = cfg.hostId || _cachedHostId || await getConsoleId(cfg);
+    const { buf, type } = await unifiCloudSnapshot(cfg, hostId, camId);
+    const entry = { ts: Date.now(), buf, type, via: 'cloud' };
+    snapCache.set(camId, entry);
+    return entry;
+  })().finally(() => { snapInflight.delete(camId); });
+
+  snapInflight.set(camId, p);
+  return p;
+}
+
+function sendSnapshot(res, entry) {
+  res.set('Content-Type', entry.type || 'image/jpeg');
+  res.set('Cache-Control', 'no-store');
+  // Alter des Bildes, damit die Kachel den echten Aufnahmezeitpunkt zeigen
+  // kann statt der Uhrzeit des Abrufs.
+  res.set('X-Snapshot-Ts',  String(entry.ts));
+  res.set('X-Snapshot-Age', String(Date.now() - entry.ts));
+  res.set('X-Snapshot-Via', entry.via || '');
+  res.end(entry.buf);
+}
+
+// Nach dem Start einmal vorwaermen: der erste Blick aufs Dashboard trifft
+// dann bereits einen gefuellten Cache statt auf Protect zu warten.
+function prewarmSnapshot() {
+  const cfg = unifiCfg();
+  if (!cfg.apiKey && !unifiLocalReady()) return;
+  (async () => {
+    let camId = cfg.camId;
+    if (!camId) camId = (await getProtectCameras())[0]?.id;
+    if (!camId) return;
+    await refreshSnapshot(camId);
+    console.log('UniFi Protect: Snapshot vorgewaermt');
+  })().catch(e => console.warn(`UniFi Protect: Vorwaermen fehlgeschlagen (${e.message})`));
+}
+
+app.get('/api/unifi/cameras', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    res.json({ ok: true, cameras: await getProtectCameras() });
+  } catch (e) {
+    res.json({ ok: false, error: e.message, cameras: unifiCfg().camId
+      ? [{ id: unifiCfg().camId, name: 'Kamera', online: true, model: '' }]
+      : [] });
+  }
+});
+
+app.get('/api/unifi/snapshot', async (req, res) => {
+  const cfg = unifiCfg();
+  if (!cfg.apiKey && !unifiLocalReady())
     return res.status(400).json({ ok: false, error: 'not_configured' });
 
-  let parsed;
-  try {
-    parsed = new URL(
-      `${UNIFI_BASE}/v1/connector/consoles/${hostId}/proxy/protect/integration/v1/cameras/${camId}/snapshot`
-    );
+  let camId = req.query.cam || cfg.camId;
+  if (!camId) {
+    // Ohne Kamera-ID nicht aufgeben: die Kachel soll auch dann ein Bild
+    // zeigen, wenn die (teure) Netzwerk-Kachel gar nicht geladen wurde.
+    try { camId = (await getProtectCameras())[0]?.id; } catch (_) { /* unten behandelt */ }
   }
-  catch (e) { return res.status(400).end(); }
+  if (!camId) return res.status(400).json({ ok: false, error: 'no_camera' });
 
-  let finished = false;
-  const preq = https.request(
-    {
-      hostname: parsed.hostname, port: parsed.port || 443,
-      path:     parsed.pathname + parsed.search, method: 'GET',
-      headers:  { 'X-API-Key': cfg.apiKey, Accept: 'image/jpeg,*/*' },
-    },
-    (pres) => {
-      if (finished) return;
-      finished = true;
-      if (pres.statusCode >= 400) {
-        console.error(`UniFi Protect snapshot HTTP ${pres.statusCode}`);
-        return res.status(pres.statusCode).end();
-      }
-      res.set('Content-Type', pres.headers['content-type'] || 'image/jpeg');
-      res.set('Cache-Control', 'no-store');
-      pres.pipe(res);
-    }
-  );
-  const timer = setTimeout(() => { if (!finished) { finished = true; preq.destroy(); res.status(504).end(); } }, 8000);
-  preq.on('error', e => { clearTimeout(timer); if (!finished) { finished = true; res.status(503).end(); } });
-  preq.on('close', () => clearTimeout(timer));
-  preq.end();
+  const hit = snapCache.get(camId);
+  const age = hit ? Date.now() - hit.ts : Infinity;
+
+  // Frisch genug -> sofort. Aelter, aber brauchbar -> sofort ausliefern und
+  // im Hintergrund erneuern (der naechste Abruf bekommt dann das neue Bild).
+  if (hit && age < SNAP_STALE_MS) {
+    if (age >= SNAP_FRESH_MS) refreshSnapshot(camId).catch(() => {});
+    return sendSnapshot(res, hit);
+  }
+
+  try {
+    sendSnapshot(res, await refreshSnapshot(camId));
+  } catch (e) {
+    console.error(`UniFi Protect snapshot: ${e.message}`);
+    if (hit) return sendSnapshot(res, hit); // lieber ein altes Bild als keines
+    res.status(e.message === 'not_configured' ? 400 : 504).json({ ok: false, error: e.message });
+  }
 });
 
 /* ============================================================
@@ -4250,6 +4489,9 @@ server.listen(PORT, () => {
   // 1h-Verlauf sofort warmlaeuft und 10m/1h ohne Aufwaermzeit verfuegbar sind.
   startNetSampler();
   startWanSampler();
+  // Kamera-Snapshot einmal vorwaermen (siehe prewarmSnapshot): der erste
+  // Blick aufs Dashboard soll nicht auf Protect warten muessen.
+  setTimeout(prewarmSnapshot, 3000).unref?.();
   // Alle Kachel-Integrationen zentral & dauerhaft vorhalten (Server-Push-Hub).
   startPushHub();
 });
