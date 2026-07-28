@@ -75,6 +75,8 @@ let _grShotIndex = 0;
 let _grLightboxFocus = null;
 let _grSearchTimer = null;
 let _grSearchSeq = 0;
+let _grPushFailed = false; // letzter Push kam als Fehler herein
+let _grRecovering = false; // REST-Versuch nach einem Fehl-Push laeuft
 
 /* ---------- Formatierung ---------- */
 
@@ -266,10 +268,40 @@ function grCurrentData() {
   return _grDate && _grDate !== grIsoToday() ? _grOther : _grToday;
 }
 
+/* Ein Fehl-Push darf brauchbare Daten nicht verdraengen.
+   Hintergrund: der Push-Hub legt AUCH Fehlerantworten als Schnappschuss fuer
+   neu verbundene Clients ab und ersetzt ihn erst beim naechsten Tick — bei
+   dieser Kachel also nach zehn Minuten. Startet der Server, waehrend IGDB
+   nicht erreichbar ist, zeigte die Kachel deshalb bei jedem Reload weiter
+   "offline", obwohl der REST-Weg (und damit die Einstellungen) laengst wieder
+   Daten lieferte. Also: gute Daten behalten und einmal ueber REST nachfassen —
+   der Server-Cache haelt dort in aller Regel schon den richtigen Stand. */
+function grAcceptPush(d) {
+  if (!d) return;
+  if (d.ok || d.error === 'not_configured') {
+    _grToday = d;
+    _grPushFailed = false;
+    return;
+  }
+  _grPushFailed = true;
+  if (_grToday && _grToday.ok) return;   // guten Stand nicht wegwerfen
+  if (_grRecovering) return;             // ein Versuch genuegt
+  _grRecovering = true;
+  fetch('/api/game-releases', { cache: 'no-store' })
+    .then((r) => r.json())
+    .then((rest) => {
+      _grRecovering = false;
+      // Auch der REST-Weg im Fehlerzustand? Dann ist die Meldung echt.
+      _grToday = (rest && (rest.ok || rest.error === 'not_configured')) ? rest : d;
+      renderGameReleases(null);
+    })
+    .catch(() => { _grRecovering = false; _grToday = d; renderGameReleases(null); });
+}
+
 function renderGameReleases(d) {
   // Der Push liefert immer den heutigen Tag; ein angesprungenes Datum darf
   // er nicht ueberschreiben.
-  if (d) _grToday = d;
+  grAcceptPush(d);
   // Die Kachel-Shell entsteht erst beim ersten Anzeigen, und der erste Render
   // kommt je nach Situation aus dem SSE-Push statt aus refresh() — deshalb
   // hier verdrahten. grWireBar() ist idempotent.
@@ -287,8 +319,11 @@ function renderGameReleases(d) {
 
   if (!data || !data.ok) {
     const notCfg = data && data.error === 'not_configured';
+    // Solange der REST-Versuch laeuft, ist "offline" eine Behauptung, die
+    // sich gleich als falsch herausstellen kann.
+    const pruefend = _grRecovering && !_grDate;
     if (badge) {
-      badge.textContent = notCfg ? 'nicht eingerichtet' : (data ? 'offline' : '…');
+      badge.textContent = notCfg ? 'nicht eingerichtet' : (data && !pruefend ? 'offline' : '…');
       badge.style.color = notCfg ? 'var(--text-3)' : 'var(--red)';
       badge.title = notCfg
         ? 'Einstellungen → Module → Game Releases'
@@ -297,7 +332,7 @@ function renderGameReleases(d) {
     if (list) diffList(list, [], (i) => i.id, _grCreateRow, _grUpdateRow);
     setGrEmpty(notCfg
       ? 'Noch nicht eingerichtet — Einstellungen → Module → Game Releases.'
-      : data ? 'IGDB ist gerade nicht erreichbar.' : 'Wird geladen …');
+      : (data && !pruefend) ? 'IGDB ist gerade nicht erreichbar.' : 'Wird geladen …');
     return;
   }
 
@@ -332,8 +367,9 @@ function renderGameReleases(d) {
 
   if (badge) {
     const n = fallback ? 0 : items.length;
-    badge.textContent = data._stale ? 'stale' : (n === 1 ? '1 Spiel' : `${n} Spiele`);
-    badge.style.color = data._stale ? '#ffb454' : 'var(--text-3)';
+    const alt = data._stale || _grPushFailed;
+    badge.textContent = alt ? 'stale' : (n === 1 ? '1 Spiel' : `${n} Spiele`);
+    badge.style.color = alt ? '#ffb454' : 'var(--text-3)';
     badge.title = all.length !== n ? `${all.length} insgesamt an diesem Tag` : '';
   }
 }
