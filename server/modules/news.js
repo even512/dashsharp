@@ -261,6 +261,15 @@ function attr(tag, name) {
   return m ? (m[2] != null ? m[2] : m[3]) : '';
 }
 
+// attr() trennt mit \b — bei `src` trifft das auch `data-src`, denn zwischen
+// `-` und `s` steht eine Wortgrenze. Fuer Bilder muss der Name genau stimmen:
+// bei einem Lazy-Load-Bild stehen Platzhalter und echte URL nebeneinander,
+// und welches der beiden man erwischt, entscheidet ueber Bild oder kein Bild.
+function attrExact(tag, name) {
+  const m = new RegExp(`(?:^|\\s)${name}\\s*=\\s*("([^"]*)"|'([^']*)')`, 'i').exec(tag);
+  return m ? (m[2] != null ? m[2] : m[3]) : '';
+}
+
 function pickLink(block) {
   // Atom: <link rel="alternate" type="text/html" href="…"/>
   const tags = block.match(/<(?:[a-zA-Z0-9]+:)?link\b[^>]*\/?>/gi) || [];
@@ -273,31 +282,80 @@ function pickLink(block) {
   return toPlainText(tagText(block, ['link']));
 }
 
-// Ein <img> aus einem Textfeld ziehen. RSS legt sein Beschreibungs-HTML
-// ueblicherweise in CDATA — dort steht nach unwrapCdata() echtes Markup.
-// Atom escaped es stattdessen (<content type="html"> liefert &lt;img …&gt;),
-// und genau daran ist der Ausdruck bisher vorbeigelaufen: ohne den zweiten
-// Anlauf ueber decodeEntities() bleiben die Aufmacherbilder aller
-// Atom-Feeds (heise, heise Security, heise Developer …) unsichtbar.
-const IMG_SRC_RE = /<img\b[^>]*?\bsrc\s*=\s*("([^"]+)"|'([^']+)')/i;
+/* ---------- Aufmacherbild eines Eintrags ----------
+   Ein Feed kann sein Bild an einem halben Dutzend Stellen unterbringen, und
+   die Fundstelle ist nicht dieselbe wie „taugt als Aufmacher". Zwei Faelle
+   haben in der Praxis dafuer gesorgt, dass eine Kachelzeile leer blieb:
 
+   1. Zaehlpixel. Etliche deutsche Angebote haengen an jeden Teaser einen
+      1x1-Pixel (Golem: cpx.golem.de). Der stand im HTML vor dem eigentlichen
+      Bild, war formal ein voellig korrektes GIF — und landete deshalb als
+      „Aufmacherbild" in der Kachel. Der Proxy holt ihn brav, die Zeile zeigt
+      ein leeres Kaestchen. Nebenbei ist ein Zaehlpixel abzurufen genau das,
+      was dieses Dashboard nicht tun soll.
+   2. Lazy-Load. Steht die echte URL in data-src und im src nur ein
+      data:-Platzhalter, kam eine data:-URI heraus, die absoluteUrl() danach
+      verwirft — Ergebnis: kein Bild, ohne jede Spur im Log.
+
+   Deshalb wird nicht mehr der erste Treffer genommen, sondern jedes <img>
+   angesehen und das erste brauchbare zurueckgegeben. */
+
+const IMG_TAG_RE = /<img\b[^>]*>/gi;
+
+// Bekannte Zaehl-Endpunkte. Bewusst kurz: die Groessenangabe im Tag faengt
+// den Rest, und eine lange Namensliste trifft irgendwann ein echtes Bild.
+const PIXEL_URL_RE = /^https?:\/\/cpx\.|\/cpx\.php|feedburner|feedsportal|\/(?:count|counter|pixel|beacon)\.(?:gif|php|png)(?:\?|$)|\/1x1\./i;
+
+// Kein Aufmacher, sondern Messtechnik — wird nie genommen, auch nicht als
+// letzte Rettung: ein 1x1-Pixel ist in keiner Lage das gesuchte Bild.
+function isPixel(tag, url) {
+  if (/^data:/i.test(url)) return true;
+  for (const dim of ['width', 'height']) {
+    const n = parseInt(attrExact(tag, dim), 10);
+    if (Number.isFinite(n) && n > 0 && n <= 4) return true;
+  }
+  return PIXEL_URL_RE.test(url);
+}
+
+function srcOf(tag) {
+  // Lazy-Load zuerst: dort steht die echte URL, im src nur der Platzhalter.
+  const direct = attrExact(tag, 'data-src') || attrExact(tag, 'data-original')
+    || attrExact(tag, 'data-lazy-src') || attrExact(tag, 'src');
+  if (direct) return direct;
+  // srcset: "url 320w, url 640w" — der erste Eintrag genuegt.
+  const set = attrExact(tag, 'srcset') || attrExact(tag, 'data-srcset');
+  return set ? String(set).split(',')[0].trim().split(/\s+/)[0] : '';
+}
+
+/* imgFromHtml(raw) — alle <img> eines Textfelds durchgehen und das erste
+   liefern, das kein Zaehlpixel ist. RSS legt sein Beschreibungs-HTML
+   ueblicherweise in CDATA (nach unwrapCdata() steht dort echtes Markup),
+   Atom escaped es stattdessen (<content type="html"> liefert &lt;img …&gt;) —
+   dort muss vorher dekodiert werden, sonst gibt es kein literales <img zu
+   finden. */
 function imgFromHtml(raw) {
   if (!raw) return '';
-  const s = unwrapCdata(raw);
-  let m = IMG_SRC_RE.exec(s);
-  if (!m && /&(?:lt|#0*60|#x0*3c);\s*img/i.test(s)) m = IMG_SRC_RE.exec(decodeEntities(s));
-  return m ? decodeEntities(m[2] || m[3]) : '';
+  let s = unwrapCdata(raw);
+  if (!/<img\b/i.test(s) && /&(?:lt|#0*60|#x0*3c);\s*img/i.test(s)) s = decodeEntities(s);
+  for (const tag of (s.match(IMG_TAG_RE) || [])) {
+    const url = decodeEntities(srcOf(tag)).trim();
+    if (!url || isPixel(tag, url)) continue;
+    return url;
+  }
+  return '';
 }
 
 /* pickImage(block, htmls) — htmls sind die Fliesstext-Felder des Eintrags in
    der Reihenfolge, in der sie als Bildquelle taugen. Explizite Bild-Elemente
-   gehen immer vor, der Teaser ist die letzte Station. */
+   gehen vor, danach der Fliesstext; ganz zum Schluss wird der komplette
+   Eintrag durchsucht, damit ein <img> auch aus einem Feld gefunden wird, das
+   der Parser sonst gar nicht liest. */
 function pickImage(block, htmls) {
   // Atom haengt Bilder als <link rel="enclosure" type="image/…" href="…"/> an.
   for (const tag of (block.match(/<(?:[a-zA-Z0-9]+:)?link\b[^>]*>/gi) || [])) {
     if (attr(tag, 'rel') === 'enclosure' && /^image\//i.test(attr(tag, 'type'))) {
       const href = attr(tag, 'href');
-      if (href) return href;
+      if (href) return decodeEntities(href);
     }
   }
   const tags = block.match(/<(?:[a-zA-Z0-9]+:)?(enclosure|content|thumbnail|image)\b[^>]*>/gi) || [];
@@ -309,9 +367,11 @@ function pickImage(block, htmls) {
     if (type && !/^image\//i.test(type)) continue;
     if (!type && medium && medium.toLowerCase() !== 'image') continue;
     if (!type && !medium && !/\.(jpe?g|png|gif|webp|avif)(\?|$)/i.test(url)) continue;
-    return decodeEntities(url);
+    const clean = decodeEntities(url);
+    if (isPixel(tag, clean)) continue;
+    return clean;
   }
-  for (const html of htmls) {
+  for (const html of htmls.concat(block)) {
     const src = imgFromHtml(html);
     if (src) return src;
   }
@@ -688,8 +748,14 @@ module.exports = {
     });
   },
 
-  // Export fuer den Smoke-Test; die Registry ignoriert unbekannte Felder.
+  // Export fuer Smoke-Test und scripts/feed-check.mjs; die Registry ignoriert
+  // unbekannte Felder. decodeBody gehoert dazu, damit das Diagnose-Skript
+  // einen Feed exakt so liest wie der Server — sonst diagnostiziert es sich
+  // selbst statt das Problem.
   parseFeed,
+  decodeBody,
   CATALOG,
   CATEGORIES,
+  UA,
+  FEED_ACCEPT,
 };
