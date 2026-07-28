@@ -319,119 +319,170 @@ async function loadNewsSettings() {
   renderNewsSettings();
 }
 
-function _newsSourcesByLang(lang) {
-  const all = (_newsCfg.catalog || []).concat(_newsCfg.custom || []);
-  return all.filter((s) => s.lang === lang);
+function _newsAllSources() {
+  return (_newsCfg.catalog || []).concat(_newsCfg.custom || []);
 }
 
-function _newsSwitch(on, onChange) {
-  const sw = document.createElement('div');
-  sw.className = 'switch' + (on ? ' on' : '');
-  sw.appendChild(document.createElement('span'));
-  sw.addEventListener('click', () => {
-    const next = !sw.classList.contains('on');
-    sw.classList.toggle('on', next);
-    onChange(next);
-  });
-  return sw;
+function _newsCatLabel(id) {
+  return ((_newsCfg.categories || []).find((c) => c.id === id) || {}).label || id;
+}
+function _newsLangLabel(id) {
+  return ((_newsCfg.langs || []).find((l) => l.id === id) || {}).label || id;
 }
 
+// Reihenfolge in Liste und Auswahlfeld: erst Sprache, dann Thema, dann Name.
+// Die Katalog-Reihenfolge des Servers gibt Sprache und Thema vor, damit die
+// Gruppen ueberall gleich sortiert stehen — unabhaengig davon, in welcher
+// Reihenfolge der Nutzer seine Quellen zusammengeklickt hat.
+function _newsCompare(a, b) {
+  const langs = (_newsCfg.langs || []).map((l) => l.id);
+  const cats = (_newsCfg.categories || []).map((c) => c.id);
+  return (langs.indexOf(a.lang) - langs.indexOf(b.lang))
+    || (cats.indexOf(a.category) - cats.indexOf(b.category))
+    || a.name.localeCompare(b.name, 'de');
+}
+
+/* Die Einstellungen zeigen nur, was tatsaechlich laeuft: eine Liste der
+   aktiven Quellen. Der Katalog steckt dahinter im „Neu"-Auswahlfeld — 29
+   Schalter, von denen die meisten aus sind, waren als Uebersicht wertlos.
+   Jede Aenderung geht sofort an den Server; es gibt nichts, was man zu
+   speichern vergessen koennte. */
 function renderNewsSettings() {
   const body = $('newsSettingsBody');
   if (!body || !_newsCfg) return;
   const enabled = new Set(_newsCfg.enabled || []);
-  const catLabel = (id) => (_newsCfg.categories.find((c) => c.id === id) || {}).label || id;
+  const byId = new Map(_newsAllSources().map((s) => [s.id, s]));
   body.innerHTML = '';
 
-  for (const lang of _newsCfg.langs) {
-    const sources = _newsSourcesByLang(lang.id);
-    if (!sources.length) continue;
-    const head = document.createElement('div');
-    head.className = 'cfg-section';
-    head.textContent = lang.label;
-    body.appendChild(head);
+  const head = document.createElement('div');
+  head.className = 'cfg-section';
+  head.textContent = 'Aktive Quellen';
+  body.appendChild(head);
 
-    for (const cat of _newsCfg.categories) {
-      const inCat = sources.filter((s) => s.category === cat.id);
-      if (!inCat.length) continue;
-
-      const catRow = document.createElement('div');
-      catRow.className = 'news-cfg-cat';
-      const catName = document.createElement('span');
-      catName.textContent = catLabel(cat.id);
-      const allBtn = document.createElement('button');
-      allBtn.className = 'cfg-btn';
-      const allOn = inCat.every((s) => enabled.has(s.id));
-      allBtn.textContent = allOn ? 'Alle aus' : 'Alle an';
-      // Ein Thema mit einem Klick abonnieren, statt acht Schalter zu treffen.
-      allBtn.addEventListener('click', () => {
-        for (const s of inCat) {
-          if (allOn) enabled.delete(s.id); else enabled.add(s.id);
-        }
-        _newsCfg.enabled = [...enabled];
-        renderNewsSettings();
-      });
-      catRow.append(catName, allBtn);
-      body.appendChild(catRow);
-
-      for (const s of inCat) {
-        const row = document.createElement('div');
-        row.className = 'news-cfg-row';
-
-        const info = document.createElement('div');
-        info.className = 'news-cfg-info';
-        const name = document.createElement('div');
-        name.className = 'news-cfg-name';
-        name.textContent = s.name + (s.custom ? ' · eigen' : '');
-        const url = document.createElement('div');
-        url.className = 'news-cfg-url';
-        url.textContent = s.url;
-        info.append(name, url);
-
-        const right = document.createElement('div');
-        right.className = 'news-cfg-actions';
-        right.appendChild(_newsSwitch(enabled.has(s.id), (on) => {
-          if (on) enabled.add(s.id); else enabled.delete(s.id);
-          _newsCfg.enabled = [...enabled];
-        }));
-        if (s.custom) {
-          const del = document.createElement('button');
-          del.className = 'cfg-btn cfg-btn-del';
-          del.textContent = '×';
-          del.title = 'Quelle entfernen';
-          del.addEventListener('click', () => {
-            _newsCfg.custom = _newsCfg.custom.filter((c) => c.id !== s.id);
-            enabled.delete(s.id);
-            _newsCfg.enabled = [...enabled];
-            renderNewsSettings();
-          });
-          right.appendChild(del);
-        }
-        row.append(info, right);
-        body.appendChild(row);
-      }
-    }
+  const active = [...enabled].map((id) => byId.get(id)).filter(Boolean).sort(_newsCompare);
+  if (!active.length) {
+    const hint = document.createElement('div');
+    hint.className = 'news-cfg-empty';
+    hint.textContent = 'Noch keine Quelle aktiv — unten unter „Neu“ eine aus dem Katalog wählen.';
+    body.appendChild(hint);
   }
+  for (const s of active) body.appendChild(_newsActiveRow(s));
 
+  body.appendChild(_newsCatalogPicker(enabled));
   body.appendChild(_newsCustomEditor());
 
   const foot = document.createElement('div');
   foot.className = 'news-cfg-foot';
-  const active = (_newsCfg.enabled || []).length;
   const count = document.createElement('span');
   count.className = 'tile-settings-hint';
-  count.textContent = active === 1 ? '1 Quelle aktiv' : `${active} Quellen aktiv`;
-  const save = document.createElement('button');
-  save.className = 'cfg-btn';
-  save.textContent = '↵ Speichern';
-  save.addEventListener('click', () => saveNewsSettings());
-  foot.append(count, save);
+  count.textContent = (active.length === 1 ? '1 Quelle aktiv' : `${active.length} Quellen aktiv`)
+    + ' · Änderungen wirken sofort';
+  foot.appendChild(count);
   body.appendChild(foot);
 
   setNewsStatus(
-    active ? `● ${active === 1 ? '1 Quelle' : `${active} Quellen`}` : '● keine Quelle',
-    active ? '#3ddc97' : '#ffb454',
+    active.length ? `● ${active.length === 1 ? '1 Quelle' : `${active.length} Quellen`}` : '● keine Quelle',
+    active.length ? '#3ddc97' : '#ffb454',
   );
+}
+
+function _newsActiveRow(s) {
+  const row = document.createElement('div');
+  row.className = 'news-cfg-row';
+
+  const info = document.createElement('div');
+  info.className = 'news-cfg-info';
+  const name = document.createElement('div');
+  name.className = 'news-cfg-name';
+  name.textContent = s.name;
+  const tag = document.createElement('span');
+  tag.className = 'news-cfg-tag';
+  tag.textContent = [_newsCatLabel(s.category), _newsLangLabel(s.lang), s.custom ? 'eigen' : '']
+    .filter(Boolean).join(' · ');
+  name.appendChild(tag);
+  const url = document.createElement('div');
+  url.className = 'news-cfg-url';
+  url.textContent = s.url;
+  url.title = s.url;
+  info.append(name, url);
+
+  const actions = document.createElement('div');
+  actions.className = 'news-cfg-actions';
+  const del = document.createElement('button');
+  del.className = 'cfg-btn cfg-btn-del';
+  del.textContent = '×';
+  del.title = s.custom ? 'Eigene Quelle entfernen' : 'Quelle deaktivieren';
+  del.addEventListener('click', () => {
+    _newsCfg.enabled = (_newsCfg.enabled || []).filter((id) => id !== s.id);
+    // Eine eigene Quelle steht in keinem Katalog. Bliebe sie nur deaktiviert
+    // liegen, waere sie ueber die Oberflaeche nie wieder erreichbar — also
+    // raus damit, sichtbar ist ohnehin nur noch, was laeuft.
+    if (s.custom) _newsCfg.custom = (_newsCfg.custom || []).filter((c) => c.id !== s.id);
+    saveNewsSettings();
+  });
+  actions.appendChild(del);
+
+  row.append(info, actions);
+  return row;
+}
+
+// „Neu": alles aus dem Katalog, was gerade nicht laeuft — nach Sprache und
+// Thema gruppiert, weil eine flache Liste mit 29 Eintraegen niemandem hilft.
+function _newsCatalogPicker(enabled) {
+  const wrap = document.createElement('div');
+  const head = document.createElement('div');
+  head.className = 'cfg-section';
+  head.textContent = 'Neu';
+  wrap.appendChild(head);
+
+  const row = document.createElement('div');
+  row.className = 'news-cfg-add';
+
+  const sel = document.createElement('select');
+  sel.className = 'cfg-input news-cfg-pick';
+  const first = document.createElement('option');
+  first.value = '';
+  first.textContent = 'Quelle aus dem Katalog wählen …';
+  sel.appendChild(first);
+
+  const rest = _newsAllSources().filter((s) => !enabled.has(s.id)).sort(_newsCompare);
+  let group = null;
+  let groupKey = '';
+  for (const s of rest) {
+    const key = `${s.lang}|${s.category}`;
+    if (key !== groupKey) {
+      groupKey = key;
+      group = document.createElement('optgroup');
+      group.label = `${_newsLangLabel(s.lang)} · ${_newsCatLabel(s.category)}`;
+      sel.appendChild(group);
+    }
+    const o = document.createElement('option');
+    o.value = s.id;
+    o.textContent = s.name + (s.custom ? ' · eigen' : '');
+    group.appendChild(o);
+  }
+
+  const add = document.createElement('button');
+  add.className = 'cfg-btn';
+  add.textContent = '＋ Hinzufügen';
+  add.title = 'Gewählte Quelle aktivieren';
+  // Bewusst ein Knopf und kein change-Handler: mit den Pfeiltasten durch ein
+  // <select> zu gehen loest in manchen Browsern bei jedem Schritt change aus.
+  add.addEventListener('click', () => {
+    if (!sel.value) return;
+    _newsCfg.enabled = (_newsCfg.enabled || []).concat(sel.value);
+    saveNewsSettings();
+  });
+
+  if (!rest.length) {
+    first.textContent = 'Alle Quellen des Katalogs sind aktiv';
+    sel.disabled = true;
+    add.disabled = true;
+  }
+
+  row.append(sel, add);
+  wrap.appendChild(row);
+  return wrap;
 }
 
 // Eigene Feeds: Name, URL, Sprache, Kategorie — im Stil des Quicklinks-Editors.
