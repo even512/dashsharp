@@ -65,8 +65,15 @@ const TIMEZONE = 'Europe/Berlin';
    (Port), also ausgerechnet die beiden Titel des Testtags. */
 const GAME_TYPES = [0, 4, 8, 9, 10, 11];
 
+/* In der Tagesliste kommen nur die Typen aus GAME_TYPES vor. DLC, Erweiterung,
+   Episode und Season stehen trotzdem hier, weil die Lupe sie mitliefert — dann
+   soll das Ergebnis auch sagen, was es ist. */
 const GAME_TYPE_DE = {
+  1: 'DLC',
+  2: 'Erweiterung',
   4: 'Standalone-Addon',
+  6: 'Episode',
+  7: 'Season',
   8: 'Remake',
   9: 'Remaster',
   10: 'Erweiterte Fassung',
@@ -702,35 +709,218 @@ async function gameDetail(get, ctx, id) {
 
 /* ---------- Suche ---------- */
 
+/* ---------- Suche ----------
+   Die Lupe soll auch dann treffen, wenn man den Titel nicht exakt tippt.
+   IGDBs eigene Suche reicht dafuer nicht, an echten Abfragen gemessen:
+
+     search "world of war"  -> World War Z, World War Armies, World War I …
+                               (kein World of Warcraft; "of" wird ignoriert
+                               und die Tokens frei kombiniert)
+     search "wracraft"      -> 0 Treffer
+     search "cyberpank"     -> 0 Treffer   (keinerlei Tippfehlertoleranz)
+
+   Dazu kam ein handfester Fehler: `search` und `where` zusammen ergeben
+   KEINE gefilterte Suche — IGDB rankt zuerst und filtert danach. Mit
+   `where game_type = (…)` und `limit 8` lieferte "world of war" deshalb
+   gar nichts, waehrend "world" und "world of warcraft" funktionierten.
+
+   Also: Kandidaten aus mehreren Abfragen einsammeln und die Rangfolge
+   selbst bilden. Die Wildcard-Abfragen sind dabei der eigentliche Gewinn —
+   `name ~ *"world"* & name ~ *"war"*` findet World of Warcraft unabhaengig
+   von Wortstellung und Fuellwoertern. */
+
+const SEARCH_SKIP = new Set([3, 5, 12, 13, 14]); // Bundle, Mod, Fork, Pack, Update
+const SEARCH_FETCH = 40;
+const SEARCH_FIELDS = 'fields id, name, first_release_date, hypes, cover.image_id,'
+  + ' game_type, total_rating_count, alternative_names.name,'
+  + ' platforms.id, platforms.name, platforms.abbreviation;';
+
+// Fuellwoerter tragen nichts zur Unterscheidung bei und stehen in Titeln
+// mal da, mal nicht ("World of Warcraft" vs. "World War").
+const STOPWORDS = new Set(['of', 'the', 'a', 'an', 'and', 'der', 'die', 'das', 'und', 'fuer', 'for']);
+
+function normalizeText(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Diakritika weg: pokemon == pokémon
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function searchTokens(s) {
+  const all = normalizeText(s).split(' ').filter(Boolean);
+  const words = all.filter((t) => !STOPWORDS.has(t));
+  // Wer nur "the" tippt, soll nicht ins Leere laufen.
+  return words.length ? words : all;
+}
+
+/* Ein Token gilt als getroffen, wenn irgendein Wort des Titels damit
+   anfaengt — "war" trifft "warcraft", "zelda breath" trifft
+   "The Legend of Zelda: Breath of the Wild".
+
+   Kurze Tokens muessen dagegen ein ganzes Wort treffen: als Praefix passt
+   "v" auf jedes Wort mit V, und so stand bei "gta v" ploetzlich "Vigtafl"
+   in der Liste. Kuerzel wie GTA oder WoW kommen ohnehin ueber
+   alternative_names herein, nicht ueber diesen Weg. */
+const MIN_PREFIX_TOKEN = 4;
+
+function tokenHit(nameTokens, token) {
+  return token.length < MIN_PREFIX_TOKEN
+    ? nameTokens.includes(token)
+    : nameTokens.some((w) => w.startsWith(token));
+}
+
+function commonPrefix(a, b) {
+  const n = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < n && a[i] === b[i]) i++;
+  return i;
+}
+
+function scoreHit(game, q, tokens) {
+  const name = normalizeText(game.name);
+  const nameTokens = name.split(' ').filter(Boolean);
+  let score = 0;
+
+  if (name === q) score = 1000;
+  else if (name.startsWith(q)) score = 700;
+  else if (name.includes(q)) score = 500;
+  else {
+    const treffer = tokens.filter((t) => tokenHit(nameTokens, t)).length;
+    score = tokens.length ? Math.round(350 * (treffer / tokens.length)) : 0;
+    // Nichts passt sauber? Dann zaehlt der gemeinsame Wortanfang. Das ist
+    // die einzige Stelle, an der ein Vertipper noch aufgefangen wird:
+    // "cyberpank" und "cyberpunk" teilen sechs Zeichen.
+    if (!treffer) {
+      let beste = 0;
+      for (const t of tokens) {
+        for (const w of nameTokens) {
+          const gleich = commonPrefix(t, w);
+          // Absolute Mindestlaenge zusaetzlich zum Anteil: bei einem
+          // Ein-Buchstaben-Token waere der Anteil sonst rechnerisch 100 %,
+          // und "v" haette "Vigtafl" als Treffer fuer "gta v" durchgelassen.
+          if (gleich >= MIN_PREFIX_TOKEN) beste = Math.max(beste, gleich / t.length);
+        }
+      }
+      if (beste >= 0.6) score = Math.round(250 * beste);
+    }
+  }
+
+  // Kuerzel und Zweitnamen ("WoW", "BotW", "GTA V") stehen bei IGDB in
+  // alternative_names — ohne die findet man ein Spiel nur ueber den
+  // vollen Titel.
+  for (const alt of (game.alternative_names || [])) {
+    const a = normalizeText(alt.name);
+    if (!a) continue;
+    if (a === q) score = Math.max(score, 900);
+    else if (a.startsWith(q) || q.startsWith(a)) score = Math.max(score, 620);
+  }
+
+  // Ohne jede Namensuebereinstimmung gibt es keine Punkte. Sonst schwemmen
+  // Bekanntheits- und Typ-Bonus Titel nach oben, die nur zufaellig in einer
+  // der Wildcard-Abfragen mitgekommen sind — im Test standen so "Vigtafl"
+  // bei "gta v" und "Wowo Island" bei "wow" in der Liste.
+  if (score <= 0) return 0;
+
+  // Bekanntheit entscheidet, welcher von mehreren passenden Titeln gemeint
+  // ist: bei "world war" hat World of Warcraft 893 Wertungen, die
+  // namensaehnliche Konkurrenz eine Handvoll.
+  score += Math.min(Number(game.total_rating_count) || 0, 1000) / 5;
+  score += Math.min(Number(game.hypes) || 0, 100) / 2;
+
+  if (game.game_type === 0) score += 40;
+  else if (game.game_type === 1 || game.game_type === 2) score -= 40; // DLC/Erweiterung nach hinten
+  return score;
+}
+
+async function searchQuery(get, ctx, body) {
+  try {
+    const rows = await igdb(get, ctx, 'games', body);
+    return Array.isArray(rows) ? rows : [];
+  } catch (err) {
+    // Eine erfolglose Teilabfrage darf die Suche nicht insgesamt kippen.
+    ctx.warn(`Suchabfrage fehlgeschlagen: ${err.message}`);
+    return [];
+  }
+}
+
+function tokenWildcardWhere(tokens) {
+  return tokens.map((t) => `name ~ *"${quote(t)}"*`).join(' & ');
+}
+
 async function searchGames(get, ctx, q) {
-  const rows = await igdb(get, ctx, 'games',
-    `search "${quote(q)}";`
-    + ' fields id, name, first_release_date, hypes, cover.image_id,'
-    + ' game_type, platforms.id, platforms.name, platforms.abbreviation;'
-    + ` where game_type = (${GAME_TYPES.join(',')}); limit ${SEARCH_LIMIT};`);
-  return (Array.isArray(rows) ? rows : []).map((g) => ({
+  const norm = normalizeText(q);
+  const tokens = searchTokens(q);
+  if (!norm) return [];
+
+  const pool = new Map();
+  const add = (rows) => { for (const g of rows) if (g && g.id && g.name) pool.set(g.id, g); };
+
+  // 1. IGDBs Relevanzsuche — stark bei vollstaendigen Titeln.
+  add(await searchQuery(get, ctx, `search "${quote(q)}"; ${SEARCH_FIELDS} limit ${SEARCH_FETCH};`));
+  // 2. Alle Woerter irgendwo im Titel, Reihenfolge egal. Das ist der Teil,
+  //    der "world of war" -> World of Warcraft ueberhaupt erst findet.
+  add(await searchQuery(get, ctx,
+    `${SEARCH_FIELDS} where ${tokenWildcardWhere(tokens)};`
+    + ` sort total_rating_count desc; limit ${SEARCH_FETCH};`));
+
+  // 3. Kuerzel wie "wow" oder "botw" stehen nur in den Zweitnamen.
+  if (pool.size < 5) {
+    add(await searchQuery(get, ctx,
+      `${SEARCH_FIELDS} where alternative_names.name ~ *"${quote(q)}"*;`
+      + ` sort total_rating_count desc; limit 20;`));
+  }
+
+  // 4. Letzter Versuch bei Vertippern: jedes Wort auf einen Wortstamm
+  //    kuerzen. Faengt Fehler am Wortende ("cyberpank" -> "cyberp",
+  //    "warcaft" -> "warc"); ein Dreher im zweiten Buchstaben bleibt
+  //    ausserhalb dessen, was ohne echten Fuzzy-Index geht.
+  if (!pool.size) {
+    // 60 % des Wortes: bei "cyberpank" bleibt "cyberp" und trifft Cyberpunk.
+    // Ein Stamm von t.length-2 waere zu lang gewesen — der Vertipper sass
+    // noch drin.
+    const staemme = tokens.map((t) => t.slice(0, Math.max(4, Math.ceil(t.length * 0.6))))
+      .filter((t) => t.length >= 4);
+    if (staemme.length) {
+      add(await searchQuery(get, ctx,
+        `${SEARCH_FIELDS} where ${tokenWildcardWhere(staemme)};`
+        + ` sort total_rating_count desc; limit ${SEARCH_FETCH};`));
+    }
+  }
+
+  const heute = todayIso();
+  return [...pool.values()]
+    .filter((g) => !SEARCH_SKIP.has(g.game_type))
+    .map((g) => ({ g, score: scoreHit(g, norm, tokens) }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => (b.score - a.score)
+      // Bei gleichem Rang zaehlt, was noch aussteht — danach gefragt wird.
+      || (pendingRank(a.g, heute) - pendingRank(b.g, heute))
+      || ((b.g.first_release_date || 0) - (a.g.first_release_date || 0)))
+    .slice(0, SEARCH_LIMIT)
+    .map(({ g }) => searchHit(g));
+}
+
+function pendingRank(g, heute) {
+  const iso = isoOf(g.first_release_date);
+  return iso && iso >= heute ? 0 : 1;
+}
+
+function searchHit(g) {
+  return {
     id: g.id,
     name: g.name,
     date: isoOf(g.first_release_date),
     hypes: Number(g.hypes) || 0,
     kind: GAME_TYPE_DE[g.game_type] || null,
-    cover: imageUrl(g.cover && g.cover.image_id, 't_cover_big_2x'),
+    // Die Trefferliste zeigt 30x40 px — dafuer reicht t_cover_small (4 KB
+    // statt 87 KB). Bei acht Treffern pro Tastendruck ist das der
+    // Unterschied zwischen 34 KB und 700 KB.
+    cover: imageUrl(g.cover && g.cover.image_id, 't_cover_small'),
     platforms: (g.platforms || []).map(platformOf).filter(Boolean)
       .map((p) => ({ label: p.label, family: p.family })),
-  })).sort(searchOrder);
-}
-
-/* IGDBs eigene Trefferreihenfolge stellt bei "gothic" das Remake, nach dem
-   gefragt wurde, auf Platz 5 hinter vier Teile von 2001-2010. Wer die Lupe
-   benutzt, will wissen wann etwas rauskommt — also zuerst was noch aussteht,
-   dann das Bekanntere, dann das Neuere. */
-function searchOrder(a, b) {
-  const today = todayIso();
-  const pending = (x) => (x.date && x.date >= today ? 0 : 1);
-  return (pending(a) - pending(b))
-    || (b.hypes - a.hypes)
-    || String(b.date || '').localeCompare(String(a.date || ''))
-    || a.name.localeCompare(b.name, 'de');
+  };
 }
 
 /* ---------- Caches ----------
@@ -986,6 +1176,8 @@ module.exports = {
     GAME_TYPES, GENRES_DE, PLATFORMS, GAME_MODES_DE, PERSPECTIVES_DE,
     AGE_ORGS, AGE_CATEGORIES, GAME_TYPE_DE, STATUS_DE, WEBSITE_DE,
     isValidIso, dayBounds, todayIso, quote, toId, allowedImageUrl, looksGerman,
+    SEARCH_SKIP, SEARCH_FETCH, normalizeText, searchTokens, scoreHit, tokenWildcardWhere,
+    commonPrefix,
     imageTypeOf, groupReleases, sortByRelevance, clip,
     releasesForDay, searchGames, gameDetail, upcoming, getToken,
   },

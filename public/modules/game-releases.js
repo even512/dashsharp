@@ -557,6 +557,7 @@ async function openGameDetail(id, seed) {
     summary: seed.teaser, summaryLang: seed.teaserLang, summarySource: null,
   } : { name: '…' }, true);
 
+  grLockPageScroll(true);
   modal.style.display = 'flex';
   requestAnimationFrame(() => {
     modal.classList.add('open');
@@ -684,23 +685,41 @@ function grFillDetail(g, loading) {
 
   const stores = $('grDetailStores');
   stores.textContent = '';
-  for (const s of (g.stores || [])) {
+  const link = (label, url) => {
     const a = document.createElement('a');
     a.className = 'cfg-btn';
     a.target = '_blank';
     a.rel = 'noopener noreferrer';
-    a.href = s.url;
-    a.textContent = `${s.label} ↗`;
+    a.href = url;
+    a.textContent = `${label} ↗`;
     stores.appendChild(a);
+  };
+  for (const s of (g.stores || [])) link(s.label, s.url);
+  // Trailer und Tests liegen praktisch immer auf YouTube, aber nicht bei
+  // IGDB — eine Suche mit dem Titel ist der kuerzeste Weg dorthin und
+  // funktioniert auch fuer Titel, zu denen es noch gar nichts gibt.
+  if (g.name) {
+    link('YouTube', `https://www.youtube.com/results?search_query=${encodeURIComponent(g.name)}`);
   }
-  if (g.igdbUrl) {
-    const a = document.createElement('a');
-    a.className = 'cfg-btn';
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    a.href = g.igdbUrl;
-    a.textContent = 'IGDB ↗';
-    stores.appendChild(a);
+  if (g.igdbUrl) link('IGDB', g.igdbUrl);
+}
+
+/* Solange das Detailfenster offen ist, soll das Mausrad nur darin wirken —
+   sonst scrollt die Seite darunter weg, und beim Schliessen steht man
+   woanders. Die App hat dafuer kein Muster, also hier eines: eine Klasse auf
+   <body>, mehr nicht. Die Breite der verschwindenden Scrollleiste wird
+   ausgeglichen, damit der Inhalt beim Oeffnen nicht seitlich springt. */
+function grLockPageScroll(on) {
+  const body = document.body;
+  if (!body) return;
+  if (on) {
+    if (body.classList.contains('gr-scroll-locked')) return;
+    const gap = window.innerWidth - document.documentElement.clientWidth;
+    if (gap > 0) body.style.setProperty('--gr-scrollbar-gap', `${gap}px`);
+    body.classList.add('gr-scroll-locked');
+  } else {
+    body.classList.remove('gr-scroll-locked');
+    body.style.removeProperty('--gr-scrollbar-gap');
   }
 }
 
@@ -780,6 +799,7 @@ function closeGameDetail() {
   // Ein offenes Bild darf nicht ueber dem geschlossenen Fenster stehenbleiben.
   if (grLightboxOpen()) closeGrLightbox();
   _grDetail = null;
+  grLockPageScroll(false);
   if (!modal) return;
   modal.classList.remove('open');
   setTimeout(() => { modal.style.display = 'none'; }, 180);
