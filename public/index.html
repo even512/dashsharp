@@ -970,6 +970,32 @@
             <div id="newsSettingsBody"></div>
           </div>
 
+          <!-- TAB: GAME RELEASES
+               Die beiden Zugangsdaten-Felder erzeugt die Secrets-Verwaltung
+               aus dem Manifest in server/modules/game-releases.js; hier steht
+               nur, woher man sie bekommt. -->
+          <div class="tab" data-tab="game-releases">
+            <div class="cfg-row">
+              <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+                <span style="font:700 11px 'JetBrains Mono',monospace;color:#a78bfa;min-width:22px;background:rgba(167,139,250,0.1);border-radius:4px;padding:2px 5px;text-align:center">GR</span>
+                <div>
+                  <div class="cfg-key">Game Releases</div>
+                  <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">IGDB · Neuerscheinungen des Tages</div>
+                </div>
+              </div>
+              <span id="grSettingsStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-status)">● –</span>
+            </div>
+            <div class="cfg-section">Zugang einrichten</div>
+            <div class="tile-settings-hint" style="line-height:1.7">
+              IGDB läuft über Twitch. Unter
+              <a href="https://dev.twitch.tv/console/apps" target="_blank" rel="noopener noreferrer">dev.twitch.tv/console/apps</a>
+              eine Anwendung registrieren (OAuth-Redirect <code>http://localhost</code>,
+              Kategorie „Application Integration“) und die beiden Werte oben unter
+              <b>Secrets</b> als <code>IGDB_CLIENT_ID</code> und
+              <code>IGDB_CLIENT_SECRET</code> eintragen. Kostenlos, ohne Monatslimit.
+            </div>
+          </div>
+
           <!-- TAB: UNIFI / PROTECT -->
           <div class="tab" data-tab="unifi">
             <div class="cfg-section">UniFi / Protect</div>
