@@ -211,6 +211,106 @@ head('News-Feed-Parser');
      'Katalog: noImages ist, wenn gesetzt, strikt true');
 }
 
+/* ---------- 2c. Game Releases ----------
+   Alles hier laeuft ohne IGDB: geprueft werden die Uebersetzungstabellen,
+   die Eingabevalidierung der Zusatzrouten und die Allowlist des Bild-Proxys.
+   Das sind die Stellen, an denen ein Fehler entweder still falsche Daten
+   anzeigt oder Fremdziele erreichbar macht. */
+head('Game Releases');
+{
+  const gr = createRequire(import.meta.url)(join(ROOT, 'server/modules/game-releases.js'))._internals;
+
+  // Regressionsschutz: mit game_type = [0] fehlten beim Bauen ausgerechnet
+  // "Halo: Campaign Evolved" (Remake, 8) und "Gothic Classic" (Port, 11).
+  is(gr.GAME_TYPES.includes(0) && gr.GAME_TYPES.includes(8) && gr.GAME_TYPES.includes(11),
+     'Release-Typen: Hauptspiel, Remake und Port zaehlen mit');
+  is(!gr.GAME_TYPES.some((t) => [1, 2, 3, 5, 13, 14].includes(t)),
+     'Release-Typen: DLC, Expansion, Bundle, Mod, Pack und Update bleiben draussen');
+
+  for (const [name, table] of [['Genres', gr.GENRES_DE], ['Spielmodi', gr.GAME_MODES_DE],
+                               ['Perspektiven', gr.PERSPECTIVES_DE], ['Freigabe-Stufen', gr.AGE_CATEGORIES]]) {
+    const values = Object.values(table);
+    is(values.length > 0 && values.every((v) => typeof v === 'string' && v.trim()),
+       `${name}: ${values.length} Eintraege, alle nicht leer`);
+  }
+  is(Object.values(gr.PLATFORMS).every((p) => p.label && p.family),
+     `Plattformen: ${Object.keys(gr.PLATFORMS).length} Eintraege mit Label und Familie`);
+  // Die Kachel filtert ueber genau diese Familien — ein Tippfehler wuerde
+  // eine Plattform aus dem Filter fallen lassen, ohne dass etwas auffaellt.
+  const families = new Set(['pc', 'playstation', 'xbox', 'nintendo', 'mobile', 'vr', 'browser', 'other']);
+  is(Object.values(gr.PLATFORMS).every((p) => families.has(p.family)),
+     'Plattformen: nur Familien, die die Kachel auch anbietet');
+  // USK ist Organisation 4 — fuer ein deutsches Dashboard die relevante.
+  is(gr.AGE_ORGS[4] === 'USK' && gr.AGE_CATEGORIES[18] === '0' && gr.AGE_CATEGORIES[22] === '18',
+     'Altersfreigaben: USK-Stufen 0 bis 18 richtig zugeordnet');
+
+  for (const [iso, want] of [['2026-07-28', true], ['2026-02-29', false], ['2026-13-01', false],
+                             ['2026-7-8', false], ['', false], ['../../etc/passwd', false]]) {
+    is(gr.isValidIso(iso) === want, `Datum "${iso}" -> ${want ? 'gueltig' : 'abgelehnt'}`);
+  }
+  // 2026-02-29 gibt es nicht; Date normalisiert still auf den 01.03.
+  is(gr.isValidIso('2024-02-29'), 'Datum: Schaltjahr 2024-02-29 wird akzeptiert');
+  is(gr.dayBounds('2026-07-28').end - gr.dayBounds('2026-07-28').start === 86400,
+     'Tagesgrenzen umfassen genau 24 Stunden');
+  is(gr.isValidIso(gr.todayIso()), 'todayIso() liefert ein gueltiges Datum');
+
+  for (const [raw, want] of [['375232', 375232], ['0', null], ['-5', null], ['abc', null],
+                             ['1;drop', null], ['', null]]) {
+    is(gr.toId(raw) === want, `Spiel-Id "${raw}" -> ${want === null ? 'abgelehnt' : want}`);
+  }
+  // Der Suchbegriff landet in `search "..."` — Anfuehrungszeichen und
+  // Backslash muessen entwertet sein, sonst laesst sich die Abfrage umbauen.
+  is(!/(^|[^\\])"/.test(gr.quote('gothic" ; fields *; //')), 'Suchbegriff: Anfuehrungszeichen werden entwertet');
+  is(gr.quote('a\\b') === 'a\\\\b', 'Suchbegriff: Backslash wird entwertet');
+  is(!/[\n\r]/.test(gr.quote('a\nb')), 'Suchbegriff: Zeilenumbrueche verschwinden');
+
+  for (const [url, want] of [
+    ['https://images.igdb.com/igdb/image/upload/t_cover_big_2x/co1.jpg', true],
+    ['https://shared.akamai.steamstatic.com/x/header.jpg', true],
+    ['https://cdn.cloudflare.steamstatic.com/x/capsule.jpg', true],
+    ['https://upload.wikimedia.org/x.png', true],
+    ['https://steamstatic.com.evil.example/x.jpg', false], // Suffix-Trick, zweite Variante
+    ['http://images.igdb.com/x.jpg', false],             // kein https
+    ['https://evil.example/x.jpg', false],
+    ['https://images.igdb.com.evil.example/x.jpg', false], // Suffix-Trick
+    ['https://127.0.0.1/x.jpg', false],
+    ['file:///etc/passwd', false],
+    ['', false],
+  ]) {
+    is(!!gr.allowedImageUrl(url) === want, `Bild-URL "${url.slice(0, 46)}" -> ${want ? 'erlaubt' : 'abgelehnt'}`);
+  }
+  // SVG wuerde same-origin ausgeliefert und koennte Skript ausfuehren.
+  is(gr.imageTypeOf(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg">')) === null,
+     'Bild-Proxy: SVG wird nicht als Bild akzeptiert');
+  is(gr.imageTypeOf(Buffer.from([0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0])) === 'image/jpeg',
+     'Bild-Proxy: JPEG wird erkannt');
+
+  // Ein Spiel, das am selben Tag auf mehreren Plattformen erscheint, ist EIN
+  // Eintrag mit mehreren Chips — nicht drei Zeilen.
+  const grouped = gr.groupReleases([
+    { game: { id: 1, name: 'Testspiel' }, platform: { id: 6 }, release_region: 8 },
+    { game: { id: 1, name: 'Testspiel' }, platform: { id: 167 }, release_region: 8 },
+    { game: { id: 1, name: 'Testspiel' }, platform: { id: 6 }, release_region: 1 },
+    { game: { id: 2, name: 'Anderes' }, platform: { id: 130 }, release_region: 8 },
+    { platform: { id: 6 }, release_region: 8 }, // ohne Spiel -> faellt raus
+  ]);
+  is(grouped.length === 2, 'Gruppierung: zwei Spiele aus fuenf Terminen');
+  is(grouped[0].platforms.size === 2, 'Gruppierung: Plattformen eines Spiels werden gesammelt');
+  is(grouped[0].region === 1, 'Gruppierung: Europa gewinnt vor weltweit');
+
+  // Steam antwortet auf l=german auch ohne deutsche Store-Seite mit
+  // success:true und liefert dann englischen Text. Ohne diese Erkennung
+  // steht er mit "deutsch"-Etikett auf der Kachel — genau so aufgefallen.
+  is(gr.looksGerman('Halo: Campaign Evolved ist ein originalgetreues und modernisiertes Remake der Kampagne von 2001.'),
+     'Spracherkennung: deutscher Text wird als deutsch erkannt');
+  is(!gr.looksGerman('Explore beautiful mazes, discover unique items and help the other explorers with their quest.'),
+     'Spracherkennung: englischer Text wird nicht als deutsch durchgewinkt');
+  is(!gr.looksGerman('Kurz'), 'Spracherkennung: zu kurze Texte gelten nicht als deutsch');
+
+  is(gr.clip('a  b\n c') === 'a b c', 'Textaufbereitung: Leerraum wird normalisiert');
+  is(gr.clip('x'.repeat(50), 10).length === 10, 'Textaufbereitung: lange Texte werden gekuerzt');
+}
+
 /* ---------- 3. Frontend-Registry ---------- */
 head('Frontend-Registry');
 {
@@ -314,6 +414,28 @@ try {
       try {
         const r = await get(path);
         is(r.status === want, `GET ${path} -> ${r.status} (erwartet ${want})`);
+      } catch (e) { bad(`GET ${path}: ${e.message}`); }
+    }
+
+    // Game Releases: die Eingabepruefungen greifen VOR dem
+    // configured()-Check, damit ein Fund hier nicht davon abhaengt, ob
+    // gerade IGDB-Zugangsdaten hinterlegt sind. Ohne Zugangsdaten
+    // antworten gueltige Anfragen mit 503 statt einen Abruf zu starten.
+    for (const [path, want] of [
+      ['/api/game-releases/day?date=2026-13-01', 400],
+      ['/api/game-releases/day?date=..%2F..%2Fetc%2Fpasswd', 400],
+      ['/api/game-releases/day', 400],
+      ['/api/game-releases/game/abc', 400],
+      ['/api/game-releases/search?q=a', 400],
+      ['/api/game-releases/image?u=https%3A%2F%2Fevil.example%2Fx.jpg', 400],
+      ['/api/game-releases/image?u=http%3A%2F%2F127.0.0.1%2Fx.jpg', 400],
+      ['/api/game-releases/image', 400],
+      ['/api/game-releases/day?date=2026-07-28', 503],
+      ['/api/game-releases/game/375232', 503],
+    ]) {
+      try {
+        const r = await get(path);
+        is(r.status === want, `GET ${path.slice(0, 60)} -> ${r.status} (erwartet ${want})`);
       } catch (e) { bad(`GET ${path}: ${e.message}`); }
     }
 

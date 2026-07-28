@@ -1657,3 +1657,359 @@ body.design-mode[data-theme="win9x"] .grid-stack-item:hover > .grid-stack-item-c
   gap: 10px;
   padding-top: 14px;
 }
+
+/* ============================================================================
+   Game-Releases-Kachel (public/modules/game-releases.js)
+   ----------------------------------------------------------------------------
+   Kartenliste mit hochkantem Cover, Datumsleiste mit Suche und das
+   Detailfenster. Durchgehend ueber die Theme-Variablen, damit
+   hell/dunkel/win9x mitlaufen.
+   ============================================================================ */
+/* Wie bei der News-Kachel setzt jede Darstellungs-Option genau eine Klasse auf
+   #grList (applyGrLayout), die hier ausschliesslich Variablen umschreibt. Die
+   Zeilen selbst kennen die Optionen nicht. */
+.gr-list {
+  --gr-title-fs: 13px;
+  --gr-teaser-fs: 11.5px;
+  --gr-meta-fs: 10px;
+  --gr-chip-fs: 9.5px;
+  /* Box-Art ist 3:4 — die Hoehe folgt der Breite, damit kein Cover verzerrt. */
+  --gr-cover-w: 66px;
+  --gr-gap: 10px;
+  --gr-pad: 7px;
+  --gr-title-lines: 2;
+  --gr-teaser-lines: 2;
+  gap: var(--gr-gap);
+}
+.gr-list.gr-text-s  { --gr-title-fs: 11.5px; --gr-teaser-fs: 10px;   --gr-meta-fs: 9px;  --gr-chip-fs: 9px; }
+.gr-list.gr-text-l  { --gr-title-fs: 14.5px; --gr-teaser-fs: 12.5px; --gr-meta-fs: 11px; --gr-chip-fs: 10px; }
+.gr-list.gr-text-xl { --gr-title-fs: 16px;   --gr-teaser-fs: 13.5px; --gr-meta-fs: 12px; --gr-chip-fs: 11px; }
+
+.gr-list.gr-img-s  { --gr-cover-w: 48px; }
+.gr-list.gr-img-l  { --gr-cover-w: 84px; }
+.gr-list.gr-img-xl { --gr-cover-w: 104px; }
+
+.gr-list.gr-space-tight { --gr-gap: 5px;  --gr-pad: 5px; }
+.gr-list.gr-space-wide  { --gr-gap: 18px; --gr-pad: 10px; }
+
+/* ---------- Leiste ---------- */
+.gr-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+.gr-nav, .gr-today, .gr-search-btn {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid var(--border-2);
+  color: var(--text-3);
+  cursor: pointer;
+  font: 600 11px 'JetBrains Mono', monospace;
+  line-height: 1;
+}
+.gr-nav { width: 24px; padding: 0; font-size: 14px; }
+.gr-search-btn { width: 24px; padding: 0; font-size: 15px; }
+.gr-nav:hover, .gr-today:hover, .gr-search-btn:hover {
+  color: var(--text-1);
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
+}
+/* Das native Datumsfeld liegt unsichtbar ueber dem Label: so oeffnet ein Klick
+   den Browser-Datumswaehler, angezeigt wird aber "Heute" statt "2026-07-28". */
+.gr-date-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid var(--border-2);
+  overflow: hidden;
+}
+.gr-date-wrap:hover { border-color: var(--accent-border); background: var(--accent-subtle); }
+.gr-date-label {
+  font: 600 11px 'JetBrains Mono', monospace;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 6px;
+  pointer-events: none;
+}
+.gr-date {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+/* ---------- Suche ---------- */
+.gr-search-wrap { position: relative; display: flex; align-items: center; flex-shrink: 0; }
+.gr-search-input {
+  width: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  height: 24px;
+  background: var(--bg-glass);
+  color: var(--text-1);
+  font: 500 11px 'JetBrains Mono', monospace;
+  /* Zusammengeklappt ist das Feld nicht nur schmal, sondern auch nicht
+     fokussierbar — sonst faengt es beim Tabben durch die Kachel den Fokus. */
+  visibility: hidden;
+  transition: width .16s ease, padding .16s ease;
+}
+.gr-search-wrap.open .gr-search-input {
+  visibility: visible;
+  width: 140px;
+  padding: 0 8px;
+  margin-left: 4px;
+  border-color: var(--accent-border);
+}
+.gr-search-wrap.open .gr-search-btn { color: var(--accent); border-color: var(--accent-border); }
+.gr-results {
+  position: absolute;
+  top: 28px;
+  right: 0;
+  z-index: 40;
+  width: min(300px, 78vw);
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--bg-modal);
+  border: 1px solid var(--border-modal);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .5);
+}
+.gr-result {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 5px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.gr-result:hover, .gr-result:focus-visible { background: var(--accent-subtle); outline: none; }
+.gr-result-cover {
+  width: 30px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-4);
+}
+.gr-result-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.gr-result-main { min-width: 0; }
+.gr-result-name {
+  font: 500 11.5px 'JetBrains Mono', monospace;
+  color: var(--text-15);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gr-result-date { font: 500 10px 'JetBrains Mono', monospace; color: var(--text-3); margin-top: 2px; }
+.gr-result-empty {
+  padding: 10px;
+  font: 500 11px 'JetBrains Mono', monospace;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+/* ---------- Zeilen ---------- */
+.gr-hint {
+  font: 500 10.5px/1.5 'JetBrains Mono', monospace;
+  color: var(--text-dim);
+  padding: 0 2px 7px;
+  flex-shrink: 0;
+}
+.gr-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  border-radius: 9px;
+  padding: var(--gr-pad);
+  border: 1px solid transparent; /* Platz fuer den Karten-Rahmen, damit die Wahl der Trennung die Zeilen nicht verschiebt */
+  transition: background .12s;
+}
+.gr-row:hover, .gr-row:focus-visible { background: var(--accent-subtle); outline: none; }
+
+/* ---------- Trennung (Option „Trennung") ---------- */
+.gr-list.gr-sep-line .gr-row + .gr-row {
+  border-top-color: var(--border-3);
+  margin-top: calc(var(--gr-gap) * -0.5);
+  padding-top: calc(var(--gr-pad) + var(--gr-gap) * 0.5);
+  border-radius: 0 0 9px 9px;
+}
+.gr-list.gr-sep-card .gr-row { background: var(--bg-glass); border-color: var(--border-4); }
+.gr-list.gr-sep-card .gr-row:hover,
+.gr-list.gr-sep-card .gr-row:focus-visible { background: var(--accent-subtle); }
+.gr-list.gr-sep-zebra .gr-row:nth-child(even) { background: var(--bg-glass); }
+.gr-list.gr-sep-zebra .gr-row:nth-child(even):hover,
+.gr-list.gr-sep-zebra .gr-row:nth-child(even):focus-visible { background: var(--accent-subtle); }
+
+/* Feste Bildspalte im Box-Art-Format 3:4, auch wenn ein Titel kein Cover
+   mitbringt: sonst springt der Text zwischen den Zeilen hin und her. */
+.gr-cover {
+  position: relative;
+  width: var(--gr-cover-w);
+  aspect-ratio: 3 / 4;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-4);
+}
+.gr-cover img { position: relative; width: 100%; height: 100%; object-fit: cover; display: block; z-index: 1; }
+.gr-cover-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 max(11px, calc(var(--gr-cover-w) / 3)) 'JetBrains Mono', monospace;
+  color: var(--text-4);
+}
+
+.gr-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.gr-title {
+  font: 500 var(--gr-title-fs)/1.35 'JetBrains Mono', monospace;
+  color: var(--text-15);
+  display: -webkit-box;
+  -webkit-line-clamp: var(--gr-title-lines);
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.gr-teaser {
+  font: 500 var(--gr-teaser-fs)/1.5 'JetBrains Mono', monospace;
+  color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: var(--gr-teaser-lines);
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.gr-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.gr-chip {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-4);
+  font: 600 var(--gr-chip-fs) 'JetBrains Mono', monospace;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+/* Remake, Port, Early Access — das ist der Unterschied zwischen "neu" und
+   "schon mal dagewesen" und darf deshalb herausstechen. */
+.gr-chip-flag { color: var(--accent); border-color: var(--accent-border); background: var(--accent-subtle); }
+.gr-chip-date { color: var(--text-2); }
+.gr-chip-genre { color: var(--text-dim); }
+.gr-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font: 500 var(--gr-meta-fs) 'JetBrains Mono', monospace;
+  color: var(--text-3);
+}
+.gr-genres { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gr-score { flex-shrink: 0; font-weight: 700; }
+
+.gr-empty {
+  font: 500 11px/1.5 'JetBrains Mono', monospace;
+  color: var(--text-dim);
+  padding: 2px;
+}
+
+/* Kachel-Optionen (Schalter aus -> Klasse gesetzt) */
+[data-widget-id="game-releases"].cfg-hide-gr-chips .gr-row .gr-chips { display: none !important; }
+[data-widget-id="game-releases"].cfg-hide-gr-teaser .gr-teaser { display: none !important; }
+
+/* ---------- Detailfenster ---------- */
+.gr-detail-body { padding: 0 0 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.gr-detail-body > *:not(.gr-detail-hero):not(.gr-detail-shots) { margin: 0 20px; }
+/* Artwork als Kopfbild, Cover halb darueber gelegt — wie ein Spielekarton
+   vor dem Hintergrundbild. */
+.gr-detail-hero { position: relative; margin-bottom: 4px; }
+.gr-detail-art { width: 100%; height: 190px; object-fit: cover; display: block; }
+.gr-detail-cover {
+  position: absolute;
+  left: 20px;
+  bottom: -14px;
+  width: 84px;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 2px solid var(--bg-modal);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+}
+/* Ohne Artwork steht das Cover normal im Fluss statt im Nichts zu haengen. */
+.gr-detail-hero:not(:has(.gr-detail-art[src])) { padding: 16px 20px 0; }
+.gr-detail-hero:not(:has(.gr-detail-art[src])) .gr-detail-cover { position: static; box-shadow: none; }
+.gr-detail-title {
+  font: 600 17px/1.3 'Space Grotesk', sans-serif;
+  color: var(--text-1);
+  margin: 8px 20px 0 !important;
+}
+.gr-detail-chips { padding-top: 2px; }
+.gr-detail-scores { display: flex; flex-wrap: wrap; gap: 6px; }
+.gr-score-pill {
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--border-2);
+  font: 700 10.5px 'JetBrains Mono', monospace;
+  color: var(--text-2);
+}
+.gr-score-age { color: var(--text-3); }
+.gr-detail-text { font: 500 12.5px/1.65 'JetBrains Mono', monospace; color: var(--text-2); }
+/* Englischer Text wird gekennzeichnet, statt ihn als deutsch auszugeben. */
+.gr-text-en::after {
+  content: 'EN';
+  display: inline-block;
+  margin-left: 7px;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid var(--border-2);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-4);
+  vertical-align: 2px;
+}
+.gr-detail-facts { display: flex; flex-direction: column; gap: 3px; }
+.gr-fact { display: flex; gap: 10px; font: 500 11.5px 'JetBrains Mono', monospace; }
+.gr-fact-key { flex: 0 0 96px; color: var(--text-4); }
+.gr-fact-val { flex: 1; min-width: 0; color: var(--text-2); }
+/* Bilderstreif: scrollt in sich, damit die Kachelbreite nicht gesprengt wird. */
+.gr-detail-shots {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 20px 4px;
+  scrollbar-width: thin;
+}
+.gr-shot {
+  height: 104px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  border: 1px solid var(--border-4);
+  object-fit: cover;
+}
+.gr-detail-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border-3);
+}
+.gr-detail-stores { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.gr-detail-stores .cfg-btn { text-decoration: none; display: inline-flex; align-items: center; }
