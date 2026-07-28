@@ -70,6 +70,9 @@ let _grOther = null;    // Payload eines angesprungenen Datums
 let _grUpcoming = null; // Fallback-Liste fuer leere Tage
 let _grDetail = null;   // gerade geoeffnetes Spiel
 let _grLastFocus = null;
+let _grShots = [];      // grosse Fassungen der Screenshots (Lightbox)
+let _grShotIndex = 0;
+let _grLightboxFocus = null;
 let _grSearchTimer = null;
 let _grSearchSeq = 0;
 
@@ -490,7 +493,16 @@ function _buildGrDetailModal() {
     img.addEventListener('error', () => { img.style.display = 'none'; });
   }
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && _grDetail) closeGameDetail();
+    if (!_grDetail) return;
+    // Ist die Lightbox offen, gehoeren Escape und die Pfeiltasten ihr —
+    // sonst schliesst der erste Escape gleich Bild UND Detailfenster.
+    if (grLightboxOpen()) {
+      if (e.key === 'Escape') { e.preventDefault(); closeGrLightbox(); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); grLightboxStep(-1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); grLightboxStep(1); }
+      return;
+    }
+    if (e.key === 'Escape') closeGameDetail();
   });
   document.body.appendChild(modal);
   return modal;
@@ -611,16 +623,28 @@ function grFillDetail(g, loading) {
 
   const shots = $('grDetailShots');
   shots.textContent = '';
-  for (const url of (g.screenshots || [])) {
+  _grShots = (g.screenshots || []).map((s) => s.full).filter(Boolean);
+  (g.screenshots || []).forEach((shot, i) => {
+    if (!shot.thumb) return;
     const img = document.createElement('img');
     img.className = 'gr-shot';
     img.loading = 'lazy';
     img.alt = '';
-    img.src = url;
-    img.addEventListener('error', () => { img.remove(); });
+    img.src = shot.thumb;
+    img.setAttribute('role', 'button');
+    img.tabIndex = 0;
+    img.title = 'Größer anzeigen';
+    // Faellt ein Bild aus, verschwindet auch die Sichtbarkeit des Streifens
+    // wieder — sonst bleibt ein leerer Container mit Innenabstand stehen.
+    img.addEventListener('error', () => { img.remove(); grSyncShotStrip(); });
+    const open = () => openGrLightbox(i);
+    img.addEventListener('click', open);
+    img.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+    });
     shots.appendChild(img);
-  }
-  shots.style.display = shots.childNodes.length ? '' : 'none';
+  });
+  grSyncShotStrip();
 
   const stores = $('grDetailStores');
   stores.textContent = '';
@@ -644,8 +668,81 @@ function grFillDetail(g, loading) {
   }
 }
 
+function grSyncShotStrip() {
+  const shots = $('grDetailShots');
+  if (shots) shots.style.display = shots.childNodes.length ? '' : 'none';
+}
+
+/* ---------- Lightbox ----------
+   Liegt ueber dem Detailfenster: Escape und der Zurueck-Weg muessen deshalb
+   zuerst hier landen, sonst schliesst der erste Escape gleich beides. */
+
+function _buildGrLightbox() {
+  const box = document.createElement('div');
+  box.id = 'grLightbox';
+  box.className = 'gr-lightbox';
+  box.innerHTML =
+    '<button class="gr-lb-nav gr-lb-prev" title="Vorheriges Bild" aria-label="Vorheriges Bild">‹</button>'
+    + '<img id="grLightboxImg" class="gr-lb-img" alt="">'
+    + '<button class="gr-lb-nav gr-lb-next" title="Nächstes Bild" aria-label="Nächstes Bild">›</button>'
+    + '<div id="grLightboxCount" class="gr-lb-count"></div>'
+    + '<button class="gr-lb-close" title="Schließen" aria-label="Schließen">✕</button>';
+  // Klick auf das Bild selbst soll nicht schliessen — sonst trifft man beim
+  // Weiterblaettern staendig daneben.
+  box.addEventListener('click', (e) => { if (e.target === box) closeGrLightbox(); });
+  box.querySelector('.gr-lb-close').addEventListener('click', closeGrLightbox);
+  box.querySelector('.gr-lb-prev').addEventListener('click', () => grLightboxStep(-1));
+  box.querySelector('.gr-lb-next').addEventListener('click', () => grLightboxStep(1));
+  document.body.appendChild(box);
+  return box;
+}
+
+function openGrLightbox(index) {
+  if (!_grShots.length) return;
+  const box = $('grLightbox') || _buildGrLightbox();
+  _grShotIndex = ((index % _grShots.length) + _grShots.length) % _grShots.length;
+  _grLightboxFocus = document.activeElement;
+  grRenderLightbox();
+  box.style.display = 'flex';
+  requestAnimationFrame(() => {
+    box.classList.add('open');
+    const close = box.querySelector('.gr-lb-close');
+    if (close) close.focus();
+  });
+}
+
+function grRenderLightbox() {
+  const img = $('grLightboxImg');
+  if (img) img.src = _grShots[_grShotIndex];
+  setText('grLightboxCount', `${_grShotIndex + 1} / ${_grShots.length}`);
+  const box = $('grLightbox');
+  if (box) box.classList.toggle('gr-lb-single', _grShots.length < 2);
+}
+
+function grLightboxStep(delta) {
+  if (!_grShots.length) return;
+  _grShotIndex = ((_grShotIndex + delta) % _grShots.length + _grShots.length) % _grShots.length;
+  grRenderLightbox();
+}
+
+function closeGrLightbox() {
+  const box = $('grLightbox');
+  if (!box || box.style.display === 'none') return;
+  box.classList.remove('open');
+  setTimeout(() => { box.style.display = 'none'; }, 160);
+  if (_grLightboxFocus && typeof _grLightboxFocus.focus === 'function') _grLightboxFocus.focus();
+  _grLightboxFocus = null;
+}
+
+function grLightboxOpen() {
+  const box = $('grLightbox');
+  return !!(box && box.style.display !== 'none' && box.style.display);
+}
+
 function closeGameDetail() {
   const modal = $('grDetailModal');
+  // Ein offenes Bild darf nicht ueber dem geschlossenen Fenster stehenbleiben.
+  if (grLightboxOpen()) closeGrLightbox();
   _grDetail = null;
   if (!modal) return;
   modal.classList.remove('open');
