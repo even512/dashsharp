@@ -685,24 +685,23 @@ function grFillDetail(g, loading) {
 
   const stores = $('grDetailStores');
   stores.textContent = '';
-  for (const s of (g.stores || [])) {
+  const link = (label, url) => {
     const a = document.createElement('a');
     a.className = 'cfg-btn';
     a.target = '_blank';
     a.rel = 'noopener noreferrer';
-    a.href = s.url;
-    a.textContent = `${s.label} ↗`;
+    a.href = url;
+    a.textContent = `${label} ↗`;
     stores.appendChild(a);
+  };
+  for (const s of (g.stores || [])) link(s.label, s.url);
+  // Trailer und Tests liegen praktisch immer auf YouTube, aber nicht bei
+  // IGDB — eine Suche mit dem Titel ist der kuerzeste Weg dorthin und
+  // funktioniert auch fuer Titel, zu denen es noch gar nichts gibt.
+  if (g.name) {
+    link('YouTube', `https://www.youtube.com/results?search_query=${encodeURIComponent(g.name)}`);
   }
-  if (g.igdbUrl) {
-    const a = document.createElement('a');
-    a.className = 'cfg-btn';
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    a.href = g.igdbUrl;
-    a.textContent = 'IGDB ↗';
-    stores.appendChild(a);
-  }
+  if (g.igdbUrl) link('IGDB', g.igdbUrl);
 }
 
 /* Solange das Detailfenster offen ist, soll das Mausrad nur darin wirken —
