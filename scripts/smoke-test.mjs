@@ -204,6 +204,11 @@ head('News-Feed-Parser');
   is(news.CATALOG.every((s) => news.CATEGORIES.some((c) => c.id === s.category)),
      'Katalog: nur bekannte Kategorien');
   is(news.CATALOG.every((s) => /^https:\/\//.test(s.url)), 'Katalog: nur https-Feeds');
+  is(new Set(news.CATALOG.map((s) => s.url)).size === news.CATALOG.length, 'Katalog: keine doppelten Feed-URLs');
+  // `noImages` steuert die Warnungen von feed-check.mjs. Ein Tippfehler waere
+  // dort nicht zu sehen — die Quelle bliebe einfach in der Warnliste stehen.
+  is(news.CATALOG.every((s) => !('noImages' in s) || s.noImages === true),
+     'Katalog: noImages ist, wenn gesetzt, strikt true');
 }
 
 /* ---------- 3. Frontend-Registry ---------- */

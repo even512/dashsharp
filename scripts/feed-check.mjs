@@ -18,7 +18,9 @@
 
    Der Exit-Code ist 1, sobald eine gepruefte Quelle nicht erreichbar war
    oder keinen einzigen Eintrag geliefert hat — so taugt es auch als
-   gelegentlicher Katalog-Check.
+   gelegentlicher Katalog-Check. Quellen, die im Katalog als `noImages`
+   gefuehrt sind, werden wegen fehlender Bilder nicht bemaengelt (dafuer aber,
+   wenn sie ploetzlich welche liefern — dann ist die Markierung veraltet).
    ============================================================ */
 
 import { createRequire } from 'node:module';
@@ -74,6 +76,16 @@ function abs(url, base) {
   } catch { return ''; }
 }
 
+// Fehlerseiten sind entweder ein Satz („Blocked by egress policy") oder eine
+// ganze HTML-Seite. Beides auf eine Zeile eindampfen, Markup raus.
+function firstLine(body) {
+  return String(body || '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
+}
+
 async function check(source) {
   const started = Date.now();
   try {
@@ -84,7 +96,21 @@ async function check(source) {
     });
     const buf = await readCapped(res);
     const xml = news.decodeBody(buf, res.headers.get('content-type'));
-    if (!res.ok) return { source, error: `HTTP ${res.status}`, ms: Date.now() - started, xml };
+    // Ein 403 sagt nicht, wer geantwortet hat: die Quelle selbst, oder ein Proxy
+    // bzw. eine Firewall davor (im Homelab Pi-hole, in einer abgeschotteten
+    // Umgebung die Egress-Policy). Der Rumpf sagt es meist im Klartext, deshalb
+    // wandert er in die Fehlerzeile — sonst sucht man beim falschen Verdaechtigen.
+    if (!res.ok) {
+      return {
+        source,
+        error: `HTTP ${res.status}`,
+        hint: firstLine(xml),
+        by: [res.headers.get('x-block-reason'), res.headers.get('via'), res.headers.get('server')]
+          .filter(Boolean).join(' · '),
+        ms: Date.now() - started,
+        xml,
+      };
+    }
     const parsed = news.parseFeed(xml);
     const items = parsed.items.map((it) => ({
       title: it.title,
@@ -135,16 +161,24 @@ for (const r of results) {
   console.log(`  ${C.dim}${source.url}${C.off}`);
 
   if (r.error) {
-    console.log(`  ${C.red}✗ ${r.error}${C.off} ${C.dim}(${r.ms} ms)${C.off}\n`);
-    broken.push(`${source.id}: ${r.error}`);
+    console.log(`  ${C.red}✗ ${r.error}${C.off} ${C.dim}(${r.ms} ms)${C.off}`);
+    if (r.by) console.log(`  ${C.dim}geantwortet hat: ${r.by}${C.off}`);
+    if (r.hint) console.log(`  ${C.dim}${r.hint}${C.off}`);
+    console.log('');
+    broken.push(`${source.id}: ${r.error}${r.hint ? ` — ${r.hint.slice(0, 60)}` : ''}`);
     if (raw && r.xml) console.log(`${C.dim}${firstBlock(r.xml).slice(0, 2000)}${C.off}\n`);
     continue;
   }
 
+  // Quellen ohne Bilder im Feed sind kein Warnzustand — nur die, die welche
+  // fuehren muessten und keine liefern.
   const withImage = r.items.filter((i) => i.image).length;
-  const mark = !r.items.length ? C.red + '✗' : withImage ? C.green + '✓' : C.yellow + '!';
+  const mark = !r.items.length ? C.red + '✗'
+    : withImage ? C.green + '✓'
+      : source.noImages ? C.dim + '·' : C.yellow + '!';
   console.log(`  ${mark}${C.off} HTTP ${r.status} · ${r.type || '?'} · ${(r.bytes / 1024).toFixed(0)} kB`
-    + ` · ${r.items.length} Eintraege · ${withImage} mit Bild ${C.dim}(${r.ms} ms)${C.off}`);
+    + ` · ${r.items.length} Eintraege · ${withImage} mit Bild`
+    + `${source.noImages ? ' ' + C.dim + '(fuehrt keine)' + C.off : ''} ${C.dim}(${r.ms} ms)${C.off}`);
   if (r.finalUrl) console.log(`  ${C.dim}→ umgeleitet auf ${r.finalUrl}${C.off}`);
 
   for (const it of r.items.slice(0, 3)) {
@@ -153,7 +187,10 @@ for (const r of results) {
   }
 
   if (!r.items.length) broken.push(`${source.id}: 0 Eintraege (Feed erreichbar, aber leer oder kein Feed)`);
-  else if (!withImage) broken.push(`${source.id}: 0 von ${r.items.length} Eintraegen mit Bild`);
+  else if (!withImage && !source.noImages) broken.push(`${source.id}: 0 von ${r.items.length} Eintraegen mit Bild`);
+  // Auch der umgekehrte Fall ist eine Meldung wert: die Markierung im Katalog
+  // stimmt dann nicht mehr, und `noImages` wuerde eine echte Luecke verdecken.
+  else if (withImage && source.noImages) broken.push(`${source.id}: ${withImage} Eintraege mit Bild, aber im Katalog als noImages gefuehrt`);
 
   if (raw) console.log(`\n${C.dim}${firstBlock(r.xml).slice(0, 2000)}${C.off}`);
   console.log('');

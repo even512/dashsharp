@@ -58,17 +58,25 @@ const LANGS = [
   { id: 'en', label: 'Englischsprachig' },
 ];
 
-// Kuratierter Katalog. Bewusst auf IT/Technik/Hardware/Gaming begrenzt —
-// wer etwas anderes lesen will, traegt es als eigene Quelle ein.
+/* Kuratierter Katalog. Bewusst auf IT/Technik/Hardware/Gaming begrenzt —
+   wer etwas anderes lesen will, traegt es als eigene Quelle ein.
+
+   `noImages: true` ist keine Einstellung, sondern eine nachgepruefte Eigenschaft
+   des Feeds: diese Quellen fuehren pro Eintrag ueberhaupt kein Bild — kein <img>
+   (auch nicht escaped), kein media:*, kein <enclosure>, kein content:encoded. Die
+   Kachel zeigt dort das Kuerzel der Quelle, und das ist richtig so. Die Angabe
+   steht hier, damit `scripts/feed-check.mjs` „keine Bilder" nicht bei jedem Lauf
+   als Warnung meldet — sonst geht im Dauerrauschen unter, wenn eine Quelle, die
+   Bilder fuehrt, ploetzlich keine mehr liefert. */
 const CATALOG = [
   /* --- deutschsprachig --- */
   { id: 'heise',          name: 'heise online',       url: 'https://www.heise.de/rss/heise-atom.xml',                 category: 'it-news',    lang: 'de' },
   { id: 'golem',          name: 'Golem.de',           url: 'https://rss.golem.de/rss.php?feed=RSS2.0',                category: 'it-news',    lang: 'de' },
   { id: 'winfuture',      name: 'WinFuture',          url: 'https://static.winfuture.de/feeds/WinFuture-News-rss2.0.xml', category: 'it-news', lang: 'de' },
   { id: 't3n',            name: 't3n',                url: 'https://t3n.de/rss.xml',                                  category: 'it-news',    lang: 'de' },
-  { id: 'heise-security', name: 'heise Security',     url: 'https://www.heise.de/security/rss/news-atom.xml',          category: 'security',   lang: 'de' },
-  { id: 'linuxnews',      name: 'LinuxNews.de',       url: 'https://linuxnews.de/feed/',                              category: 'linux-oss',  lang: 'de' },
-  { id: 'heise-developer', name: 'heise Developer',   url: 'https://www.heise.de/developer/rss/news-atom.xml',         category: 'dev',        lang: 'de' },
+  { id: 'heise-security', name: 'heise Security',     url: 'https://www.heise.de/security/feed.xml',                  category: 'security',   lang: 'de' },
+  { id: 'linuxnews',      name: 'LinuxNews.de',       url: 'https://linuxnews.de/feed/',                              category: 'linux-oss',  lang: 'de', noImages: true },
+  { id: 'heise-developer', name: 'heise Developer',   url: 'https://www.heise.de/developer/feed.xml',                 category: 'dev',        lang: 'de' },
   { id: 'computerbase',   name: 'ComputerBase',       url: 'https://www.computerbase.de/rss/news.xml',                category: 'hardware',   lang: 'de' },
   { id: 'hardwareluxx',   name: 'Hardwareluxx',       url: 'https://www.hardwareluxx.de/hwl.feed',                    category: 'hardware',   lang: 'de' },
   { id: 'pcgh',           name: 'PC Games Hardware',  url: 'https://www.pcgameshardware.de/feed.cfm?menu_alias=home', category: 'hardware',   lang: 'de' },
@@ -78,21 +86,21 @@ const CATALOG = [
   /* --- englischsprachig --- */
   { id: 'arstechnica',    name: 'Ars Technica',       url: 'https://feeds.arstechnica.com/arstechnica/index',         category: 'it-news',    lang: 'en' },
   { id: 'theverge',       name: 'The Verge',          url: 'https://www.theverge.com/rss/index.xml',                  category: 'it-news',    lang: 'en' },
-  { id: 'bleepingcomputer', name: 'BleepingComputer', url: 'https://www.bleepingcomputer.com/feed/',                  category: 'security',   lang: 'en' },
+  { id: 'bleepingcomputer', name: 'BleepingComputer', url: 'https://www.bleepingcomputer.com/feed/',                  category: 'security',   lang: 'en', noImages: true },
   { id: 'krebs',          name: 'Krebs on Security',  url: 'https://krebsonsecurity.com/feed/',                       category: 'security',   lang: 'en' },
-  { id: 'phoronix',       name: 'Phoronix',           url: 'https://www.phoronix.com/rss.php',                        category: 'linux-oss',  lang: 'en' },
-  { id: 'lwn',            name: 'LWN.net',            url: 'https://lwn.net/headlines/newrss',                        category: 'linux-oss',  lang: 'en' },
-  { id: 'itsfoss',        name: "It's FOSS",          url: 'https://itsfoss.com/feed/',                               category: 'linux-oss',  lang: 'en' },
-  { id: 'hackernews',     name: 'Hacker News',        url: 'https://news.ycombinator.com/rss',                        category: 'dev',        lang: 'en' },
+  { id: 'phoronix',       name: 'Phoronix',           url: 'https://www.phoronix.com/rss.php',                        category: 'linux-oss',  lang: 'en', noImages: true },
+  { id: 'lwn',            name: 'LWN.net',            url: 'https://lwn.net/headlines/newrss',                        category: 'linux-oss',  lang: 'en', noImages: true },
+  { id: 'itsfoss',        name: "It's FOSS",          url: 'https://feed.itsfoss.com/',                               category: 'linux-oss',  lang: 'en' },
+  { id: 'hackernews',     name: 'Hacker News',        url: 'https://news.ycombinator.com/rss',                        category: 'dev',        lang: 'en', noImages: true },
   { id: 'github-blog',    name: 'GitHub Blog',        url: 'https://github.blog/feed/',                               category: 'dev',        lang: 'en' },
-  { id: 'stackoverflow',  name: 'Stack Overflow Blog', url: 'https://stackoverflow.blog/feed/',                       category: 'dev',        lang: 'en' },
-  { id: 'tomshardware',   name: "Tom's Hardware",     url: 'https://www.tomshardware.com/feeds/all',                  category: 'hardware',   lang: 'en' },
-  { id: 'servethehome',   name: 'ServeTheHome',       url: 'https://www.servethehome.com/feed/',                      category: 'hardware',   lang: 'en' },
+  { id: 'stackoverflow',  name: 'Stack Overflow Blog', url: 'https://stackoverflow.blog/feed/',                       category: 'dev',        lang: 'en', noImages: true },
+  { id: 'tomshardware',   name: "Tom's Hardware",     url: 'https://www.tomshardware.com/feeds.xml',                  category: 'hardware',   lang: 'en' },
+  { id: 'servethehome',   name: 'ServeTheHome',       url: 'https://www.servethehome.com/feed/',                      category: 'hardware',   lang: 'en', noImages: true },
   { id: 'rockpapershotgun', name: 'Rock Paper Shotgun', url: 'https://www.rockpapershotgun.com/feed',                 category: 'gaming',     lang: 'en' },
   { id: 'pcgamer',        name: 'PC Gamer',           url: 'https://www.pcgamer.com/rss/',                            category: 'gaming',     lang: 'en' },
   { id: 'selfhosted-reddit', name: 'r/selfhosted',    url: 'https://www.reddit.com/r/selfhosted/.rss',                category: 'selfhosted', lang: 'en' },
   { id: 'homeassistant',  name: 'Home Assistant',     url: 'https://www.home-assistant.io/atom.xml',                  category: 'selfhosted', lang: 'en' },
-  { id: 'docker-blog',    name: 'Docker Blog',        url: 'https://www.docker.com/blog/feed/',                       category: 'selfhosted', lang: 'en' },
+  { id: 'docker-blog',    name: 'Docker Blog',        url: 'https://www.docker.com/feed/',                            category: 'selfhosted', lang: 'en' },
 ];
 const CATALOG_BY_ID = new Map(CATALOG.map((s) => [s.id, s]));
 
