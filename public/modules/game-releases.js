@@ -753,27 +753,127 @@ Dash.registerModule({
 });
 
 /* ---------- Einstellungen (Settings → Module → Game Releases) ----------
-   Die beiden Zugangsdaten-Felder erzeugt die Secrets-Verwaltung aus dem
-   Backend-Manifest. Hier steht nur, woher man sie bekommt, und ob sie
-   funktionieren. */
+   Das Panel baut seine Zugangsdaten-Felder selbst, wie die News-Kachel ihre
+   Quellenliste. Die Alternative waere gewesen, sie wie bei den aelteren
+   Integrationen an drei Stellen im Kern zu verdrahten (Markup in index.html,
+   eine Zeile in loadSecrets(), ein Zweig in saveSecrets()) — genau die
+   verteilten Eintraege, die die Modul-Registry loswerden wollte.
+
+   /api/secrets ist generisch: es kennt die Keys aus dem Backend-Manifest
+   bereits, liefert maskierte Werte als '***' und ignoriert '***' beim
+   Speichern. */
+
+const GR_SECRETS = [
+  { key: 'IGDB_CLIENT_ID', label: 'Client-ID', type: 'text' },
+  { key: 'IGDB_CLIENT_SECRET', label: 'Client-Secret', type: 'password' },
+];
+
+function setGrStatus(text, color) {
+  const el = $('grSettingsStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = color;
+}
 
 async function loadGameReleasesSettings() {
-  const status = $('grSettingsStatus');
-  if (!status) return;
+  const body = $('grSettingsBody');
+  if (!body) return;
+  let secrets = {};
+  try {
+    secrets = await fetch('/api/secrets', { cache: 'no-store' }).then((r) => r.json());
+  } catch {
+    body.textContent = 'Zugangsdaten konnten nicht geladen werden.';
+    setGrStatus('● Fehler', '#f43f5e');
+    return;
+  }
+  renderGameReleasesSettings(secrets);
+  grRefreshStatus();
+}
+
+function renderGameReleasesSettings(secrets) {
+  const body = $('grSettingsBody');
+  if (!body) return;
+  const fromEnv = new Set(secrets._env || []);
+  body.innerHTML = '';
+
+  const head = document.createElement('div');
+  head.className = 'cfg-section';
+  head.textContent = 'Zugangsdaten (Twitch)';
+  body.appendChild(head);
+
+  const row = document.createElement('div');
+  row.className = 'news-cfg-add';
+  const inputs = [];
+  for (const s of GR_SECRETS) {
+    const input = document.createElement('input');
+    input.className = 'cfg-input';
+    input.type = s.type;
+    input.placeholder = s.label;
+    input.autocomplete = 'off';
+    input.value = secrets[s.key] || '';
+    // Per Umgebungsvariable gesetzte Werte haben Vorrang — ein Eintrag hier
+    // waere wirkungslos, das Feld sagt es statt es stumm zu schlucken.
+    if (fromEnv.has(s.key)) {
+      input.readOnly = true;
+      input.title = `${s.key} kommt aus der Umgebung und hat Vorrang`;
+      input.style.opacity = '.6';
+    }
+    inputs.push({ ...s, input });
+    row.appendChild(input);
+  }
+
+  const save = document.createElement('button');
+  save.className = 'cfg-btn';
+  save.textContent = '↵ Speichern';
+  save.addEventListener('click', async () => {
+    const payload = {};
+    for (const s of inputs) if (!s.input.readOnly) payload[s.key] = s.input.value.trim();
+    setGrStatus('● speichert …', 'var(--text-3)');
+    try {
+      const r = await fetch('/api/secrets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      // Der Server leert dabei alle Caches; die Kachel holt also frische Daten.
+      await grRefreshStatus();
+      pollGameReleases();
+    } catch (err) {
+      console.error('IGDB-Zugangsdaten konnten nicht gespeichert werden:', err.message);
+      setGrStatus('● Fehler', '#f43f5e');
+    }
+  });
+  row.appendChild(save);
+  body.appendChild(row);
+
+  const hint = document.createElement('div');
+  hint.className = 'tile-settings-hint';
+  hint.style.lineHeight = '1.7';
+  // Fremddaten sind hier keine im Spiel — der Text ist statisch.
+  hint.innerHTML = 'IGDB läuft über Twitch, beide Werte sind kostenlos: unter '
+    + '<a href="https://dev.twitch.tv/console/apps" target="_blank" rel="noopener noreferrer">'
+    + 'dev.twitch.tv/console/apps</a> auf „Register Your Application“, als '
+    + 'OAuth-Redirect <code>http://localhost</code> und als Kategorie '
+    + '„Application Integration“ wählen. Danach Client-ID übernehmen und das '
+    + 'Client-Secret einmal erzeugen lassen. Kein Monatslimit.';
+  body.appendChild(hint);
+}
+
+// Sagt, ob die Zugangsdaten tatsaechlich tragen — „gespeichert" allein hilft
+// nicht, wenn Twitch sie ablehnt.
+async function grRefreshStatus() {
   try {
     const d = await fetch('/api/game-releases', { cache: 'no-store' }).then((r) => r.json());
     if (d && d.ok) {
-      status.textContent = `● ${(d.items || []).length} heute`;
-      status.style.color = '#3ddc97';
+      const n = (d.items || []).length;
+      setGrStatus(`● ${n === 1 ? '1 Spiel' : `${n} Spiele`} heute`, '#3ddc97');
     } else if (d && d.error === 'not_configured') {
-      status.textContent = '● nicht eingerichtet';
-      status.style.color = '#ffb454';
+      setGrStatus('● nicht eingerichtet', '#ffb454');
     } else {
-      status.textContent = '● Fehler';
-      status.style.color = '#f43f5e';
+      setGrStatus('● IGDB antwortet nicht', '#f43f5e');
     }
   } catch {
-    status.textContent = '● Fehler';
-    status.style.color = '#f43f5e';
+    setGrStatus('● Fehler', '#f43f5e');
   }
 }

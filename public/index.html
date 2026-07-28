@@ -971,9 +971,9 @@
           </div>
 
           <!-- TAB: GAME RELEASES
-               Die beiden Zugangsdaten-Felder erzeugt die Secrets-Verwaltung
-               aus dem Manifest in server/modules/game-releases.js; hier steht
-               nur, woher man sie bekommt. -->
+               Die Zugangsdaten-Felder baut public/modules/game-releases.js
+               beim Oeffnen des Tabs — wie die News-Kachel ihre Quellenliste.
+               Hier steht nur die Huelle. -->
           <div class="tab" data-tab="game-releases">
             <div class="cfg-row">
               <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
@@ -985,15 +985,7 @@
               </div>
               <span id="grSettingsStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-status)">● –</span>
             </div>
-            <div class="cfg-section">Zugang einrichten</div>
-            <div class="tile-settings-hint" style="line-height:1.7">
-              IGDB läuft über Twitch. Unter
-              <a href="https://dev.twitch.tv/console/apps" target="_blank" rel="noopener noreferrer">dev.twitch.tv/console/apps</a>
-              eine Anwendung registrieren (OAuth-Redirect <code>http://localhost</code>,
-              Kategorie „Application Integration“) und die beiden Werte oben unter
-              <b>Secrets</b> als <code>IGDB_CLIENT_ID</code> und
-              <code>IGDB_CLIENT_SECRET</code> eintragen. Kostenlos, ohne Monatslimit.
-            </div>
+            <div id="grSettingsBody"></div>
           </div>
 
           <!-- TAB: UNIFI / PROTECT -->
