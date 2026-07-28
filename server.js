@@ -2612,6 +2612,13 @@ app.post('/api/secrets', (req, res) => {
     stopGwSsh();              // ggf. geaenderte Gateway-SSH-Creds erzwingen Reconnect
     // Frisch gesetzte UniFi-Creds starten den WAN-Sampler ohne Neustart (idempotent).
     startWanSampler();
+    // Die Cache-Invalidierung oben wirkt nur auf den REST-Weg. Der Schnappschuss
+    // fuer neu verbundene Clients (lastPush) bleibt davon unberuehrt und wird
+    // erst beim naechsten Hub-Tick ersetzt — bei langen Intervallen also lange
+    // nicht. Wer Zugangsdaten eintraegt, sah deshalb in den Einstellungen bereits
+    // Daten, auf der Kachel nach einem Reload aber weiter "offline", weil dort
+    // der alte Fehler-Schnappschuss ausgeliefert wurde. Also sofort nachziehen.
+    refreshModulePushes();
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -4458,6 +4465,16 @@ async function pushTick(src) {
 async function pushNow(event) {
   const src = PUSH_SOURCES.find((s) => s.event === event);
   if (src) await pushTick(src);
+}
+
+// Alle Modul-Schnappschuesse neu holen. Wird nach einer Aenderung der
+// Zugangsdaten aufgerufen: die Caches sind dann leer, und ohne das hier
+// bliebe lastPush bis zum naechsten Tick auf dem Stand von vorher.
+// Bewusst ohne await — der Aufrufer soll nicht auf fremde Server warten.
+function refreshModulePushes() {
+  for (const mod of MODULES) {
+    pushNow(mod.event).catch((err) => console.warn(`Push nach Secrets-Aenderung (${mod.event}):`, err.message));
+  }
 }
 
 function startPushHub() {

@@ -430,12 +430,24 @@ try {
       ['/api/game-releases/image?u=https%3A%2F%2Fevil.example%2Fx.jpg', 400],
       ['/api/game-releases/image?u=http%3A%2F%2F127.0.0.1%2Fx.jpg', 400],
       ['/api/game-releases/image', 400],
-      ['/api/game-releases/day?date=2026-07-28', 503],
-      ['/api/game-releases/game/375232', 503],
     ]) {
       try {
         const r = await get(path);
         is(r.status === want, `GET ${path.slice(0, 60)} -> ${r.status} (erwartet ${want})`);
+      } catch (e) { bad(`GET ${path}: ${e.message}`); }
+    }
+
+    // Gueltige Eingaben duerfen nicht an der Validierung haengenbleiben. Der
+    // Ausgang danach haengt davon ab, ob auf diesem Rechner zufaellig
+    // IGDB-Zugangsdaten in config/secrets.json liegen (503 ohne, 502 mit,
+    // weil dann ein echter Abruf versucht wird) — festgenagelt wird deshalb
+    // nur, dass es KEIN 400 ist.
+    for (const path of ['/api/game-releases/day?date=2026-07-28',
+                        '/api/game-releases/game/375232',
+                        '/api/game-releases/search?q=gothic']) {
+      try {
+        const r = await get(path);
+        is(r.status !== 400, `GET ${path.slice(0, 52)} -> ${r.status} (gueltige Eingabe, kein 400)`);
       } catch (e) { bad(`GET ${path}: ${e.message}`); }
     }
 

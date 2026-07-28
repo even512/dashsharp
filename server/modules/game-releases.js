@@ -880,7 +880,11 @@ async function fetchImage(url) {
 module.exports = {
   id: 'game-releases',
   label: 'Game Releases',
-  ttl: 1800000, // 30 min — Release-Listen aendern sich im Tagesverlauf kaum
+  // 10 min wie die News-Kachel. Die Listen aendern sich im Tagesverlauf kaum;
+  // entscheidend ist, dass die ttl zugleich das Push-Intervall ist — ein
+  // Tick, der ins Leere lief, darf die Kachel nicht eine halbe Stunde lang
+  // auf dem Fehlerstand festhalten.
+  ttl: 600000,
 
   secrets: [
     { key: 'IGDB_CLIENT_ID', label: 'Twitch Client-ID' },
