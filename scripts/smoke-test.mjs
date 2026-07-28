@@ -317,6 +317,40 @@ head('Game Releases');
      'Suche: DLC und Erweiterungen kommen durch (haben eigene Termine)');
   is(gr.SEARCH_FETCH > 8,
      `Suche: holt ein breiteres Fenster (${gr.SEARCH_FETCH}) als sie anzeigt`);
+
+  is(gr.normalizeText('Pokémon: Let\u2019s Go!') === 'pokemon let s go',
+     'Suche: Diakritika und Satzzeichen werden normalisiert');
+  is(gr.normalizeText('Rock & Roll') === 'rock and roll', 'Suche: & wird zu "and"');
+  is(JSON.stringify(gr.searchTokens('World of Warcraft')) === '["world","warcraft"]',
+     'Suche: Fuellwoerter fallen raus');
+  is(JSON.stringify(gr.searchTokens('the')) === '["the"]',
+     'Suche: eine reine Fuellwort-Eingabe laeuft nicht ins Leere');
+  is(gr.commonPrefix('cyberpank', 'cyberpunk') === 6, 'Suche: gemeinsamer Wortanfang wird gemessen');
+
+  // Der gemeldete Fall: "world of war" muss World of Warcraft nach oben
+  // bringen, nicht die namensaehnliche, aber unbekanntere Konkurrenz.
+  {
+    const q = gr.normalizeText('world of war');
+    const t = gr.searchTokens('world of war');
+    const wow = gr.scoreHit({ name: 'World of Warcraft', game_type: 0, total_rating_count: 893 }, q, t);
+    const wwz = gr.scoreHit({ name: 'World War Z', game_type: 0, total_rating_count: 200 }, q, t);
+    const egal = gr.scoreHit({ name: 'Stardew Valley', game_type: 0, total_rating_count: 900 }, q, t);
+    is(wow > wwz, `Suche: "world of war" rankt World of Warcraft vor World War Z (${Math.round(wow)} > ${Math.round(wwz)})`);
+    is(egal === 0, 'Suche: ein voellig anderer Titel bekommt keine Punkte');
+  }
+  // Kuerzel muessen ueber alternative_names greifen
+  {
+    const q = gr.normalizeText('wow');
+    const t = gr.searchTokens('wow');
+    const mitAlt = gr.scoreHit({ name: 'World of Warcraft', game_type: 0, total_rating_count: 893,
+      alternative_names: [{ name: 'WoW' }] }, q, t);
+    const ohneAlt = gr.scoreHit({ name: 'Wowo Island', game_type: 0, total_rating_count: 1 }, q, t);
+    is(mitAlt > ohneAlt, `Suche: Kuerzel "wow" findet World of Warcraft ueber den Zweitnamen (${Math.round(mitAlt)} > ${Math.round(ohneAlt)})`);
+  }
+  is(gr.tokenWildcardWhere(['world', 'war']) === 'name ~ *"world"* & name ~ *"war"*',
+     'Suche: Token-UND wird als Wildcard-Bedingung gebaut');
+  is(!gr.tokenWildcardWhere(['a"b']).includes('a"b'),
+     'Suche: Anfuehrungszeichen im Suchwort werden auch hier entwertet');
   is(gr.GAME_TYPE_DE[1] && gr.GAME_TYPE_DE[2],
      'Suche: DLC und Erweiterung haben ein deutsches Label');
 
