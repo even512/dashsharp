@@ -130,10 +130,12 @@ function _grFilter(items) {
   const mode = String(_cfgVal('game-releases', 'relevance') || 'balanced');
   const family = String(_cfgVal('game-releases', 'platforms') || '');
   const needCover = _cfgVal('game-releases', 'needCover') !== false;
+  const onlyGamePass = _cfgVal('game-releases', 'onlyGamePass') === true;
   return (items || []).filter((it) => {
     if (!_grRelevant(it, mode)) return false;
     if (family && !(it.families || []).includes(family)) return false;
     if (needCover && !it.cover) return false;
+    if (onlyGamePass && !it.gamePass) return false;
     return true;
   });
 }
@@ -211,6 +213,9 @@ function _grUpdateRow(row, item, prev) {
     if ((item.platforms || []).length > 4) {
       row._chips.appendChild(_grChip(`+${item.platforms.length - 4}`));
     }
+    // Steht direkt bei den Plattformen: die Frage "kaufen oder ist es drin?"
+    // gehoert zur Plattform, nicht zum Genre.
+    if (item.gamePass) row._chips.appendChild(_grChip('Game Pass', 'gr-chip gr-chip-gp'));
     if (item.status) row._chips.appendChild(_grChip(item.status, 'gr-chip gr-chip-flag'));
     else if (item.kind) row._chips.appendChild(_grChip(item.kind, 'gr-chip gr-chip-flag'));
     // Im Fallback "was kommt als Naechstes" steht pro Zeile ein anderes Datum.
@@ -553,7 +558,7 @@ async function openGameDetail(id, seed) {
 
   grFillDetail(seed ? {
     name: seed.name, date: seed.date, cover: seed.cover, kind: seed.kind,
-    genres: seed.genres, platforms: seed.platforms,
+    genres: seed.genres, platforms: seed.platforms, gamePass: seed.gamePass,
     summary: seed.teaser, summaryLang: seed.teaserLang, summarySource: null,
   } : { name: '…' }, true);
 
@@ -609,6 +614,7 @@ function grFillDetail(g, loading) {
   const chips = $('grDetailChips');
   chips.textContent = '';
   for (const p of (g.platforms || [])) chips.appendChild(_grChip(p.label));
+  if (g.gamePass) chips.appendChild(_grChip('Game Pass', 'gr-chip gr-chip-gp'));
   if (g.kind) chips.appendChild(_grChip(g.kind, 'gr-chip gr-chip-flag'));
   for (const genre of (g.genres || [])) chips.appendChild(_grChip(genre, 'gr-chip gr-chip-genre'));
 
@@ -648,6 +654,13 @@ function grFillDetail(g, loading) {
     ['Spielmodi', (g.modes || []).join(', ')],
     ['Perspektive', (g.perspectives || []).join(', ')],
     ['Engine', (g.engines || []).join(', ')],
+    // In der Zeile steht nur "Game Pass" — hier ist Platz fuer die Frage,
+    // auf welcher Plattform das gilt.
+    ['Game Pass', g.gamePass ? [
+      g.gamePass.console && 'Konsole',
+      g.gamePass.pc && 'PC',
+      g.gamePass.eaPlay && 'über EA Play',
+    ].filter(Boolean).join(' · ') : ''],
   ];
   for (const [k, v] of pairs) if (v) facts.appendChild(_grFactRow(k, v));
   // Erscheint ein Titel gestaffelt, ist genau das die interessante Information.
@@ -883,11 +896,13 @@ Dash.registerModule({
     { key: 'relevance', label: 'Relevanz',      type: 'select', default: 'balanced', options: GR_RELEVANCE, group: 'Auswahl' },
     { key: 'platforms', label: 'Plattform',     type: 'select', default: '',   options: GR_FAMILIES, group: 'Auswahl' },
     { key: 'needCover', label: 'Nur mit Cover', type: 'toggle', default: true, filter: true, group: 'Auswahl' },
+    { key: 'onlyGamePass', label: 'Nur Game Pass', type: 'toggle', default: false, filter: true, group: 'Auswahl' },
     { key: 'maxRows',   label: 'Max. Spiele',   type: 'count',  default: 0,    group: 'Auswahl' },
 
     { key: 'list',   label: 'Spieleliste',   type: 'toggle', default: true, group: 'Anzeige' },
     { key: 'bar',    label: 'Datumsleiste',  type: 'toggle', default: true, group: 'Anzeige' },
     { key: 'chips',  label: 'Plattform-Chips', type: 'toggle', default: true, cls: 'cfg-hide-gr-chips', group: 'Anzeige' },
+    { key: 'gamePass', label: 'Game-Pass-Chip', type: 'toggle', default: true, cls: 'cfg-hide-gr-gamepass', group: 'Anzeige' },
     { key: 'teaser', label: 'Kurztext',      type: 'toggle', default: true, cls: 'cfg-hide-gr-teaser', group: 'Anzeige' },
 
     { key: 'textSize',    label: 'Schriftgröße',       type: 'select', default: 'm',      options: GR_SIZES,          group: 'Darstellung' },

@@ -358,6 +358,105 @@ head('Game Releases');
   is(gr.clip('x'.repeat(50), 10).length === 10, 'Textaufbereitung: lange Texte werden gekuerzt');
 }
 
+/* ---------- 2d. Game Pass ----------
+   Der Katalog wird hier nicht abgerufen — geprueft wird ausschliesslich der
+   Titel-Abgleich, und der ist die einzige Stelle des Features, an der ein
+   Fehler still etwas Falsches behauptet. Ein Chip zu viel ist schlimmer als
+   einer zu wenig, deshalb steht hier mehr Negativ- als Positivpruefung. */
+head('Game Pass');
+{
+  const gp = createRequire(import.meta.url)(join(ROOT, 'server/modules/game-releases.js'))._internals.gamepass;
+  const key = (s) => gp.normalizeTitle(gp.stripEditions(s));
+
+  // NFKC macht aus "™" die Buchstaben "TM". Wer in der falschen Reihenfolge
+  // normalisiert, bekommt "battlefield tm 2042" und verliert still jeden
+  // Treffer mit Markenzeichen — gemessen vier Stueck in zwanzig Titeln.
+  is(!gp.normalizeTitle('Battlefield™ 2042').includes('tm'),
+     'Normalisierung: ™ wird entfernt, nicht zu "TM" expandiert');
+
+  for (const [store, want] of [
+    ['Battlefield™ 2042 Xbox One', 'battlefield 2042'],
+    ['EA SPORTS FC™ 26 - PC', 'ea sports fc 26'],
+    ['Dishonored®: Death of the Outsider™ (PC)', 'dishonored death of the outsider'],
+    ['LEGO® Star Wars™: The Skywalker Saga', 'lego star wars the skywalker saga'],
+    ['NBA 2K26 for Xbox Series X|S', 'nba 2k26'],
+    ['Halo: Campaign Evolved – Standard Edition', 'halo campaign evolved'],
+    ['STARSEEKER: Astroneer Expeditions (Game Preview)', 'starseeker astroneer expeditions'],
+    ['9 Kings (Spielvorschau)', '9 kings'],
+    ['Hogwarts Legacy Version: Xbox One', 'hogwarts legacy'],
+    ['Minecraft: Java & Bedrock Edition for PC', 'minecraft java and bedrock edition'],
+    ['Cities: Skylines - Xbox One Edition', 'cities skylines'],
+    ['Pokémon Café', 'pokemon cafe'],
+  ]) {
+    is(key(store) === want, `Store-Titel "${store.slice(0, 44)}" -> "${want}"`);
+  }
+  // Typografisches und gerades Apostroph muessen denselben Schluessel geben —
+  // der Store benutzt beide, teils im selben Katalog.
+  is(gp.normalizeTitle('Assassin’s Creed Valhalla') === gp.normalizeTitle("Assassin's Creed® Valhalla"),
+     'Normalisierung: typografisches und gerades Apostroph sind gleichwertig');
+
+  // Alles ausser "Standard Edition" bleibt stehen: der Katalog fuehrt
+  // "Halo Wars: Definitive Edition", aber nicht "Halo Wars" — und IGDB kennt
+  // beide als eigene Spiele.
+  is(key('Halo Wars: Definitive Edition') !== key('Halo Wars'),
+     'Editionen: "Definitive Edition" wird NICHT auf das Grundspiel verkuerzt');
+  is(key('Control Ultimate Edition - Xbox Series X|S') !== key('Control'),
+     'Editionen: "Ultimate Edition" wird NICHT auf das Grundspiel verkuerzt');
+
+  const idx = { keys: gp.indexTitles([
+    { title: 'Halo Wars: Definitive Edition', console: true },
+    { title: 'Dishonored® Definitive Edition', console: true },
+    { title: 'Hollow Knight: Voidheart Edition', console: true },
+    { title: 'Diablo® IV PC', pc: true },
+    { title: 'EA SPORTS FC™ 26 Xbox One', console: true },
+    { title: 'EA SPORTS FC™ 26', eaPlay: true },
+    { title: 'Goat Simulator 3 Xbox Series X|S', console: true },
+    { title: 'Goat Simulator 3 - PC', pc: true },
+    { title: 'Starfield', console: true, pc: true },
+  ]) };
+
+  for (const [name, want] of [
+    ['Starfield', true], ['Diablo IV', true], ['Goat Simulator 3', true],
+    // Nur die Edition steht im Katalog, nicht das Spiel.
+    ['Halo Wars', false], ['Dishonored', false], ['Hollow Knight', false],
+    // Kein Fuzzy: benachbarte Nummern duerfen sich nie treffen.
+    ['Diablo III', false], ['EA Sports FC 25', false],
+    // Gar nicht im Katalog.
+    ['Alan Wake 2', false], ["Baldur's Gate 3", false],
+    // Entartete Eingaben.
+    ['', false], ['-', false], ['®', false],
+  ]) {
+    is(!!gp.lookup(idx, name) === want, `Abgleich "${name}" -> ${want ? 'Treffer' : 'kein Treffer'}`);
+  }
+
+  const goat = gp.lookup(idx, 'Goat Simulator 3');
+  is(goat.console === true && goat.pc === true,
+     'Abgleich: Konsolen- und PC-Fassung eines Spiels werden zusammengefasst');
+  const fc = gp.lookup(idx, 'EA Sports FC 26');
+  is(fc.console === true && fc.eaPlay === true,
+     'Abgleich: EA Play wird zusaetzlich vermerkt, nicht statt der Plattform');
+  is(gp.lookup(idx, 'Starfield').pc === true && typeof gp.lookup(idx, 'Starfield').eaPlay === 'boolean',
+     'Abgleich: Treffer liefert genau die drei Flags, die die Kachel liest');
+
+  // Zeigen zwei Schluessel auf verschiedene Grundtitel, wird nichts geliefert
+  // statt geraten. Ueber den echten Katalog (914 Titel) trifft das genau
+  // einen Schluessel — die Sperre kostet also praktisch nichts.
+  const amb = { keys: gp.indexTitles([
+    { title: 'Dead Space – 2008', console: true },
+    { title: 'Dead Space 2008', pc: true },
+  ]) };
+  is(amb.keys.get('dead space 2008') && amb.keys.get('dead space 2008').ambiguous === true,
+     'Mehrdeutigkeit: kollidierende Grundtitel werden markiert');
+  is(gp.lookup(amb, 'Dead Space 2008') === null,
+     'Mehrdeutigkeit: ein markierter Schluessel liefert nichts statt zu raten');
+
+  is(gp.lookup(null, 'Starfield') === null, 'Ohne Index liefert der Abgleich null statt zu werfen');
+  is(gp.COLLECTIONS.length > 0 && gp.COLLECTIONS.every((c) => /^[0-9a-f-]{36}$/.test(c.id)),
+     `Sammlungen: ${gp.COLLECTIONS.length} Eintraege mit gueltiger Sigl-Id`);
+  is(gp.COLLECTIONS.every((c) => c.bucket === null || ['console', 'pc', 'eaPlay'].includes(c.bucket)),
+     'Sammlungen: nur Plattform-Kuebel, die die Kachel auch auswertet');
+}
+
 /* ---------- 3. Frontend-Registry ---------- */
 head('Frontend-Registry');
 {

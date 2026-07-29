@@ -39,7 +39,7 @@ and no build step.
 - 🎛️ **Per-tile settings** — hover a tile, open ⋯ → Einstellungen: rename the tile, toggle its building blocks (rings, charts, summaries, posters, columns …) and cap list lengths; stored with the dashboard layout
 - ⚡ **Live widgets** — System (via [Glances](https://nicolargo.github.io/glances/)), Docker, AdGuard Home, JDownloader, Plex, UniFi Network & Protect, Nextcloud, Unraid, weather, news, game releases
 - 📰 **News tile** — aggregates RSS/Atom feeds into one time-sorted list: pick sources from a curated IT/tech/hardware/gaming catalogue (split into German and English) or add your own feed URLs, then filter per tile by language, topic, source or keyword. Readability is adjustable per tile: text and thumbnail size, how many lines a headline and teaser may use, the spacing between headlines and how they are separated (divider line, cards or alternating tint). Clicking a headline opens a window with the teaser, the lead image and a link to the original article — images are fetched and served by Dash# itself, so the browser never talks to the news sites
-- 🎮 **Game releases tile** — shows the games released on a given day, sourced from [IGDB](https://www.igdb.com/): box art, platform chips, genres and critic score per card. Step through days with ‹/›, jump to any date with the date picker, or open the magnifier to look up when a specific game comes out. Clicking a card opens a window with the German description (taken from the Steam store, falling back to German Wikipedia, and marked `EN` when only the English IGDB text exists), ratings incl. USK/PEGI, developer, publisher, game modes, engine, screenshots and store links. Metadata is translated to German by lookup tables in the module. A relevance filter keeps the daily shovelware out (≈ 8 of ≈ 54 titles a day at the default setting); platform and "only with cover" filters are per tile. Images are proxied by Dash# itself, so the browser never talks to IGDB or Steam
+- 🎮 **Game releases tile** — shows the games released on a given day, sourced from [IGDB](https://www.igdb.com/): box art, platform chips, genres and critic score per card. Step through days with ‹/›, jump to any date with the date picker, or open the magnifier to look up when a specific game comes out. Clicking a card opens a window with the German description (taken from the Steam store, falling back to German Wikipedia, and marked `EN` when only the English IGDB text exists), ratings incl. USK/PEGI, developer, publisher, game modes, engine, screenshots and store links. Metadata is translated to German by lookup tables in the module. Games that are in the Xbox Game Pass catalogue right now carry a **Game Pass** chip next to their platform chips — no credentials needed, the catalogue is public — and the detail window spells out whether that is console, PC or via EA Play. A relevance filter keeps the daily shovelware out (≈ 8 of ≈ 54 titles a day at the default setting); platform, "only with cover" and "only Game Pass" filters are per tile. Images are proxied by Dash# itself, so the browser never talks to IGDB or Steam
 - 🖥️ **Unraid suite** — eight tiles on the official GraphQL API: VMs (incl. VNC console), Docker containers (start/stop/restart), array & parity (status, capacity, check control), per-disk health, shares, notifications (incl. archive), system info (live CPU/RAM, versions, reboot/shutdown via SSH) and UPS — risky actions locked behind a server-side opt-in
 - 🟢 **Service monitoring** — the Service Status tile checks your services and shows online/offline + latency; the check method is picked automatically from what you enter: a URL (`http(s)://…`) → HTTP, `host:port` → TCP connect, a bare hostname or IP → ICMP ping
 - ⚙️ **Configure in the browser** — everything under `/settings`, no config files to hand-edit
@@ -126,7 +126,30 @@ node scripts/igdb-check.mjs                 # today
 node scripts/igdb-check.mjs 2026-09-17      # a specific day
 node scripts/igdb-check.mjs --search gothic # test the magnifier
 node scripts/igdb-check.mjs --game 375232   # detail view incl. translation
+node scripts/igdb-check.mjs --gamepass      # Game Pass catalogue (no credentials)
 ```
+
+#### Game Pass chip
+
+Microsoft has no official Game Pass API, but the catalogue behind
+`catalog.gamepass.com` and `displaycatalog.mp.microsoft.com` is public, so this
+part needs **no setup and no credentials**. The full catalogue (~900 titles) is
+fetched at most every six hours, kept in memory only, and served for up to a week
+if Microsoft is unreachable — an outage costs you a chip, never the tile.
+
+Two limits are deliberate:
+
+- **There is no "coming to Game Pass on X".** Every collection the Xbox site
+  itself uses was checked; none of them lists announced titles, and even
+  "day one releases" only contains games that have already shipped. The tile
+  therefore only ever reflects the *current* catalogue.
+- **Titles are matched exactly**, after normalising trademarks, punctuation and
+  platform suffixes (`Xbox Series X|S`, `for PC`, `(Game Preview)` …). Edition
+  names are *not* stripped: the catalogue carries *Halo Wars: Definitive Edition*
+  but not *Halo Wars*, and IGDB knows both as separate games — folding them
+  together would put the chip on a game that is not in Game Pass. So a game can
+  be in Game Pass without showing a chip; it will never show one without being in
+  it. `--gamepass "Some Game"` shows which key a title normalises to.
 
 ### Unraid
 
