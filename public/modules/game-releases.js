@@ -27,6 +27,42 @@ const GR_RELEVANCE = [
   { v: 'notable',  l: 'Nur Namhaftes' },
 ];
 
+/* Der Rang aus IGDBs Popularity-Kennzahlen (Server: POPULARITY_TYPES) ist das
+   fuehrende Signal, weil `hypes` am Erscheinungstag regelmaessig leer ist:
+   "Company of Heroes 3: Final Stand" stand mit hypes=0 nicht auf der Kachel,
+   obwohl die Lupe es fand — am 29.07.2026 passierten so nur 15 von 48 Spielen
+   die Stufe "Ausgewogen", darunter "Bills Must Be Paid" (hypes=1), aber nicht
+   das 30-Euro-Release von Relic.
+
+   Der Rang ist der BESTE ueber alle Kennzahlen, nicht der Durchschnitt —
+   deshalb passieren mehr Spiele eine Schwelle, als die Zahl vermuten laesst,
+   und an ruhigen Tagen saettigt sie ganz: dort hat ohnehin nur eine Handvoll
+   Spiele ueberhaupt Werte.
+
+   Kalibriert an vier Tagen (Spiele -> "Ausgewogen" / "Nur Namhaftes"):
+     29.07.  49 -> 20 / 12      08.07.  24 -> 12 /  9
+     22.07.  55 -> 25 / 13      12.08.  19 -> 10 /  8
+   Die alte Regel lag bei 15 / 3 / 18 / 5 — im Schnitt kuerzer, aber unstet
+   und am 08.07. bei 24 Releases eben nur 3 Titel. "Nur Namhaftes" trifft mit
+   ~10 Zeilen jetzt das, was "Ausgewogen" frueher sein wollte.
+   Nachjustieren mit: node scripts/igdb-check.mjs --audit
+
+   Geprueft wird als VEREINIGUNG mit hypes/rating — kein Titel, der vorher
+   durchkam, faellt dadurch heraus. Fuer vergangene Tage ist das wichtig: die
+   Kennzahlen sind eine Momentaufnahme, dort hat nur noch ein Teil der Spiele
+   Werte (gemessen 10 von 19).
+
+   Wer die Stufen aendert: dieselben Zahlen stehen in scripts/igdb-check.mjs
+   (tierOf) und scripts/smoke-test.mjs — sonst diagnostiziert das Werkzeug
+   etwas anderes als die Kachel zeigt. */
+const POP_NOTABLE = 5;  // "Nur Namhaftes" — "Final Stand" lag auf Rang 4
+const POP_BALANCED = 8; // "Ausgewogen"
+
+/* Ein Add-on hat strukturell hypes=0 und am Erscheinungstag keine eigenen
+   Wertungen. Ohne diesen Umweg ueber die Bekanntheit des Elternspiels waere es
+   direkt nach dem Einschalten wieder ausgeblendet. */
+const PARENT_KNOWN_RATINGS = 20;
+
 const GR_FAMILIES = [
   { v: '',           l: 'Alle Plattformen' },
   { v: 'pc',         l: 'PC' },
@@ -122,22 +158,53 @@ function grInitials(name) {
 
 function _grRelevant(item, mode) {
   if (mode === 'all') return true;
-  if (mode === 'notable') return item.hypes >= 5 || item.criticRating != null;
-  return item.hypes >= 1 || item.rating != null || item.criticRating != null;
+  const rank = item.popRank == null ? Infinity : item.popRank;
+  // Ein Add-on zu einem bekannten Spiel zaehlt mit, siehe PARENT_KNOWN_RATINGS.
+  const parent = !!(item.addon && item.parent && item.parent.ratings >= PARENT_KNOWN_RATINGS);
+  if (mode === 'notable') {
+    return rank <= POP_NOTABLE || item.hypes >= 5 || item.criticRating != null || parent;
+  }
+  return rank <= POP_BALANCED || item.hypes >= 1
+    || item.rating != null || item.criticRating != null || parent;
 }
+
+/* Warum Zeilen ausgefallen sind — der Badge-Tooltip sagt es sonst nicht, und
+   genau daran hing der gemeldete Fehler: die Kachel verschwieg, dass sie den
+   Titel hatte und aussortierte. */
+let _grDrop = null;
 
 function _grFilter(items) {
   const mode = String(_cfgVal('game-releases', 'relevance') || 'balanced');
   const family = String(_cfgVal('game-releases', 'platforms') || '');
   const needCover = _cfgVal('game-releases', 'needCover') !== false;
   const onlyGamePass = _cfgVal('game-releases', 'onlyGamePass') === true;
-  return (items || []).filter((it) => {
-    if (!_grRelevant(it, mode)) return false;
-    if (family && !(it.families || []).includes(family)) return false;
-    if (needCover && !it.cover) return false;
-    if (onlyGamePass && !it.gamePass) return false;
+  const showAddons = _cfgVal('game-releases', 'showAddons') !== false;
+  const drop = { addon: 0, relevance: 0, family: 0, cover: 0, gamePass: 0 };
+  const out = (items || []).filter((it) => {
+    if (it.addon && !showAddons) { drop.addon++; return false; }
+    if (!_grRelevant(it, mode)) { drop.relevance++; return false; }
+    if (family && !(it.families || []).includes(family)) { drop.family++; return false; }
+    if (needCover && !it.cover) { drop.cover++; return false; }
+    if (onlyGamePass && !it.gamePass) { drop.gamePass++; return false; }
     return true;
   });
+  _grDrop = drop;
+  return out;
+}
+
+/* "48 an diesem Tag · 33 ohne Relevanz, 2 Add-ons ausgeblendet" */
+function _grDropText(total) {
+  const parts = [];
+  if (_grDrop) {
+    const { relevance, cover, family, gamePass, addon } = _grDrop;
+    if (relevance) parts.push(`${relevance} ohne Relevanz`);
+    if (cover) parts.push(`${cover} ohne Cover`);
+    if (family) parts.push(`${family} andere Plattform`);
+    if (gamePass) parts.push(`${gamePass} ohne Game Pass`);
+    if (addon) parts.push(`${addon} Add-ons ausgeblendet`);
+  }
+  const head = `${total} insgesamt an diesem Tag`;
+  return parts.length ? `${head} · ${parts.join(', ')}` : head;
 }
 
 /* ---------- Zeilen ---------- */
@@ -185,7 +252,11 @@ function _grUpdateRow(row, item, prev) {
   row._item = item;
   if (!prev || prev.name !== item.name) {
     row._title.textContent = item.name;
-    row.title = item.name;
+    // Bei einem Add-on gehoert das Elternspiel dazu, sonst steht da ein
+    // Untertitel ohne Bezug ("Final Stand", "Honeyglow Woods").
+    row.title = (item.addon && item.parent)
+      ? `${item.name} — ${item.kind || 'Add-on'} zu ${item.parent.name}`
+      : item.name;
     row._fallback.textContent = grInitials(item.name);
   }
   if (!prev || prev.teaser !== item.teaser) {
@@ -217,7 +288,11 @@ function _grUpdateRow(row, item, prev) {
     // gehoert zur Plattform, nicht zum Genre.
     if (item.gamePass) row._chips.appendChild(_grChip('Game Pass', 'gr-chip gr-chip-gp'));
     if (item.status) row._chips.appendChild(_grChip(item.status, 'gr-chip gr-chip-flag'));
-    else if (item.kind) row._chips.appendChild(_grChip(item.kind, 'gr-chip gr-chip-flag'));
+    // Der Typ stand bisher nur ohne Status da — ein DLC im Vorabzugang verlor
+    // dadurch ausgerechnet das Label, das es als Add-on erkennbar macht.
+    if (item.kind && (item.addon || !item.status)) {
+      row._chips.appendChild(_grChip(item.kind, 'gr-chip gr-chip-flag'));
+    }
     // Im Fallback "was kommt als Naechstes" steht pro Zeile ein anderes Datum.
     if (item._showDate) row._chips.appendChild(_grChip(grShortDate(item.date), 'gr-chip gr-chip-date'));
   }
@@ -375,7 +450,7 @@ function renderGameReleases(d) {
     const alt = data._stale || _grPushFailed;
     badge.textContent = alt ? 'stale' : (n === 1 ? '1 Spiel' : `${n} Spiele`);
     badge.style.color = alt ? '#ffb454' : 'var(--text-3)';
-    badge.title = all.length !== n ? `${all.length} insgesamt an diesem Tag` : '';
+    badge.title = all.length !== n ? _grDropText(all.length) : '';
   }
 }
 
@@ -895,6 +970,8 @@ Dash.registerModule({
   options: [
     { key: 'relevance', label: 'Relevanz',      type: 'select', default: 'balanced', options: GR_RELEVANCE, group: 'Auswahl' },
     { key: 'platforms', label: 'Plattform',     type: 'select', default: '',   options: GR_FAMILIES, group: 'Auswahl' },
+    // Standard an: gemessen sind das 1 bis 3 Titel pro Tag, kein Rauschen.
+    { key: 'showAddons', label: 'Erweiterungen & DLC', type: 'toggle', default: true, filter: true, group: 'Auswahl' },
     { key: 'needCover', label: 'Nur mit Cover', type: 'toggle', default: true, filter: true, group: 'Auswahl' },
     { key: 'onlyGamePass', label: 'Nur Game Pass', type: 'toggle', default: false, filter: true, group: 'Auswahl' },
     { key: 'maxRows',   label: 'Max. Spiele',   type: 'count',  default: 0,    group: 'Auswahl' },
