@@ -48,11 +48,46 @@ const IMG_MAX_BYTES = 3 * 1024 * 1024;
 // IGDB erlaubt 4 Anfragen pro Sekunde. 260 ms Abstand laesst Luft.
 const MIN_REQUEST_GAP_MS = 260;
 
-// Ein Tag hat gemessen ~55 Termine; 400 faengt auch Ausreisser ab.
+/* Ein Tag hat gemessen ~55 Termine; 400 faengt auch Ausreisser ab.
+   ACHTUNG falls das je zu klein wird: `sort date asc` hilft beim Blaettern
+   nicht weiter, weil alle Zeilen eines Tages denselben Zeitstempel tragen
+   (IGDB legt `date` auf 00:00 UTC). Ein `offset` darauf liefert Zeilen
+   doppelt oder gar nicht — dann muss erst die Sortierung auf `id asc`
+   wechseln. Gemessen am 29.07.2026: 69 Zeilen von 400, also weit weg. */
 const DAY_LIMIT = 400;
 const SEARCH_LIMIT = 8;
 const UPCOMING_LIMIT = 12;
 const SUMMARY_CHARS = 600;
+
+/* ---------- Bekanntheit ----------
+   `hypes` allein reichte nicht. Es ist IGDBs *Vorab*-Zaehler (wer merkt
+   ein kommendes Spiel vor) und am Erscheinungstag regelmaessig leer:
+   "Company of Heroes 3: Final Stand" (29.07.2026, 30 Euro, Relic/SEGA)
+   hatte weder hypes noch rating noch aggregated_rating und fiel deshalb
+   aus der Kachel, waehrend die Lupe es fand und "erscheint noch" sagte —
+   genau die Asymmetrie, die den Fehler ausgeloest hat. An dem Tag
+   gemessen: von 48 Spielen passierten 15 die Stufe "Ausgewogen", und
+   `follows` war bei allen 48 leer.
+
+   /popularity_primitives liefert stattdessen laufende Kennzahlen, auch
+   fuer taufrische Titel: 45 der 48 hatten Werte, "Final Stand" stand auf
+   Rang 4. Verglichen wird ueber den RANG innerhalb des Tages, nie ueber
+   den Rohwert — die Werte sind normalisierte Bruchzahlen und nur
+   innerhalb eines Typs vergleichbar. */
+const POPULARITY_TYPES = [
+  1,  // IGDB Visits
+  2,  // IGDB Want to Play
+  5,  // Steam 24hr Peak Players
+  9,  // Steam Global Top Sellers
+  10, // Steam Most Wishlisted Upcoming
+];
+const POP_LIMIT = 500; // IGDB-Maximum, hart: 501 antwortet mit HTTP 403
+/* Spiel-Ids pro Anfrage. 90 statt 100, damit der schlechteste Fall
+   (jedes Spiel hat jede Kennzahl) mit 450 Zeilen unter POP_LIMIT bleibt:
+   bei genau 500 waere nicht zu unterscheiden, ob es gepasst hat oder
+   abgeschnitten wurde. Ein Tag hat gemessen 50-75 Spiele, das bleibt
+   also eine Anfrage. */
+const POP_CHUNK = 90;
 
 // Das Dashboard steht in Deutschland — der "heutige Tag" ist der hiesige.
 const TIMEZONE = 'Europe/Berlin';
@@ -67,6 +102,24 @@ const TIMEZONE = 'Europe/Berlin';
    fehlten "Halo: Campaign Evolved" (Remake) und "Gothic Classic"
    (Port), also ausgerechnet die beiden Titel des Testtags. */
 const GAME_TYPES = [0, 4, 8, 9, 10, 11];
+
+/* Add-ons holt eine ZWEITE Abfrage, nicht diese Liste. Zwei Gruende:
+   die Zusicherung im Smoke-Test ("DLC, Expansion, Bundle, Mod, Pack und
+   Update bleiben draussen") ist ein Regressionsschutz, der seinen Sinn
+   verliert, sobald man GAME_TYPES aufweicht — und mit zwei Abfragen hat
+   jede ihr eigenes `limit`, statt dass Add-on-Zeilen an einem
+   DLC-schweren Tag echte Releases aus dem Budget draengen.
+
+   Dass sie ueberhaupt hereinkommen, war eine Entscheidung gegen den
+   alten Kommentar "das sind keine Neuerscheinungen": auf ein
+   Kosmetik-Pack trifft er zu, auf "The Elder Scrolls Online: Season One"
+   nicht. Das Volumen traegt es, gemessen ueber drei Tage waren es 1 bis 3
+   Add-ons taeglich. Der Schalter in der Kachel entscheidet, ob sie
+   angezeigt werden.
+
+   Bundle (3), Mod (5), Fork (12), Pack (13) und Update (14) bleiben auch
+   damit draussen — das sind keine Releases. */
+const ADDON_TYPES = [1, 2, 6, 7]; // DLC, Erweiterung, Episode, Season
 
 /* In der Tagesliste kommen nur die Typen aus GAME_TYPES vor. DLC, Erweiterung,
    Episode und Season stehen trotzdem hier, weil die Lupe sie mitliefert — dann
@@ -318,6 +371,9 @@ const LIST_FIELDS = [
   'game.id', 'game.name', 'game.slug', 'game.summary', 'game.hypes',
   'game.total_rating', 'game.total_rating_count', 'game.aggregated_rating',
   'game.game_type', 'game.cover.image_id', 'game.genres.id', 'game.genres.name',
+  // Elternspiel eines Add-ons: traegt den Namen fuer den Tooltip und die
+  // Bekanntheit, die ein frisches DLC selbst nie hat.
+  'game.parent_game.name', 'game.parent_game.total_rating_count',
   // Fuer die deutschen Kurztexte der obersten Karten (siehe translateTop).
   'game.external_games.uid', 'game.external_games.external_game_source',
 ].join(', ');
@@ -412,9 +468,10 @@ function groupReleases(rows) {
   return [...byGame.values()];
 }
 
-function normalizeEntry(entry, iso) {
+function normalizeEntry(entry, iso, addon = false) {
   const game = entry.game;
   const platforms = [...entry.platforms.values()];
+  const parent = game.parent_game;
   return {
     id: game.id,
     name: game.name,
@@ -432,6 +489,21 @@ function normalizeEntry(entry, iso) {
     _game: game,      // nur modulintern, faellt vor der Antwort weg
     kind: GAME_TYPE_DE[game.game_type] || null,
     status: entry.status ? STATUS_DE[entry.status] : null,
+    // Aus welcher der beiden Tagesabfragen die Zeile kam. Die Kachel
+    // blendet Add-ons darueber ein und aus.
+    addon,
+    /* Elternspiel nur bei Add-ons. `ratings` ist die Bekanntheit des
+       Elternspiels — ein frisches DLC hat nie eigene Wertungen, und ohne
+       diesen Umweg wuerde die Relevanzstufe es sofort wieder ausblenden.
+       `hypes` erbt bewusst NICHTS: der Wert des Elternspiels wuerde die
+       Sortierung und die Zahl auf der Kachel verfaelschen. */
+    parent: (addon && parent && parent.name)
+      ? { name: parent.name, ratings: Number(parent.total_rating_count) || 0 }
+      : null,
+    // Rang im Tagesvergleich, gesetzt von rankPopularity(). null = IGDB
+    // hat fuer das Spiel keine Popularity-Kennzahl.
+    popRank: null,
+    popTypes: null,
     // { console, pc, eaPlay } sobald der Game-Pass-Katalog es hergibt,
     // sonst null. Gesetzt wird das nachtraeglich in applyGamePass().
     gamePass: null,
@@ -457,18 +529,33 @@ async function applyGamePass(ctx, items, opts = {}) {
   }
 }
 
+/* Popularity fuehrt, `hypes` ist nur noch Nachrang: nach der alten
+   Reihenfolge stand "Company of Heroes 3: Final Stand" (hypes 0) hinter
+   dreizehn No-Name-Titeln mit hypes 1 bis 3 — selbst unter "Alles
+   anzeigen". Spiele ohne Popularity-Daten landen hinten, und ein Add-on
+   ueberholt bei gleichem Rang nie ein Vollspiel. */
+function popRankOf(item) {
+  return item.popRank == null ? Infinity : item.popRank;
+}
+
 function sortByRelevance(items) {
-  return items.sort((a, b) => (b.hypes - a.hypes)
+  return items.sort((a, b) => (popRankOf(a) - popRankOf(b))
+    || (Number(!!a.addon) - Number(!!b.addon))
+    || (b.hypes - a.hypes)
     || ((b.criticRating || 0) - (a.criticRating || 0))
     || a.name.localeCompare(b.name, 'de'));
 }
 
 /* Die obersten Karten bekommen einen deutschen Kurztext.
    Bewusst nicht alle: an einem Tag stehen ~50 Spiele in der Liste, davon
-   ueberstehen ~8 den Relevanzfilter der Kachel. Fuer die restlichen 40 einen
-   Fremdabruf zu machen, waere Text, den nie jemand liest. TEASER_TRANSLATE
-   liegt darum knapp ueber dem, was die Kachel typischerweise zeigt. */
-const TEASER_TRANSLATE = 12;
+   uebersteht rund die Haelfte den Relevanzfilter der Kachel. Fuer den Rest
+   einen Fremdabruf zu machen, waere Text, den nie jemand liest.
+   TEASER_TRANSLATE liegt darum knapp ueber dem, was die Kachel
+   typischerweise zeigt — gemessen an vier Tagen 10 bis 25 Zeilen in
+   "Ausgewogen", vorher 3 bis 18. Seit die Sortierung an der
+   Popularity haengt, treffen die Uebersetzungen ausserdem die Titel,
+   die auch oben stehen; vorher entschied `hypes` darueber. */
+const TEASER_TRANSLATE = 25;
 const TEASER_CONCURRENCY = 3;
 const teaserCache = makeCache(400, 24 * 3600 * 1000);
 
@@ -496,16 +583,83 @@ async function translateTop(ctx, items) {
   await Promise.all(Array.from({ length: TEASER_CONCURRENCY }, worker));
 }
 
-async function releasesForDay(get, ctx, iso) {
-  const { start, end } = dayBounds(iso);
+/* Die Kennzahlen zu einer Menge Spiel-Ids. Schluckt jeden Fehler: das
+   Modul lief lange ohne diesen Endpoint, und ein Ausfall darf die Kachel
+   nicht leeren, sondern nur auf das alte Verhalten zurueckfallen (wie
+   translateTop beim Kurztext und applyGamePass beim Chip). Der Dateikopf
+   erklaert, warum das hier besonders wichtig ist: umbenannte
+   IGDB-Felder liefern keinen Fehler, sondern still null. */
+async function popularityFor(get, ctx, ids) {
+  const pop = new Map();
+  for (let i = 0; i < ids.length; i += POP_CHUNK) {
+    const chunk = ids.slice(i, i + POP_CHUNK);
+    try {
+      const rows = await igdb(get, ctx, 'popularity_primitives',
+        'fields game_id, popularity_type, value;'
+        + ` where game_id = (${chunk.join(',')})`
+        + ` & popularity_type = (${POPULARITY_TYPES.join(',')});`
+        + ` limit ${POP_LIMIT};`);
+      if (Array.isArray(rows) && rows.length >= POP_LIMIT) {
+        // Sollte POP_CHUNK verhindern. Faellt es doch auf, fehlen Raenge.
+        ctx.warn(`Popularity: ${rows.length} Zeilen am Limit — POP_CHUNK senken`);
+      }
+      for (const row of (Array.isArray(rows) ? rows : [])) {
+        const value = Number(row.value);
+        if (!row.game_id || !row.popularity_type || !Number.isFinite(value)) continue;
+        if (!pop.has(row.game_id)) pop.set(row.game_id, new Map());
+        pop.get(row.game_id).set(row.popularity_type, value);
+      }
+    } catch (err) {
+      ctx.warn(`Popularity: ${err.message}`);
+    }
+  }
+  return pop;
+}
+
+/* Pro Kennzahl eine Rangliste ueber die Spiele des Tages; jedes Spiel
+   behaelt seinen besten Rang. Der Rang statt des Rohwerts, weil IGDB
+   normalisierte Bruchzahlen liefert, die nur innerhalb eines Typs
+   vergleichbar sind — und weil ein Rang im Tagesvergleich unabhaengig
+   davon bleibt, wie IGDB die Normalisierung morgen aendert. */
+function rankPopularity(items, pop) {
+  for (const type of POPULARITY_TYPES) {
+    const ranked = items
+      .filter((it) => pop.get(it.id) && pop.get(it.id).has(type))
+      .sort((a, b) => pop.get(b.id).get(type) - pop.get(a.id).get(type));
+    ranked.forEach((item, i) => {
+      const rank = i + 1;
+      if (item.popRank == null || rank < item.popRank) item.popRank = rank;
+      (item.popTypes || (item.popTypes = [])).push({ type, rank });
+    });
+  }
+  return items;
+}
+
+/* Ein Tag, ein Satz Typen. Nur damit releasesForDay die Query-Zeichenkette
+   nicht zweimal fuehren muss — bewusst ohne Blaettern, siehe DAY_LIMIT. */
+async function dayRows(get, ctx, start, end, types) {
   const rows = await igdb(get, ctx, 'release_dates',
     `fields ${LIST_FIELDS};`
     + ` where date >= ${start} & date < ${end} & date_format = 0`
-    + ` & game.game_type = (${GAME_TYPES.join(',')});`
+    + ` & game.game_type = (${types.join(',')});`
     + ` sort date asc; limit ${DAY_LIMIT};`);
-  const items = sortByRelevance(
-    groupReleases(Array.isArray(rows) ? rows : []).map((e) => normalizeEntry(e, iso)),
-  );
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function releasesForDay(get, ctx, iso) {
+  const { start, end } = dayBounds(iso);
+  // Getrennte Abfragen, damit jede ihr eigenes Limit hat — siehe ADDON_TYPES.
+  // igdb() serialisiert ohnehin ueber throttled(), Promise.all kostet nichts.
+  const [mainRows, addonRows] = await Promise.all([
+    dayRows(get, ctx, start, end, GAME_TYPES),
+    dayRows(get, ctx, start, end, ADDON_TYPES),
+  ]);
+  const items = [
+    ...groupReleases(mainRows).map((e) => normalizeEntry(e, iso, false)),
+    ...groupReleases(addonRows).map((e) => normalizeEntry(e, iso, true)),
+  ];
+  rankPopularity(items, await popularityFor(get, ctx, items.map((it) => it.id)));
+  sortByRelevance(items);
   await translateTop(ctx, items);
   await applyGamePass(ctx, items, { wait: true });
   // Der IGDB-Rohdatensatz war nur fuer die Uebersetzung noetig und hat in
@@ -516,12 +670,20 @@ async function releasesForDay(get, ctx, iso) {
 
 /* Was als Naechstes ansteht — der Fallback fuer Tage, an denen
    nichts erscheint. Bewusst nur Titel mit Vorab-Interesse: eine
-   Liste unbekannter Titel hilft niemandem weiter. */
+   Liste unbekannter Titel hilft niemandem weiter.
+
+   Dieses "Vorab-Interesse" hing bis zuletzt allein an `game.hypes >= 5`
+   in der Abfrage — demselben Zaehler, der die Tagesliste falsch gemacht
+   hat. Jetzt kommt alles Kommende herein, die Auswahl trifft die
+   Popularity-Kennzahl (Typ 10 "Most Wishlisted Upcoming" ist genau
+   dafuer gemacht), und `hypes` bleibt als zweiter Weg daneben stehen.
+   Angezeigt wird die Auswahl wieder chronologisch — die Frage lautet
+   "was kommt als Naechstes", nicht "was ist am beliebtesten". */
 async function upcoming(get, ctx) {
   const from = Math.floor(Date.now() / 1000);
   const rows = await igdb(get, ctx, 'release_dates',
     `fields ${LIST_FIELDS};`
-    + ` where date > ${from} & date_format = 0 & game.hypes >= 5`
+    + ` where date > ${from} & date_format = 0`
     + ` & game.game_type = (${GAME_TYPES.join(',')});`
     + ` sort date asc; limit ${DAY_LIMIT};`);
   const byGame = new Map();
@@ -530,11 +692,15 @@ async function upcoming(get, ctx) {
     // Pro Spiel zaehlt der frueheste kommende Termin.
     if (id && !byGame.has(id)) byGame.set(id, row.date);
   }
-  const items = groupReleases(Array.isArray(rows) ? rows : [])
+  const all = groupReleases(Array.isArray(rows) ? rows : [])
     .map((e) => normalizeEntry(e, isoOf(byGame.get(e.game.id))))
-    .filter((it) => it.date)
-    .sort((a, b) => a.date.localeCompare(b.date) || (b.hypes - a.hypes))
-    .slice(0, UPCOMING_LIMIT);
+    .filter((it) => it.date);
+  rankPopularity(all, await popularityFor(get, ctx, all.map((it) => it.id)));
+  const items = all
+    .filter((it) => it.popRank != null || it.hypes >= 5)
+    .sort((a, b) => (popRankOf(a) - popRankOf(b)) || (b.hypes - a.hypes))
+    .slice(0, UPCOMING_LIMIT)
+    .sort((a, b) => a.date.localeCompare(b.date) || (popRankOf(a) - popRankOf(b)));
   await translateTop(ctx, items);
   await applyGamePass(ctx, items);
   for (const item of items) delete item._game;
@@ -1206,13 +1372,16 @@ module.exports = {
 
   // Fuer den Smoke-Test und scripts/igdb-check.mjs.
   _internals: {
-    GAME_TYPES, GENRES_DE, PLATFORMS, GAME_MODES_DE, PERSPECTIVES_DE,
+    GAME_TYPES, ADDON_TYPES, GENRES_DE, PLATFORMS, GAME_MODES_DE, PERSPECTIVES_DE,
     AGE_ORGS, AGE_CATEGORIES, GAME_TYPE_DE, STATUS_DE, WEBSITE_DE,
-    isValidIso, dayBounds, todayIso, quote, toId, allowedImageUrl, looksGerman,
+    POPULARITY_TYPES, DAY_LIMIT, LIST_FIELDS,
+    isValidIso, dayBounds, todayIso, isoOf, quote, toId, allowedImageUrl, looksGerman,
     SEARCH_SKIP, SEARCH_FETCH, normalizeText, searchTokens, scoreHit, tokenWildcardWhere,
     commonPrefix,
     imageTypeOf, groupReleases, sortByRelevance, clip,
     releasesForDay, searchGames, gameDetail, upcoming, getToken,
+    // Fuer scripts/igdb-check.mjs: igdb() bringt Token-Refresh und Throttle mit.
+    igdb, popularityFor, rankPopularity, dayRows,
     gamepass,
   },
 };

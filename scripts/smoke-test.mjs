@@ -227,6 +227,86 @@ head('Game Releases');
   is(!gr.GAME_TYPES.some((t) => [1, 2, 3, 5, 13, 14].includes(t)),
      'Release-Typen: DLC, Expansion, Bundle, Mod, Pack und Update bleiben draussen');
 
+  /* Add-ons holt eine zweite Abfrage. Ueberschneiden sich die Listen, kaeme
+     ein Spiel doppelt in die Tagesliste. */
+  is(!gr.ADDON_TYPES.some((t) => gr.GAME_TYPES.includes(t)),
+     'Add-on-Typen: keine Ueberschneidung mit der Hauptabfrage');
+  is(gr.ADDON_TYPES.includes(1) && gr.ADDON_TYPES.includes(2),
+     'Add-on-Typen: DLC und Erweiterung kommen mit');
+  is(!gr.ADDON_TYPES.some((t) => [3, 5, 12, 13, 14].includes(t)),
+     'Add-on-Typen: Bundle, Mod, Fork, Pack und Update bleiben auch hier draussen');
+  // Ein Typ, der in eine Liste wandert, aber nicht in die Uebersetzungstabelle,
+  // stuende auf der Kachel ohne Label da.
+  is([...gr.GAME_TYPES, ...gr.ADDON_TYPES].every((t) => t === 0 || gr.GAME_TYPE_DE[t]),
+     'Release-Typen: jeder Typ ausser Hauptspiel hat ein deutsches Label');
+
+  /* Popularity ersetzt `hypes` als fuehrendes Signal — siehe den Kommentar bei
+     POPULARITY_TYPES. Die Ids sind die von /popularity_types verifizierten. */
+  const popIds = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 34]);
+  is(gr.POPULARITY_TYPES.length > 0 && gr.POPULARITY_TYPES.every((t) => popIds.has(t)),
+     `Popularity-Typen: ${gr.POPULARITY_TYPES.length} Eintraege, alle bei IGDB bekannt`);
+
+  {
+    const mk = (id, hypes) => ({ id, name: `Spiel ${id}`, hypes, popRank: null, popTypes: null, addon: false });
+    const [a, b, c, d] = [mk(1, 0), mk(2, 99), mk(3, 0), mk(4, 0)];
+    /* Spiel 1 ist bei Kennzahl 1 Letzter (Rang 3) und bei Kennzahl 2 Erster.
+       Genau das ist der Fall des gemeldeten Titels: bei den meisten Kennzahlen
+       unauffaellig, bei einer weit vorn. Zaehlen muss der beste Rang. */
+    gr.rankPopularity([a, b, c, d], new Map([
+      [1, new Map([[1, 0.1], [2, 0.9]])],
+      [2, new Map([[1, 0.9]])],
+      [3, new Map([[1, 0.5]])],
+    ]));
+    is(a.popRank === 1 && b.popRank === 1 && c.popRank === 2,
+       'Popularity-Rang: bester Rang ueber alle Kennzahlen zaehlt');
+    is(d.popRank === null, 'Popularity-Rang: ohne Daten bleibt der Rang null');
+    is(a.popTypes.length === 2 && a.popTypes.some((p) => p.rank === 3) && d.popTypes === null,
+       'Popularity-Rang: jede getroffene Kennzahl wird mit ihrem Rang mitgefuehrt');
+
+    const leer = [mk(9, 0)];
+    gr.rankPopularity(leer, new Map());
+    is(leer[0].popRank === null, 'Popularity-Rang: leere Kennzahlen lassen alles auf null');
+
+    /* Die alte Sortierung nach `hypes` stellte "Company of Heroes 3: Final
+       Stand" (hypes 0) hinter dreizehn No-Name-Titel mit hypes 1 bis 3. */
+    const sorted = gr.sortByRelevance([
+      { name: 'hypes-Titel', hypes: 40, popRank: null, addon: false, criticRating: null },
+      { name: 'Rang-Titel', hypes: 0, popRank: 4, addon: false, criticRating: null },
+      { name: 'Add-on', hypes: 0, popRank: 4, addon: true, criticRating: null },
+    ]).map((i) => i.name);
+    is(sorted[0] === 'Rang-Titel' && sorted[1] === 'Add-on' && sorted[2] === 'hypes-Titel',
+       'Sortierung: Popularity fuehrt, Add-on erst nach dem Vollspiel, hypes zuletzt');
+  }
+
+  /* Dieselben Stufen wie public/modules/game-releases.js. Der gemeldete Fehler
+     war genau dieser Fall: Rang 4, hypes 0, keine Wertung. */
+  {
+    const relevant = (it, mode) => {
+      const rank = it.popRank == null ? Infinity : it.popRank;
+      const parent = !!(it.addon && it.parent && it.parent.ratings >= 20);
+      if (mode === 'notable') return rank <= 5 || it.hypes >= 5 || it.criticRating != null || parent;
+      return rank <= 8 || it.hypes >= 1 || it.rating != null || it.criticRating != null || parent;
+    };
+    const finalStand = { popRank: 4, hypes: 0, rating: null, criticRating: null, addon: false };
+    is(relevant(finalStand, 'balanced') && relevant(finalStand, 'notable'),
+       'Relevanz: Rang 4 ohne hypes ist in beiden Stufen relevant');
+    const namenlos = { popRank: null, hypes: 0, rating: null, criticRating: null, addon: false };
+    is(!relevant(namenlos, 'balanced'), 'Relevanz: ohne jedes Signal bleibt der Titel draussen');
+    const addon = { popRank: null, hypes: 0, rating: null, criticRating: null,
+                    addon: true, parent: { name: 'Elternspiel', ratings: 45 } };
+    is(relevant(addon, 'balanced'), 'Relevanz: Add-on zu einem bekannten Spiel zaehlt mit');
+    // Gegenprobe zum Bugfix: was vorher durchkam, kommt weiter durch.
+    is(relevant({ popRank: null, hypes: 1, rating: null, criticRating: null, addon: false }, 'balanced'),
+       'Relevanz: hypes >= 1 traegt einen Titel weiterhin');
+  }
+
+  /* IGDB weist eine Abfrage komplett ab, wenn ein Feld zu tief expandiert
+     wird. Drei Segmente sind erprobt (game.cover.image_id), vier nicht. */
+  is(gr.LIST_FIELDS.split(',').every((f) => f.trim().split('.').length <= 3),
+     'Listen-Felder: keine Expansion tiefer als drei Segmente');
+  is(gr.LIST_FIELDS.includes('game.parent_game.name'),
+     'Listen-Felder: das Elternspiel eines Add-ons wird mitgeholt');
+
   for (const [name, table] of [['Genres', gr.GENRES_DE], ['Spielmodi', gr.GAME_MODES_DE],
                                ['Perspektiven', gr.PERSPECTIVES_DE], ['Freigabe-Stufen', gr.AGE_CATEGORIES]]) {
     const values = Object.values(table);
