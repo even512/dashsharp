@@ -29,6 +29,9 @@
    keinen Fehler, sie liefern still null.
    ============================================================ */
 
+// Unterstrich = Helfer, kein Modul (server/registry.js ueberspringt ihn).
+const gamepass = require('./_gamepass');
+
 const TOKEN_URL = 'https://id.twitch.tv/oauth2/token';
 const IGDB_URL = 'https://api.igdb.com/v4';
 const IMAGE_BASE = 'https://images.igdb.com/igdb/image/upload';
@@ -429,7 +432,29 @@ function normalizeEntry(entry, iso) {
     _game: game,      // nur modulintern, faellt vor der Antwort weg
     kind: GAME_TYPE_DE[game.game_type] || null,
     status: entry.status ? STATUS_DE[entry.status] : null,
+    // { console, pc, eaPlay } sobald der Game-Pass-Katalog es hergibt,
+    // sonst null. Gesetzt wird das nachtraeglich in applyGamePass().
+    gamePass: null,
   };
+}
+
+/* ---------- Game Pass ----------
+   Nachlauf statt Bestandteil des Abrufs: der Katalog ist eine fremde
+   Zusatzinfo, kein Teil der Releases. Faellt er aus, fehlt ein Chip —
+   die Kachel selbst darf daran nie scheitern, deshalb schluckt diese
+   Funktion jeden Fehler (wie translateTop beim Kurztext).
+
+   `wait` nur beim Abruf der Kachel selbst: nach einem Neustart soll
+   schon die erste Antwort Chips tragen. Suche und Detailfenster warten
+   nie auf den Katalogaufbau. */
+async function applyGamePass(ctx, items, opts = {}) {
+  try {
+    const idx = await gamepass.index(ctx, opts);
+    if (!idx) return;
+    for (const item of items) item.gamePass = gamepass.lookup(idx, item.name);
+  } catch (err) {
+    ctx.warn(`Game Pass: ${err.message}`);
+  }
 }
 
 function sortByRelevance(items) {
@@ -482,6 +507,7 @@ async function releasesForDay(get, ctx, iso) {
     groupReleases(Array.isArray(rows) ? rows : []).map((e) => normalizeEntry(e, iso)),
   );
   await translateTop(ctx, items);
+  await applyGamePass(ctx, items, { wait: true });
   // Der IGDB-Rohdatensatz war nur fuer die Uebersetzung noetig und hat in
   // der Antwort an den Browser nichts verloren.
   for (const item of items) delete item._game;
@@ -510,6 +536,7 @@ async function upcoming(get, ctx) {
     .sort((a, b) => a.date.localeCompare(b.date) || (b.hypes - a.hypes))
     .slice(0, UPCOMING_LIMIT);
   await translateTop(ctx, items);
+  await applyGamePass(ctx, items);
   for (const item of items) delete item._game;
   return items;
 }
@@ -668,11 +695,12 @@ async function gameDetail(get, ctx, id) {
       .map((p) => [p.id, p]),
   ).values()];
 
-  return {
+  const detail = {
     id: game.id,
     name: game.name,
     date: isoOf(game.first_release_date),
     kind: GAME_TYPE_DE[game.game_type] || null,
+    gamePass: null,
     cover: imageUrl(game.cover && game.cover.image_id, 't_cover_big_2x'),
     artwork: imageUrl(
       (game.artworks || [])[0] && game.artworks[0].image_id,
@@ -705,6 +733,8 @@ async function gameDetail(get, ctx, id) {
     releaseDates: releaseDatesOf(game),
     igdbUrl: /^https:\/\//i.test(game.url || '') ? game.url : null,
   };
+  await applyGamePass(ctx, [detail]);
+  return detail;
 }
 
 /* ---------- Suche ---------- */
@@ -890,7 +920,7 @@ async function searchGames(get, ctx, q) {
   }
 
   const heute = todayIso();
-  return [...pool.values()]
+  const hits = [...pool.values()]
     .filter((g) => !SEARCH_SKIP.has(g.game_type))
     .map((g) => ({ g, score: scoreHit(g, norm, tokens) }))
     .filter((x) => x.score > 0)
@@ -900,6 +930,8 @@ async function searchGames(get, ctx, q) {
       || ((b.g.first_release_date || 0) - (a.g.first_release_date || 0)))
     .slice(0, SEARCH_LIMIT)
     .map(({ g }) => searchHit(g));
+  await applyGamePass(ctx, hits);
+  return hits;
 }
 
 function pendingRank(g, heute) {
@@ -920,6 +952,7 @@ function searchHit(g) {
     cover: imageUrl(g.cover && g.cover.image_id, 't_cover_small'),
     platforms: (g.platforms || []).map(platformOf).filter(Boolean)
       .map((p) => ({ label: p.label, family: p.family })),
+    gamePass: null, // wird in searchGames nachgetragen
   };
 }
 
@@ -1180,5 +1213,6 @@ module.exports = {
     commonPrefix,
     imageTypeOf, groupReleases, sortByRelevance, clip,
     releasesForDay, searchGames, gameDetail, upcoming, getToken,
+    gamepass,
   },
 };

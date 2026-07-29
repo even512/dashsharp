@@ -16,6 +16,8 @@
      node scripts/igdb-check.mjs 2026-09-17      # ein bestimmter Tag
      node scripts/igdb-check.mjs --search gothic # Lupe testen
      node scripts/igdb-check.mjs --game 375232   # Detail + Uebersetzung
+     node scripts/igdb-check.mjs --gamepass      # Game-Pass-Katalog + Abgleich
+                                                 # (braucht keine Zugangsdaten)
 
    Zugangsdaten kommen aus der Umgebung (IGDB_CLIENT_ID /
    IGDB_CLIENT_SECRET) oder aus config/secrets.json, also
@@ -74,7 +76,8 @@ function printItems(items) {
     const mark = tier === 'notable' ? `${C.green}##${C.off}`
       : tier === 'balanced' ? `${C.green} #${C.off}` : `${C.dim} .${C.off}`;
     const flags = [it.kind, it.status].filter(Boolean).join(', ');
-    console.log(`  ${mark} hypes=${String(it.hypes).padEnd(4)}`
+    const gp = it.gamePass ? `${C.green}GP${C.off}` : '  ';
+    console.log(`  ${mark} ${gp} hypes=${String(it.hypes).padEnd(4)}`
       + `${it.cover ? '  ' : `${C.yellow}!C${C.off}`} ${it.name}`);
     console.log(`       ${C.dim}${(it.platforms || []).map((p) => p.label).join(', ') || '-'}`
       + ` | ${(it.genres || []).join(', ') || 'ohne Genre'}${flags ? ` | ${flags}` : ''}${C.off}`);
@@ -82,11 +85,58 @@ function printItems(items) {
   console.log(`\n  ${C.bold}Stufen:${C.off} alles=${counts.all}`
     + `  ausgewogen=${counts.balanced}  namhaft=${counts.notable}`);
   console.log(`  ${C.dim}## = auch in "Nur Namhaftes"   # = in "Ausgewogen"`
-    + `   . = nur in "Alles anzeigen"   !C = ohne Cover${C.off}`);
+    + `   . = nur in "Alles anzeigen"   !C = ohne Cover   GP = im Game Pass${C.off}`);
+}
+
+/* „Der Game-Pass-Chip fehlt" hat drei Ursachen, die von aussen gleich
+   aussehen: der Katalog war nicht erreichbar, das Spiel steht wirklich nicht
+   drin, oder der Titel-Abgleich hat danebengegriffen. Dieser Modus trennt
+   die drei — und braucht keine IGDB-Zugangsdaten, weil der Katalog eine
+   eigene, offene Quelle ist. */
+async function checkGamePass(names) {
+  const gp = I.gamepass;
+  process.stdout.write('Game-Pass-Katalog aufbauen … ');
+  const t0 = Date.now();
+  const idx = await gp.index(ctx, { wait: true });
+  if (!idx) {
+    console.log(`${C.red}fehlgeschlagen${C.off}`);
+    console.log('  Der Katalog war nicht erreichbar — die Kachel zeigt dann einfach keine Chips.');
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`${C.green}ok${C.off} ${C.dim}(${((Date.now() - t0) / 1000).toFixed(1)}s)${C.off}\n`);
+
+  let ambiguous = 0;
+  for (const v of idx.keys.values()) if (v.ambiguous) ambiguous++;
+  console.log(`  Produkte    ${idx.products} von ${idx.requested} aufgeloest`);
+  console.log(`  Schluessel  ${idx.keys.size}${ambiguous ? `  ${C.yellow}(${ambiguous} mehrdeutig, liefern nichts)${C.off}` : ''}`);
+
+  if (!names.length) {
+    console.log(`\n  ${C.dim}Einzelne Titel pruefen: node scripts/igdb-check.mjs --gamepass "Starfield" "Halo Wars"${C.off}`);
+    return;
+  }
+  console.log('');
+  for (const name of names) {
+    const hit = gp.lookup(idx, name);
+    const where = hit
+      ? [hit.console && 'Konsole', hit.pc && 'PC', hit.eaPlay && 'EA Play'].filter(Boolean).join(', ')
+      : '';
+    console.log(`  ${hit ? `${C.green}HIT ${C.off}` : `${C.dim}miss${C.off}`} ${name.padEnd(40)} ${C.dim}${where}${C.off}`);
+    if (!hit) {
+      console.log(`       ${C.dim}Schluessel: "${gp.normalizeTitle(gp.stripEditions(name))}"${C.off}`);
+    }
+  }
+  console.log(`\n  ${C.dim}miss heisst nicht zwingend "nicht im Game Pass": steht dort nur eine`
+    + ` Edition\n  ("Halo Wars: Definitive Edition"), wird bewusst nicht zugeordnet.${C.off}`);
 }
 
 async function main() {
   const args = process.argv.slice(2);
+
+  // Vor der Zugangsdaten-Pruefung: der Game-Pass-Katalog ist eine eigene,
+  // offene Quelle und laesst sich auch ohne IGDB-Zugang testen.
+  const gpAt = args.indexOf('--gamepass');
+  if (gpAt >= 0) return checkGamePass(args.slice(gpAt + 1));
 
   if (!get('IGDB_CLIENT_ID') || !get('IGDB_CLIENT_SECRET')) {
     console.error(`${C.red}IGDB_CLIENT_ID / IGDB_CLIENT_SECRET fehlen.${C.off}`);

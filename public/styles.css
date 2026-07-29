@@ -1915,6 +1915,14 @@ body.design-mode[data-theme="win9x"] .grid-stack-item:hover > .grid-stack-item-c
 .gr-chip-flag { color: var(--accent); border-color: var(--accent-border); background: var(--accent-subtle); }
 .gr-chip-date { color: var(--text-2); }
 .gr-chip-genre { color: var(--text-dim); }
+/* Xbox-Gruen statt --green: --green ist die "gute Wertung"-Farbe der Zeile,
+   und die beiden haben nichts miteinander zu tun. Gedaempft, damit der Chip
+   die Wertung rechts nicht ueberstrahlt. Schriftgroesse erbt er von
+   .gr-chip und skaliert damit ueber alle vier gr-text-*-Stufen mit. */
+.gr-chip-gp { color: #4bbf5a; border-color: rgba(16, 124, 16, .38); background: rgba(16, 124, 16, .14); }
+[data-theme="light"] .gr-chip-gp { color: #0d7a24; border-color: rgba(13, 122, 36, .34); background: rgba(13, 122, 36, .09); }
+/* win9x kennt keine Transparenzen — dort flach. */
+[data-theme="win9x"] .gr-chip-gp { color: #007000; border-color: #007000; background: transparent; }
 .gr-meta {
   display: flex;
   align-items: center;
@@ -1935,6 +1943,7 @@ body.design-mode[data-theme="win9x"] .grid-stack-item:hover > .grid-stack-item-c
 /* Kachel-Optionen (Schalter aus -> Klasse gesetzt) */
 [data-widget-id="game-releases"].cfg-hide-gr-chips .gr-row .gr-chips { display: none !important; }
 [data-widget-id="game-releases"].cfg-hide-gr-teaser .gr-teaser { display: none !important; }
+[data-widget-id="game-releases"].cfg-hide-gr-gamepass .gr-chip-gp { display: none !important; }
 
 /* ---------- Detailfenster ---------- */
 .gr-detail-body { padding: 0 0 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
