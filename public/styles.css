@@ -2100,3 +2100,192 @@ body.gr-scroll-locked {
   overflow: hidden;
   padding-right: var(--gr-scrollbar-gap, 0);
 }
+
+/* ============================================================
+   YouTube-Kachel (public/modules/youtube.js)
+   ============================================================ */
+
+/* ---------- Haupt-Feed ---------- */
+.yt-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  border-radius: 9px;
+  padding: 4px;
+  border: 1px solid transparent;
+}
+.yt-row:hover,
+.yt-row:focus-visible { background: var(--accent-subtle); outline: none; }
+.yt-list.tile-list { gap: 8px; }
+
+.yt-thumb {
+  position: relative;
+  width: 120px;
+  aspect-ratio: 16 / 9;
+  flex-shrink: 0;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--bg-glass);
+}
+.yt-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.yt-dur {
+  position: absolute;
+  right: 4px; bottom: 4px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0,0,0,.82);
+  color: #fff;
+  font: 600 10px 'JetBrains Mono', monospace;
+  line-height: 1.4;
+}
+.yt-dur:empty { display: none; }
+.yt-dur.yt-dur-live { background: #ff4d4d; }
+
+.yt-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.yt-title {
+  font: 500 12px/1.4 'JetBrains Mono', monospace;
+  color: var(--text-15);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.yt-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 500 10px 'JetBrains Mono', monospace;
+  color: var(--text-3);
+}
+.yt-new {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: #ff4d4d;
+  color: #fff;
+  font: 700 9px 'JetBrains Mono', monospace;
+  letter-spacing: .05em;
+}
+.yt-chan { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.yt-time { flex-shrink: 0; }
+
+.yt-empty { font: 500 11px/1.5 'JetBrains Mono', monospace; color: var(--text-dim); padding: 2px; }
+
+/* ---------- Sektionen (Live / Discovery / Merkliste) ---------- */
+.yt-live, .yt-discovery, .yt-watch { margin-top: 4px; flex-shrink: 0; }
+.yt-sec-head {
+  font: 600 10px 'JetBrains Mono', monospace;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 6px 0 6px;
+}
+.yt-sec-body {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+.yt-card {
+  flex: 0 0 132px;
+  width: 132px;
+  cursor: pointer;
+  border-radius: 8px;
+  border: 1px solid var(--border-4);
+  background: var(--bg-glass);
+  overflow: hidden;
+  transition: border-color .15s;
+}
+.yt-card:hover,
+.yt-card:focus-visible { border-color: var(--accent-border); outline: none; }
+.yt-card-thumb { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block; background: var(--bg-glass); }
+.yt-card-body { padding: 6px 7px; }
+.yt-card-title {
+  font: 500 10.5px/1.35 'JetBrains Mono', monospace;
+  color: var(--text-15);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.yt-card-meta {
+  margin-top: 3px;
+  font: 500 9px 'JetBrains Mono', monospace;
+  color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Merkliste */
+.yt-watch-body { display: flex; flex-direction: column; gap: 4px; }
+.yt-watch-row { display: flex; align-items: center; gap: 8px; padding: 4px 2px; }
+.yt-watch-title {
+  flex: 1; min-width: 0; cursor: pointer;
+  font: 500 11px 'JetBrains Mono', monospace; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.yt-watch-done .yt-watch-title { color: var(--text-dim); text-decoration: line-through; }
+.yt-watch-check, .yt-watch-del {
+  flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px;
+  background: transparent; border: 1px solid var(--border-2); color: var(--text-3);
+  cursor: pointer; font-size: 12px; line-height: 1;
+}
+.yt-watch-check:hover { color: var(--green); border-color: var(--green); }
+.yt-watch-del:hover { color: var(--red); border-color: rgba(244,63,94,0.4); }
+
+/* ---------- Detailfenster + Player ---------- */
+.yt-modal-body { padding: 0; overflow-y: auto; display: flex; flex-direction: column; }
+.yt-modal-player {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  display: flex; align-items: center; justify-content: center;
+}
+.yt-modal-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.yt-embed { width: 100%; height: 100%; border: 0; display: block; }
+.yt-play-btn {
+  position: absolute;
+  width: 56px; height: 56px; border-radius: 50%;
+  background: rgba(255,77,77,.92); border: 0; color: #fff;
+  font-size: 22px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .15s;
+}
+.yt-play-btn:hover { transform: scale(1.08); }
+.yt-modal-title { font: 600 15px/1.4 'Space Grotesk', sans-serif; color: var(--text-1); margin: 14px 20px 0; }
+.yt-modal-meta { font: 500 11px 'JetBrains Mono', monospace; color: var(--text-3); margin: 6px 20px 0; }
+.yt-modal-sponsor {
+  margin: 10px 20px 0; padding: 6px 10px;
+  border-radius: 7px; background: var(--accent-subtle);
+  font: 500 10.5px 'JetBrains Mono', monospace; color: var(--text-2);
+}
+.yt-modal-sponsor:empty { display: none; }
+.yt-modal-desc {
+  margin: 12px 20px 18px;
+  font: 500 12px/1.6 'JetBrains Mono', monospace; color: var(--text-dim);
+  white-space: pre-wrap;
+  max-height: 220px; overflow-y: auto;
+}
+.yt-modal-foot { display: flex; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border-3); }
+
+/* ---------- Einstellungen ---------- */
+.yt-group-pick { margin-top: 5px; font-size: 10px; padding: 3px 6px; }
+.yt-search-results { display: flex; flex-direction: column; gap: 4px; padding: 4px 0; }
+.yt-search-row { display: flex; align-items: center; gap: 8px; padding: 5px 2px; border-bottom: 1px solid var(--border-4); }
+.yt-search-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: var(--bg-glass); }
+.yt-search-info { flex: 1; min-width: 0; }
+.yt-search-name { font: 500 12px 'JetBrains Mono', monospace; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.yt-search-desc { font: 500 10px 'JetBrains Mono', monospace; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.yt-filter-row { display: flex; align-items: center; gap: 8px; padding: 5px 2px; font: 500 12px 'JetBrains Mono', monospace; color: var(--text-2); cursor: pointer; }
+.yt-filter-row input[type="checkbox"] { flex-shrink: 0; }
+.yt-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 0; }
+.yt-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 4px 3px 9px; border-radius: 20px;
+  background: var(--bg-glass); border: 1px solid var(--border-2);
+  font: 500 11px 'JetBrains Mono', monospace; color: var(--text-2);
+}
+.yt-chip-x { width: 16px; height: 16px; border-radius: 50%; border: 0; background: transparent; color: var(--text-3); cursor: pointer; font-size: 12px; line-height: 1; }
+.yt-chip-x:hover { color: var(--red); }
