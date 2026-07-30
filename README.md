@@ -39,7 +39,7 @@ and no build step.
 - 🎛️ **Per-tile settings** — hover a tile, open ⋯ → Einstellungen: rename the tile, toggle its building blocks (rings, charts, summaries, posters, columns …) and cap list lengths; stored with the dashboard layout
 - ⚡ **Live widgets** — System (via [Glances](https://nicolargo.github.io/glances/)), Docker, AdGuard Home, JDownloader, Plex, UniFi Network & Protect, Nextcloud, Unraid, weather, news, game releases
 - 📰 **News tile** — aggregates RSS/Atom feeds into one time-sorted list: pick sources from a curated IT/tech/hardware/gaming catalogue (split into German and English) or add your own feed URLs, then filter per tile by language, topic, source or keyword. Readability is adjustable per tile: text and thumbnail size, how many lines a headline and teaser may use, the spacing between headlines and how they are separated (divider line, cards or alternating tint). Clicking a headline opens a window with the teaser, the lead image and a link to the original article — images are fetched and served by Dash# itself, so the browser never talks to the news sites
-- 🎮 **Game releases tile** — shows the games released on a given day, sourced from [IGDB](https://www.igdb.com/): box art, platform chips, genres and critic score per card. Step through days with ‹/›, jump to any date with the date picker, or open the magnifier to look up when a specific game comes out. Clicking a card opens a window with the German description (taken from the Steam store, falling back to German Wikipedia, and marked `EN` when only the English IGDB text exists), ratings incl. USK/PEGI, developer, publisher, game modes, engine, screenshots and store links. Metadata is translated to German by lookup tables in the module. Games that are in the Xbox Game Pass catalogue right now carry a **Game Pass** chip next to their platform chips — no credentials needed, the catalogue is public — and the detail window spells out whether that is console, PC or via EA Play. A relevance filter keeps the daily shovelware out (≈ 8 of ≈ 54 titles a day at the default setting); platform, "only with cover" and "only Game Pass" filters are per tile. Images are proxied by Dash# itself, so the browser never talks to IGDB or Steam
+- 🎮 **Game releases tile** — shows the games released on a given day, sourced from [IGDB](https://www.igdb.com/): box art, platform chips, genres and critic score per card. Step through days with ‹/›, jump to any date with the date picker, or open the magnifier to look up when a specific game comes out. Clicking a card opens a window with the German description (taken from the Steam store, falling back to German Wikipedia, and marked `EN` when only the English IGDB text exists), ratings incl. USK/PEGI, developer, publisher, the Steam price (with the discount spelled out; absent for titles without a Steam page), game modes, engine, screenshots and store links. Metadata is translated to German by lookup tables in the module. Games that are in the Xbox Game Pass catalogue right now carry a **Game Pass** chip next to their platform chips — no credentials needed, the catalogue is public — and the detail window spells out whether that is console, PC or via EA Play. A relevance filter keeps the daily shovelware out (≈ 8 of ≈ 54 titles a day at the default setting); platform, "only with cover" and "only Game Pass" filters are per tile. Images are proxied by Dash# itself, so the browser never talks to IGDB or Steam
 - 🖥️ **Unraid suite** — eight tiles on the official GraphQL API: VMs (incl. VNC console), Docker containers (start/stop/restart), array & parity (status, capacity, check control), per-disk health, shares, notifications (incl. archive), system info (live CPU/RAM, versions, reboot/shutdown via SSH) and UPS — risky actions locked behind a server-side opt-in
 - 🟢 **Service monitoring** — the Service Status tile checks your services and shows online/offline + latency; the check method is picked automatically from what you enter: a URL (`http(s)://…`) → HTTP, `host:port` → TCP connect, a bare hostname or IP → ICMP ping
 - ⚙️ **Configure in the browser** — everything under `/settings`, no config files to hand-edit
@@ -117,6 +117,21 @@ IGDB_CLIENT_SECRET=
 There is no monthly request cap; only the rate is limited (4 requests/second),
 which the module keeps to. Until both values are set, the tile stays in its
 "not configured" state and the server makes no outbound request at all.
+
+#### Price
+
+IGDB carries no price data at all, so the price in the detail window comes from
+the public Steam store API — no extra credentials, and no extra request either:
+the German description already fetches that same store page via the Steam AppID
+IGDB hands out in `external_games`, and the price falls out of the same
+response. Amounts are in EUR (`cc=de`) and cached for three hours, while the
+IGDB detail keeps its 24 hours — a discount that ended hours ago would be worse
+than no price at all.
+
+The price is therefore Steam's. Console-only titles, releases not yet priced and
+anything without a Steam page simply show no price row, and a Steam outage costs
+that one row, never the window. Nothing is estimated or carried over from another
+store.
 
 `node scripts/igdb-check.mjs` verifies the credentials and prints what IGDB
 returns for a given day — useful when the tile looks emptier than expected:

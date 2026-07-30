@@ -657,9 +657,10 @@ async function openGameDetail(id, seed) {
   }
 }
 
-function _grFactRow(label, value) {
+function _grFactRow(label, value, title) {
   const row = document.createElement('div');
   row.className = 'gr-fact';
+  if (title) row.title = title;
   const k = document.createElement('span');
   k.className = 'gr-fact-key';
   k.textContent = label;
@@ -668,6 +669,18 @@ function _grFactRow(label, value) {
   v.textContent = value;
   row.append(k, v);
   return row;
+}
+
+/* Vorn steht, was man zahlt — der alte Preis erklaert nur den Rabatt und
+   gehoert deshalb dahinter. Ohne Steam-Seite gibt es hier nichts, dann
+   faellt die Zeile wie jede andere leere Angabe weg; ein Preis fuer einen
+   reinen Konsolen-Titel waere geraten. */
+function grPriceText(price) {
+  if (!price) return '';
+  if (price.free) return 'Kostenlos';
+  if (!price.text) return '';
+  if (!price.discount) return price.text;
+  return `${price.text} · −${price.discount} %${price.was ? ` (statt ${price.was})` : ''}`;
 }
 
 function grFillDetail(g, loading) {
@@ -726,6 +739,9 @@ function grFillDetail(g, loading) {
     ['Erscheint', g.date ? grShortDate(g.date) : ''],
     ['Entwickler', (g.developers || []).join(', ')],
     ['Publisher', (g.publishers || []).join(', ')],
+    // Preise gibt es nur ueber Steam — der Tooltip sagt das dazu, statt
+    // die Angabe wie eine plattformuebergreifende Wahrheit hinzustellen.
+    ['Preis', grPriceText(g.price), 'Preis laut Steam-Store (Deutschland)'],
     ['Spielmodi', (g.modes || []).join(', ')],
     ['Perspektive', (g.perspectives || []).join(', ')],
     ['Engine', (g.engines || []).join(', ')],
@@ -737,7 +753,7 @@ function grFillDetail(g, loading) {
       g.gamePass.eaPlay && 'über EA Play',
     ].filter(Boolean).join(' · ') : ''],
   ];
-  for (const [k, v] of pairs) if (v) facts.appendChild(_grFactRow(k, v));
+  for (const [k, v, t] of pairs) if (v) facts.appendChild(_grFactRow(k, v, t));
   // Erscheint ein Titel gestaffelt, ist genau das die interessante Information.
   const staggered = [...new Set((g.releaseDates || []).map((r) => r.date))];
   if (staggered.length > 1) {

@@ -13,11 +13,16 @@
    Request nach draussen.
 
    Deutsche Beschreibungen holt der Server in dieser Reihenfolge:
-   Steam-Store (l=german) ueber die AppID aus external_games,
+   Steam-Store (cc=de&l=german) ueber die AppID aus external_games,
    sonst deutsche Wikipedia, sonst bleibt der englische
    IGDB-Text stehen und wird als solcher markiert. Metadaten
    (Genres, Plattformen, Spielmodi, Altersfreigaben) uebersetzen
    die Tabellen weiter unten.
+
+   Aus derselben Steam-Antwort faellt der Preis ab — IGDB kennt
+   keinen. Beide Auswertungen teilen sich einen Abruf; der Preis
+   haengt aber an einem kuerzeren Cache als die IGDB-Daten, siehe
+   steamAppDetails() und withPrice().
 
    Bilder laufen ueber den Proxy am Ende der Datei, damit der
    Browser weiterhin ausschliesslich mit dem Dashboard spricht.
@@ -707,6 +712,48 @@ async function upcoming(get, ctx) {
   return items;
 }
 
+/* ---------- Steam-Store ----------
+   Eine Store-Seite, zwei Angaben: die deutsche Beschreibung und der
+   Preis stehen in derselben Antwort. Der Abruf ist deshalb von der
+   Auswertung getrennt — beides einzeln zu holen waere derselbe
+   Request zweimal.
+
+   Eigener Cache, weil `detailCache` 24 h laeuft: fuer IGDB-Stammdaten
+   richtig, fuer Preise zu lang. Drei Stunden sind kurz genug, dass ein
+   beginnender oder endender Sale nicht lange danebensteht, und lang
+   genug, dass wiederholtes Oeffnen desselben Fensters nichts kostet. */
+const STEAM_TTL_MS = 3 * 3600 * 1000;
+const PRICE_MAX_CHARS = 24;
+const steamCache = makeCache(200, STEAM_TTL_MS);
+
+async function steamAppDetails(ctx, appId) {
+  return cached(steamCache, `steam:${appId}`, async () => {
+    const data = await ctx.httpJson(
+      // cc=de liefert Euro-Preise und laesst die Sprache unberuehrt.
+      `${STEAM_URL}?appids=${encodeURIComponent(appId)}&cc=de&l=german`,
+      { timeoutMs: DESC_TIMEOUT_MS, headers: { 'User-Agent': UA } },
+    );
+    const entry = data && data[String(appId)];
+    const d = (entry && entry.success && entry.data) ? entry.data : null;
+    /* Gecacht wird das Destillat, nicht die Rohantwort: die bringt
+       Screenshots, Trailer und Erfolge mit und ist je Titel gut 100 KB
+       gross — bei 200 Eintraegen waere das der halbe Prozessspeicher fuer
+       zwei Felder. Und immer ein Objekt, nie ein blankes null: cached()
+       prueft den Treffer auf Wahrheitswert, ein Titel ohne Steam-Seite
+       wuerde sonst bei jedem Oeffnen neu abgefragt. */
+    return {
+      texts: d ? { short_description: d.short_description, about_the_game: d.about_the_game } : null,
+      price: d ? steamPrice(d, appId) : null,
+    };
+  });
+}
+
+function steamAppId(game) {
+  return (game.external_games || [])
+    .filter((e) => e.external_game_source === SOURCE_STEAM && /^\d+$/.test(String(e.uid || '')))
+    .map((e) => e.uid)[0] || null;
+}
+
 /* ---------- Deutsche Beschreibung ----------
    Reihenfolge: Steam-Store auf Deutsch, sonst deutsche Wikipedia,
    sonst bleibt der englische IGDB-Text stehen. Der Client zeigt
@@ -759,14 +806,9 @@ function steamDescription(data, name) {
   return short || null;
 }
 
-async function steamGerman(ctx, appId, name) {
-  const data = await ctx.httpJson(
-    `${STEAM_URL}?appids=${encodeURIComponent(appId)}&l=german`,
-    { timeoutMs: DESC_TIMEOUT_MS, headers: { 'User-Agent': UA } },
-  );
-  const entry = data && data[String(appId)];
-  if (!entry || !entry.success || !entry.data) return null;
-  const text = steamDescription(entry.data, name);
+function steamGerman(texts, name) {
+  if (!texts) return null;
+  const text = steamDescription(texts, name);
   // Kein deutscher Store-Text? Dann lieber weiter zur Wikipedia, statt
   // englischen Text als deutsch auszuzeichnen.
   return text && looksGerman(text) ? { text, source: 'Steam' } : null;
@@ -789,13 +831,11 @@ async function wikipediaGerman(ctx, title) {
 }
 
 async function germanSummary(ctx, game) {
-  const steamId = (game.external_games || [])
-    .filter((e) => e.external_game_source === SOURCE_STEAM && /^\d+$/.test(String(e.uid || '')))
-    .map((e) => e.uid)[0];
+  const steamId = steamAppId(game);
 
   if (steamId) {
     try {
-      const hit = await steamGerman(ctx, steamId, game.name);
+      const hit = steamGerman((await steamAppDetails(ctx, steamId)).texts, game.name);
       if (hit) return hit;
     } catch (err) { ctx.warn(`Steam-Beschreibung (${game.name}): ${err.message}`); }
   }
@@ -836,6 +876,69 @@ function storesOf(game) {
   return out;
 }
 
+/* ---------- Preis ----------
+   IGDB kennt keine Preise, auch nicht in `external_games`. Die Angabe
+   faellt deshalb aus der Steam-Antwort ab, die fuer die Beschreibung
+   ohnehin schon geholt wird — ohne zusaetzlichen Fremdabruf und ohne
+   neue Zugangsdaten. Der Preis gilt damit fuer Steam; ein reiner
+   Konsolen-Titel hat keinen, und geraten wird nichts. */
+
+/* Mit cc=de setzt Steam den Betrag schon deutsch ("47,99€") und trifft
+   Symbol und Stellung besser als jede eigene Rechnung. Nachgerechnet wird
+   nur, wenn der String leer bleibt — nicht als Verbesserung, sondern als
+   Notnagel. Das fehlende Leerzeichen vor der Einheit kommt dazu, sonst
+   steht der Preis anders gesetzt da als der Rest der Kachel. */
+function formatMoney(formatted, cents, currency) {
+  // Nur die nachgestellte Einheit abtrennen ("47,99€"). Das Komma steht
+  // ebenfalls zwischen Ziffern — ohne den Anker daran wird es mitgetroffen.
+  const text = String(formatted || '').replace(/\s+/g, ' ').trim().replace(/(\d)\s*([^\d\s.,]+)$/, '$1 $2');
+  // Fremde Zeichenkette in einer Faktenzeile: gedeckelt, damit sie das
+  // Fenster nicht auseinanderzieht.
+  if (text) return text.slice(0, PRICE_MAX_CHARS);
+  if (!Number.isFinite(Number(cents)) || !currency) return null;
+  // Ein unbekannter Waehrungscode wirft — dann lieber gar keine Angabe.
+  try {
+    return new Intl.NumberFormat('de-DE', { style: 'currency', currency }).format(Number(cents) / 100);
+  } catch { return null; }
+}
+
+function steamPrice(data, appId) {
+  if (!data) return null;
+  const url = `https://store.steampowered.com/app/${encodeURIComponent(appId)}/`;
+  if (data.is_free) return { free: true, text: null, was: null, discount: 0, currency: null, source: 'Steam', url };
+
+  const p = data.price_overview;
+  const text = p && formatMoney(p.final_formatted, p.final, p.currency);
+  // Noch nicht bepreiste Vorbestellungen sind der Normalfall, kein Fehler.
+  if (!text) return null;
+  const discount = Number(p.discount_percent) || 0;
+  // Ohne Rabatt schickt Steam `initial_formatted` als leeren String.
+  const was = discount > 0 ? formatMoney(p.initial_formatted, p.initial, p.currency) : null;
+  return { free: false, text, was: was || null, discount, currency: p.currency || null, source: 'Steam', url };
+}
+
+async function steamPriceFor(ctx, appId) {
+  if (!appId) return null;
+  try {
+    return (await steamAppDetails(ctx, appId)).price;
+  } catch (err) {
+    // Ein nicht erreichbarer Store kostet den Preis, nie das Fenster.
+    ctx.warn(`Steam-Preis (App ${appId}): ${err.message}`);
+    return null;
+  }
+}
+
+/* Der IGDB-Teil des Fensters aendert sich tagelang nicht und liegt darum
+   24 h im detailCache — ein Preis darf das nicht, sonst zeigt die Kachel
+   einen Sale, der laengst vorbei ist. Er wird deshalb erst hier
+   danebengelegt, auf einer Kopie: das gecachte Objekt bleibt preislos.
+   `steamAppId` ist Serversache und faellt dabei weg. */
+async function withPrice(ctx, game) {
+  if (!game) return game;
+  const { steamAppId: appId, ...rest } = game;
+  return { ...rest, price: await steamPriceFor(ctx, appId) };
+}
+
 function releaseDatesOf(game) {
   const out = [];
   for (const rd of (game.release_dates || [])) {
@@ -867,6 +970,9 @@ async function gameDetail(get, ctx, id) {
     date: isoOf(game.first_release_date),
     kind: GAME_TYPE_DE[game.game_type] || null,
     gamePass: null,
+    // Der Preis kommt nicht von hier, sondern aus withPrice() — siehe dort.
+    steamAppId: steamAppId(game),
+    price: null,
     cover: imageUrl(game.cover && game.cover.image_id, 't_cover_big_2x'),
     artwork: imageUrl(
       (game.artworks || [])[0] && game.artworks[0].image_id,
@@ -1338,7 +1444,7 @@ module.exports = {
       if (guard(res)) return;
       res.set('Cache-Control', 'no-store');
       try {
-        const game = await cached(detailCache, `game:${id}`, () => gameDetail(get, ctx, id));
+        const game = await withPrice(ctx, await cached(detailCache, `game:${id}`, () => gameDetail(get, ctx, id)));
         if (!game) return res.status(404).json({ ok: false, error: 'unknown_game' });
         res.json({ ok: true, game });
       } catch (err) { fail(res, err); }
@@ -1379,6 +1485,7 @@ module.exports = {
     SEARCH_SKIP, SEARCH_FETCH, normalizeText, searchTokens, scoreHit, tokenWildcardWhere,
     commonPrefix,
     imageTypeOf, groupReleases, sortByRelevance, clip,
+    steamAppId, steamPrice, formatMoney, steamPriceFor, withPrice,
     releasesForDay, searchGames, gameDetail, upcoming, getToken,
     // Fuer scripts/igdb-check.mjs: igdb() bringt Token-Refresh und Throttle mit.
     igdb, popularityFor, rankPopularity, dayRows,
