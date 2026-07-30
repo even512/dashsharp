@@ -436,6 +436,53 @@ head('Game Releases');
 
   is(gr.clip('a  b\n c') === 'a b c', 'Textaufbereitung: Leerraum wird normalisiert');
   is(gr.clip('x'.repeat(50), 10).length === 10, 'Textaufbereitung: lange Texte werden gekuerzt');
+
+  /* Preis. Zwei der drei Steam-Zustaende sind kein Fehler, sondern der
+     Normalfall — deshalb steht hier so viel Negativpruefung: eine fehlende
+     Zeile ist richtig, ein erfundener Preis waere es nie. Ohne Netz, die
+     Antworten sind nachgebaut. */
+  const over = (o) => ({ price_overview: { currency: 'EUR', ...o } });
+  const sale = gr.steamPrice(over({
+    initial: 5999, final: 4799, discount_percent: 20,
+    initial_formatted: '59,99€', final_formatted: '47,99€',
+  }), 892970);
+  is(sale.text === '47,99 €' && sale.was === '59,99 €' && sale.discount === 20,
+     'Preis: im Sale stehen Betrag, Streichpreis und Prozent nebeneinander');
+  is(sale.url === 'https://store.steampowered.com/app/892970/',
+     'Preis: der Store-Link zeigt auf die AppID');
+
+  /* Ohne Rabatt schickt Steam initial_formatted als leeren String. Wird das
+     uebernommen, steht ein Streichpreis in der Zeile, den es nicht gibt. */
+  const voll = gr.steamPrice(over({
+    initial: 5999, final: 5999, discount_percent: 0,
+    initial_formatted: '', final_formatted: '59,99€',
+  }), 1);
+  is(voll.text === '59,99 €' && voll.was === null && voll.discount === 0,
+     'Preis: ohne Rabatt gibt es keinen Streichpreis');
+
+  const frei = gr.steamPrice({ is_free: true }, 1);
+  is(frei.free === true && frei.text === null, 'Preis: Free-to-play meldet sich als kostenlos');
+  is(gr.steamPrice({}, 1) === null,
+     'Preis: ohne price_overview bleibt es bei null (Vorbestellung, Konsolentitel)');
+  is(gr.steamPrice(null, 1) === null, 'Preis: eine Antwort ohne Daten ergibt keine Angabe');
+
+  // Das Komma steht ebenfalls zwischen Ziffern — nur die Einheit darf
+  // abgetrennt werden, sonst wird aus 47,99€ ein "47 ,99€".
+  is(gr.formatMoney('47,99€') === '47,99 €', 'Preis: die Einheit wird abgetrennt, das Dezimalkomma nicht');
+  is(gr.formatMoney('1.234,56€') === '1.234,56 €', 'Preis: Tausenderpunkt bleibt unangetastet');
+  is(gr.formatMoney('$19.99') === '$19.99', 'Preis: eine vorangestellte Einheit bleibt, wie sie ist');
+  is(gr.formatMoney('', 4799, 'EUR') === new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(47.99),
+     'Preis: leerer Steam-String faellt auf die Cent-Rechnung zurueck');
+  is(gr.formatMoney('', 4799, 'XYZZY') === null,
+     'Preis: unbekannter Waehrungscode ergibt keine Angabe statt eines Fehlers');
+  is(gr.formatMoney('x'.repeat(80), 1, 'EUR').length === 24,
+     'Preis: uebermaessig lange Betraege werden gedeckelt');
+
+  is(gr.steamAppId({ external_games: [{ external_game_source: 5, uid: 'abc' }, { external_game_source: 1, uid: '892970' }] }) === '892970',
+     'Steam-AppID: nur der Steam-Eintrag mit numerischer uid zaehlt');
+  is(gr.steamAppId({ external_games: [{ external_game_source: 5, uid: '12' }] }) === null,
+     'Steam-AppID: ohne Steam-Eintrag bleibt es null');
+  is(gr.steamAppId({}) === null, 'Steam-AppID: ohne external_games bleibt es null');
 }
 
 /* ---------- 2d. Game Pass ----------

@@ -388,6 +388,13 @@ async function main() {
       ['Freigaben', (g.ageRatings || []).map((r) => `${r.org} ${r.value}`)],
       ['Stores', (g.stores || []).map((s) => s.label)],
     ]) if (v && v.length) console.log(`  ${k.padEnd(13)} ${v.join(', ')}`);
+    /* Kein Preis ist kein Fehler: er kommt von Steam, und ein reiner
+       Konsolen-Titel hat dort keine Seite. Die Zeile sagt trotzdem, was
+       Sache ist — sonst bleibt "wo ist der Preis?" von aussen unklar. */
+    const price = await I.steamPriceFor(ctx, g.steamAppId);
+    console.log(`  ${'Preis'.padEnd(13)} ${price
+      ? (price.free ? 'kostenlos' : `${price.text}${price.discount ? ` (-${price.discount} %${price.was ? `, statt ${price.was}` : ''})` : ''}`)
+      : `${C.dim}${g.steamAppId ? 'kein Store-Preis (Vorbestellung?)' : 'keine Steam-Seite'}${C.off}`}`);
     console.log(`  ${'Screenshots'.padEnd(13)} ${(g.screenshots || []).length}`);
     return;
   }
