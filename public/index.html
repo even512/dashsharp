@@ -988,6 +988,24 @@
             <div id="grSettingsBody"></div>
           </div>
 
+          <!-- TAB: YOUTUBE
+               Kanäle, Filter, Anti-Bubble-Themen und den optionalen API-Key
+               baut public/modules/youtube.js beim Öffnen des Tabs. Hier steht
+               nur die Hülle. -->
+          <div class="tab" data-tab="youtube">
+            <div class="cfg-row">
+              <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+                <span style="font:700 11px 'JetBrains Mono',monospace;color:#ff4d4d;min-width:22px;background:rgba(255,77,77,0.1);border-radius:4px;padding:2px 5px;text-align:center">YT</span>
+                <div>
+                  <div class="cfg-key">YouTube</div>
+                  <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">Abos · Benachrichtigungen · Anti-Bubble</div>
+                </div>
+              </div>
+              <span id="youtubeSettingsStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-status)">● –</span>
+            </div>
+            <div id="youtubeSettingsBody"></div>
+          </div>
+
           <!-- TAB: UNIFI / PROTECT -->
           <div class="tab" data-tab="unifi">
             <div class="cfg-section">UniFi / Protect</div>

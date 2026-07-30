@@ -12,6 +12,7 @@ config/dashboard.json
 config/disks.json
 config/quicklinks.json
 config/news.json
+config/youtube.json
 config/status.json
 config/vms.json
 config/icon-cache/
