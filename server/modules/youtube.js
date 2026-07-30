@@ -64,28 +64,31 @@ const MAX_CHANNELS = 100;
 const MAX_GROUPS = 30;
 const MAX_TOPICS = 20;
 const MAX_WATCHLATER = 200;
+const MAX_WATCHED = 500;        // gedeckelte „schon geschaut"-Historie (Video-Ids)
 const MAX_KEYWORDS = 40;
 
 /* Kuratierter Anti-Bubble-Pool: absichtlich breit gestreute Themen, damit die
-   Vorschlaege NICHT in der gewohnten Blase landen. Best effort — ein Kanal, der
-   nicht (mehr) erreichbar ist, wird beim Abruf einfach uebersprungen. Die
-   eigenen Themen des Nutzers ergaenzen diese Liste. */
+   Vorschlaege NICHT in der gewohnten Blase landen. Bewusst durchweg
+   deutschsprachig — die Discovery soll ausserhalb der Abos liegen, aber nicht
+   ausserhalb der Sprache. Best effort — ein Kanal, der nicht (mehr) erreichbar
+   ist, wird beim Abruf einfach uebersprungen. Die eigenen Themen des Nutzers
+   ergaenzen diese Liste. */
 const POOL = [
-  { id: 'UCsXVk37bltHxD1rDPwtNM8Q', name: 'Kurzgesagt',      topic: 'Wissenschaft' },
-  { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium',      topic: 'Wissenschaft' },
-  { id: 'UCYO_jab_esuFRV4b17AJtAw', name: '3Blue1Brown',     topic: 'Mathematik' },
-  { id: 'UCAuUUnT6oDeKwE6v1NGQxug', name: 'TED',             topic: 'Ideen' },
-  { id: 'UC2C_jShtL725hvbm1arSV9w', name: 'CGP Grey',        topic: 'Erklärvideos' },
-  { id: 'UCLA_DiR1FfKNvjuUpBHmylQ', name: 'NASA',            topic: 'Raumfahrt' },
-  { id: 'UCsooa4yRKGN_zEE8iknghZA', name: 'TED-Ed',         topic: 'Bildung' },
-  { id: 'UC6nSFpj9HTCZ5t-N3Rm3-HA', name: 'Vsauce',         topic: 'Wissenschaft' },
-  { id: 'UCX6b17PVsYBQ0ip5gyeme-Q', name: 'CrashCourse',     topic: 'Bildung' },
-  { id: 'UCbfYPyITQ-7l4upoX8nvctg', name: 'Two Minute Papers', topic: 'KI/Forschung' },
-  { id: 'UCUHW94eEFW7hkUMVaZz4eDg', name: 'MinutePhysics',   topic: 'Physik' },
-  { id: 'UC7_gcs09iThXybpVgjHZ_7g', name: 'PBS Space Time',  topic: 'Astrophysik' },
-  { id: 'UCEIwxahdLz7bap-VDs9h35A', name: 'Steve Mould',     topic: 'Experimente' },
-  { id: 'UCR1IuLEqb6UEA_zQ81kwXfg', name: 'Real Engineering', topic: 'Technik' },
-  { id: 'UCUcyEsEjhPEDf69RRVhRh4A', name: 'The Great War',    topic: 'Geschichte' },
+  { id: 'UC1Y7onDsPyfP-lu--SXF-ew', name: 'Quarks',                        topic: 'Wissenschaft' },
+  { id: 'UCwSJO-6HBrxyVtJyK897TyQ', name: 'Terra X',                        topic: 'Natur & Doku' },
+  { id: 'UC5E9-r42JlymhLPnDv2wHuA', name: 'Terra X Lesch & Co',            topic: 'Physik' },
+  { id: 'UClDnGiwSyTyu7gxO8X5U18g', name: 'Urknall, Weltall und das Leben', topic: 'Astrophysik' },
+  { id: 'UCEJDM_70A2EiRqZ41l6bZlg', name: '100SekundenPhysik',              topic: 'Physik' },
+  { id: 'UCesjlAoEgN_Sz_cKTvKEmmw', name: 'Doktor Whatson',                 topic: 'Zukunft' },
+  { id: 'UCE2hJ9CYR57BYhk3TjGVG6w', name: 'Breaking Lab',                   topic: 'Technik' },
+  { id: 'UCKGMHVipEvuZudhHD05FOYA', name: 'Simplicissimus',                 topic: 'Recherche' },
+  { id: 'UCZHpIFMfoJJ_1QxNGLJTzyA', name: 'MrWissen2go',                     topic: 'Politik' },
+  { id: 'UCsVWpmoRsNAWZb59b6Pt9Kg', name: 'MrWissen2go Geschichte',         topic: 'Geschichte' },
+  { id: 'UCLoWcRy-ZjA-Erh0p_VDLjQ', name: 'Y-Kollektiv',                    topic: 'Reportage' },
+  { id: 'UCfa7jJFYnn3P5LdJXsFkrjw', name: 'STRG_F',                         topic: 'Reportage' },
+  { id: 'UC_cCcxd8yUwIu1-rt5dpBdw', name: 'Die Merkhilfe',                  topic: 'Wirtschaft' },
+  { id: 'UCLLibJTCy3sXjHLVaDimnpQ', name: 'ARTE',                           topic: 'Kultur' },
+  { id: 'UCRwMtNziueImGTt_ihnGYpg', name: 'WELT Doku',                      topic: 'Doku' },
 ];
 
 /* ---------- kleine Helfer ---------- */
@@ -166,7 +169,7 @@ function shuffle(arr) {
 /* ---------- Konfiguration (config/youtube.json) ---------- */
 
 const EMPTY_CFG = () => ({
-  channels: [], groups: [], seen: {}, watchLater: [],
+  channels: [], groups: [], seen: {}, watchLater: [], watched: {},
   filters: { hideShorts: false, minDurationSec: 0, maxDurationSec: 0, keywordBlock: [], keywordAllow: [], includeLive: true },
   discovery: { pool: false, topics: [] },
 });
@@ -276,6 +279,22 @@ function sanitizeWatchLater(raw) {
   return out;
 }
 
+// „Geschaut"-Historie: Map videoId -> Zeitstempel (ms). Auf die neuesten
+// MAX_WATCHED gedeckelt, damit die Datei nicht unbegrenzt waechst.
+function sanitizeWatched(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const pairs = [];
+  for (const [id, ts] of Object.entries(src)) {
+    if (!VIDEO_ID_RE.test(id)) continue;
+    const t = Number.isFinite(+ts) ? +ts : 0;
+    pairs.push([id, t]);
+  }
+  pairs.sort((a, b) => b[1] - a[1]); // neueste zuerst
+  const out = {};
+  for (const [id, t] of pairs.slice(0, MAX_WATCHED)) out[id] = t;
+  return out;
+}
+
 function sanitizeCfg(raw) {
   const obj = raw && typeof raw === 'object' ? raw : {};
   const groups = sanitizeGroups(obj.groups);
@@ -300,6 +319,7 @@ function sanitizeCfg(raw) {
   return {
     channels, groups, seen,
     watchLater: sanitizeWatchLater(obj.watchLater),
+    watched: sanitizeWatched(obj.watched),
     filters: sanitizeFilters(obj.filters),
     discovery: sanitizeDiscovery(obj.discovery),
   };
@@ -545,6 +565,7 @@ async function refreshTopics(get, ctx, topics) {
   try {
     const d = await apiGet(get, ctx, 'search', {
       part: 'snippet', type: 'video', q: topic, order: 'relevance', maxResults: '10', safeSearch: 'moderate',
+      relevanceLanguage: 'de', regionCode: 'DE', // Discovery bleibt deutschsprachig
     });
     const items = (d.items || []).map((it) => ({
       videoId: it.id && it.id.videoId, title: decodeEntities(it.snippet.title || ''),
@@ -627,7 +648,7 @@ module.exports = {
       for (const v of f.videos) {
         const t = Date.parse(v.published) || 0;
         const isNew = seenT ? t > seenT : false;
-        if (isNew) perChannelNew.set(f.ch.id, (perChannelNew.get(f.ch.id) || 0) + 1);
+        if (isNew && !cfg.watched[v.videoId]) perChannelNew.set(f.ch.id, (perChannelNew.get(f.ch.id) || 0) + 1);
         items.push({
           videoId: v.videoId,
           title: v.title,
@@ -640,6 +661,7 @@ module.exports = {
           durationSec: null,
           live: 'none',
           isNew,
+          watched: !!cfg.watched[v.videoId],
         });
       }
     }
@@ -681,7 +703,8 @@ module.exports = {
       id: c.id, title: c.title, handle: c.handle, group: c.group || '',
       avatar: c.avatar ? imgRef(c.avatar) : '', unseen: perChannelNew.get(c.id) || 0,
     }));
-    const unseenCount = items.filter((v) => v.isNew).length;
+    // Ein bereits geschautes „neues" Video soll das Badge nicht mehr hochzaehlen.
+    const unseenCount = items.filter((v) => v.isNew && !v.watched).length;
 
     return {
       ok: true,
@@ -733,6 +756,7 @@ module.exports = {
           discovery: body.discovery != null ? body.discovery : cur.discovery,
           watchLater: body.watchLater != null ? body.watchLater : cur.watchLater,
           seen: { ...cur.seen, ...(body.seen && typeof body.seen === 'object' ? body.seen : {}) },
+          watched: { ...cur.watched, ...(body.watched && typeof body.watched === 'object' ? body.watched : {}) },
         };
         const clean = writeCfg(merged);
         reload();
@@ -784,6 +808,32 @@ module.exports = {
         res.json({ ok: true });
       } catch (err) {
         res.status(500).json({ ok: false, error: 'seen_failed', message: err.message });
+      }
+    });
+
+    // --- „Schon geschaut" pro Video (dashboard-lokal, unabhaengig von YouTube) ---
+    app.post('/api/youtube/watched', (req, res) => {
+      try {
+        const body = req.body || {};
+        const action = String(body.action || '');
+        const videoId = String(body.videoId || '');
+        if (!VIDEO_ID_RE.test(videoId)) return res.status(400).json({ ok: false, error: 'bad_video' });
+        const cfg = readCfg();
+        const watched = { ...cfg.watched };
+        if (action === 'add') {
+          watched[videoId] = Date.now();
+        } else if (action === 'remove') {
+          delete watched[videoId];
+        } else if (action === 'toggle') {
+          if (watched[videoId]) delete watched[videoId]; else watched[videoId] = Date.now();
+        } else {
+          return res.status(400).json({ ok: false, error: 'bad_action' });
+        }
+        writeCfg({ ...cfg, watched });
+        reload();
+        res.json({ ok: true, watched: !!watched[videoId] });
+      } catch (err) {
+        res.status(500).json({ ok: false, error: 'watched_failed', message: err.message });
       }
     });
 

@@ -2117,6 +2117,10 @@ body.gr-scroll-locked {
 }
 .yt-row:hover,
 .yt-row:focus-visible { background: var(--accent-subtle); outline: none; }
+/* Geschaut: nur sichtbar, wenn „Geschaute ausblenden" aus ist — dezent ausgegraut. */
+.yt-row.yt-watched { opacity: .5; }
+.yt-row.yt-watched:hover,
+.yt-row.yt-watched:focus-visible { opacity: 1; }
 .yt-list.tile-list { gap: 8px; }
 
 .yt-thumb {
@@ -2167,6 +2171,14 @@ body.gr-scroll-locked {
   font: 700 9px 'JetBrains Mono', monospace;
   letter-spacing: .05em;
 }
+.yt-seen {
+  display: none;
+  flex-shrink: 0;
+  color: var(--green, #3ddc97);
+  font: 700 9px 'JetBrains Mono', monospace;
+  letter-spacing: .03em;
+}
+.yt-watched .yt-seen { display: inline; }
 .yt-chan { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .yt-time { flex-shrink: 0; }
 
