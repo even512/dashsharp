@@ -394,6 +394,12 @@ function renderStatus() {
 }
 
 function renderClaude(d) {
+  // Klick-/Keydown-Listener aufhaengen. Muss hier passieren (nicht nur in
+  // refresh): im Push-Modus ruft der SSE-Hub nur den Handler (renderClaude) auf,
+  // refresh() wird uebersprungen (_refreshActivePageWidgets bricht bei aktivem
+  // Push frueh ab). Ohne das blieben Senden, Enter und die Menues tot.
+  // wireClaude() ist idempotent (_clWired), Doppelaufruf ueber refresh schadet nicht.
+  wireClaude();
   if (!clRoot()) return;
   if (!d || !d.ok) {
     CL.configured = false;
