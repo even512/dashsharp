@@ -43,11 +43,24 @@ function ytWatchUrl(id) { return `https://www.youtube.com/watch?v=${encodeURICom
 
 /* ---------- Haupt-Feed (diffList) ---------- */
 
+// Zeitfenster für den „tagesaktuell"-Filter -> früheste erlaubte Veröffentlichung (ms).
+function _ytAgeCutoff(mode) {
+  const now = Date.now();
+  if (mode === 'today') return new Date().setHours(0, 0, 0, 0); // seit Mitternacht (lokal)
+  if (mode === '24h') return now - 24 * 60 * 60 * 1000;
+  if (mode === '7d') return now - 7 * 24 * 60 * 60 * 1000;
+  return null; // 'Alle'
+}
+
 function _ytFeedItems(data) {
   const group = String(_cfgVal('youtube', 'group') || '');
   let items = data.items || [];
-  if (group === '__unseen') items = items.filter((v) => v.isNew);
+  if (group === '__unseen') items = items.filter((v) => v.isNew && !v.watched);
   else if (group) items = items.filter((v) => v.group === group);
+  // Geschaute standardmäßig ausblenden (per Kachel-Option abschaltbar).
+  if (_cfgVal('youtube', 'hideWatched') !== false) items = items.filter((v) => !v.watched);
+  const cutoff = _ytAgeCutoff(String(_cfgVal('youtube', 'age') || ''));
+  if (cutoff != null) items = items.filter((v) => (Date.parse(v.published) || 0) >= cutoff);
   return _cfgLimit('youtube', 'maxRows', items);
 }
 
@@ -60,7 +73,7 @@ function _ytCreateRow() {
     '<div class="yt-thumb"><img alt="" loading="lazy"><span class="yt-dur"></span><span class="yt-live-dot"></span></div>'
     + '<div class="yt-main">'
     + '<div class="yt-title"></div>'
-    + '<div class="yt-meta"><span class="yt-new">NEU</span><span class="yt-chan"></span><span class="yt-time"></span></div>'
+    + '<div class="yt-meta"><span class="yt-new">NEU</span><span class="yt-seen">✓ geschaut</span><span class="yt-chan"></span><span class="yt-time"></span></div>'
     + '</div>';
   row._img = row.querySelector('img');
   row._dur = row.querySelector('.yt-dur');
@@ -82,7 +95,8 @@ function _ytUpdateRow(row, v, prev) {
   if (!prev || prev.channel !== v.channel) row._chan.textContent = v.channel;
   const when = ytWhen(v.published);
   if (row._time.textContent !== when) row._time.textContent = when;
-  if (!prev || prev.isNew !== v.isNew) row._new.style.display = v.isNew ? '' : 'none';
+  if (!prev || prev.isNew !== v.isNew || prev.watched !== v.watched) row._new.style.display = (v.isNew && !v.watched) ? '' : 'none';
+  if (!prev || prev.watched !== v.watched) row.classList.toggle('yt-watched', !!v.watched);
   const dur = v.live === 'live' ? 'LIVE' : v.live === 'upcoming' ? 'PREMIERE' : ytDuration(v.durationSec);
   if (row._dur.textContent !== dur) {
     row._dur.textContent = dur;
@@ -262,6 +276,30 @@ async function ytWatchLater(action, video) {
   } catch { /* egal */ }
 }
 
+// „Schon geschaut" pro Video setzen. action: 'add' | 'remove' | 'toggle'.
+// Automatisch beim Abspielen/Öffnen ('add'), manuell über den Haken ('toggle').
+async function ytSetWatched(videoId, action) {
+  if (!videoId) return;
+  try {
+    const r = await fetch('/api/youtube/watched', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, videoId }),
+    });
+    const d = await r.json();
+    if (d && d.ok) ytApplyWatched(videoId, !!d.watched);
+  } catch { /* egal */ }
+}
+
+// Lokalen Zustand nachziehen, damit der Feed sofort reagiert (Video verschwindet
+// bei aktivem „Geschaute ausblenden", sonst grau) — ohne auf den nächsten Poll zu warten.
+function ytApplyWatched(videoId, watched) {
+  if (_ytData && Array.isArray(_ytData.items)) {
+    for (const it of _ytData.items) if (it.videoId === videoId) it.watched = watched;
+    renderYoutube(null);
+  }
+  if (_ytVideo && _ytVideo.videoId === videoId) { _ytVideo.watched = watched; ytUpdateSeenBtn(); }
+}
+
 /* ---------- Detailfenster + Player ---------- */
 
 function _buildYtModal() {
@@ -281,6 +319,7 @@ function _buildYtModal() {
     + '<p id="ytModalDesc" class="yt-modal-desc"></p>'
     + '</div>'
     + '<div class="yt-modal-foot">'
+    + '<button id="ytModalSeen" class="cfg-btn">○ Als geschaut</button>'
     + '<button id="ytModalWatch" class="cfg-btn">＋ Merkliste</button>'
     + '<a id="ytModalLink" class="cfg-btn" target="_blank" rel="noopener noreferrer">Auf YouTube öffnen ↗</a>'
     + '</div>'
@@ -295,6 +334,10 @@ function _buildYtModal() {
     const inList = (_ytData && _ytData.watchLater || []).some((w) => w.videoId === _ytVideo.videoId);
     ytWatchLater(inList ? 'remove' : 'add', _ytVideo);
   });
+  // Manueller Haken „geschaut".
+  modal.querySelector('#ytModalSeen').addEventListener('click', () => { if (_ytVideo) ytSetWatched(_ytVideo.videoId, 'toggle'); });
+  // „Auf YouTube öffnen" zählt als geschaut (der Link öffnet trotzdem den neuen Tab).
+  modal.querySelector('#ytModalLink').addEventListener('click', () => { if (_ytVideo) ytSetWatched(_ytVideo.videoId, 'add'); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && _ytVideo) closeYtVideo(); });
   document.body.appendChild(modal);
   return modal;
@@ -305,6 +348,14 @@ function ytUpdateWatchBtn(list) {
   if (!btn || !_ytVideo) return;
   const inList = (list || []).some((w) => w.videoId === _ytVideo.videoId);
   btn.textContent = inList ? '✓ In Merkliste' : '＋ Merkliste';
+}
+
+function ytUpdateSeenBtn() {
+  const btn = $('ytModalSeen');
+  if (!btn || !_ytVideo) return;
+  const on = !!_ytVideo.watched;
+  btn.textContent = on ? '✓ Geschaut' : '○ Als geschaut';
+  btn.title = on ? 'Als ungeschaut markieren' : 'Als geschaut markieren';
 }
 
 function openYtVideo(v) {
@@ -331,6 +382,7 @@ function openYtVideo(v) {
   setText('ytModalSponsor', '');
   $('ytModalLink').href = ytWatchUrl(v.videoId);
   ytUpdateWatchBtn(_ytData && _ytData.watchLater || []);
+  ytUpdateSeenBtn();
 
   modal.style.display = 'flex';
   requestAnimationFrame(() => { modal.classList.add('open'); const c = modal.querySelector('.picker-close'); if (c) c.focus(); });
@@ -342,6 +394,7 @@ function ytPlayEmbedded() {
   if (!_ytVideo) return;
   const player = $('ytModalPlayer');
   if (!player) return;
+  ytSetWatched(_ytVideo.videoId, 'add'); // Abspielen zählt als geschaut
   const frame = document.createElement('iframe');
   frame.className = 'yt-embed';
   frame.setAttribute('allow', 'accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture');
@@ -764,7 +817,10 @@ Dash.registerModule({
 
   options: [
     { key: 'group', label: 'Ansicht', type: 'select', default: '', options: _ytGroupOptions, group: 'Auswahl' },
+    { key: 'age', label: 'Zeitraum', type: 'select', default: '', group: 'Auswahl',
+      options: [{ v: '', l: 'Alle' }, { v: 'today', l: 'Heute' }, { v: '24h', l: 'Letzte 24 h' }, { v: '7d', l: 'Letzte 7 Tage' }] },
     { key: 'maxRows', label: 'Max. Videos', type: 'count', default: 0, group: 'Auswahl' },
+    { key: 'hideWatched', label: 'Geschaute ausblenden', type: 'toggle', default: true, filter: true, group: 'Auswahl' },
     { key: 'list', label: 'Video-Liste', type: 'toggle', default: true, group: 'Anzeige' },
     { key: 'live', label: 'Live & Premieren', type: 'toggle', default: true, filter: true, group: 'Anzeige' },
     { key: 'discovery', label: 'Anti-Bubble', type: 'toggle', default: true, filter: true, group: 'Anzeige' },
