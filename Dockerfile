@@ -40,7 +40,12 @@ RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
 # „ping_unavailable" und faellt automatisch auf einen TCP-Reachability-Check
 # zurueck (siehe checkService in server.js) — HTTP- und host:port-Ziele sind
 # davon ohnehin nicht betroffen.
-RUN apk add --no-cache su-exec && mkdir -p /app/config
+# su-exec fuer den Rechte-Wechsel im Entrypoint. ripgrep zusaetzlich fuer die
+# Claude-Kachel: das gebuendelte @anthropic-ai/claude-agent-sdk (Claude Code)
+# bringt ein eigenes rg mit, das gegen glibc gelinkt ist und auf Alpine (musl)
+# nicht laeuft — USE_BUILTIN_RIPGREP=0 laesst es das System-rg nutzen.
+RUN apk add --no-cache su-exec ripgrep && mkdir -p /app/config
+ENV USE_BUILTIN_RIPGREP=0
 
 EXPOSE 3000
 

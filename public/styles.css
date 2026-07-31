@@ -2301,3 +2301,99 @@ body.gr-scroll-locked {
 }
 .yt-chip-x { width: 16px; height: 16px; border-radius: 50%; border: 0; background: transparent; color: var(--text-3); cursor: pointer; font-size: 12px; line-height: 1; }
 .yt-chip-x:hover { color: var(--red); }
+
+/* ============================================================================
+   Claude-Kachel (public/modules/claude.js)
+   ----------------------------------------------------------------------------
+   Chat in der Kachel: Kopf mit Thread-/Modell-Menue und Status, scrollbarer
+   Nachrichtenbereich, Eingabezeile, und unten links die Usage-Leisten
+   (5h + Woche). Akzent: Claude-Orange.
+   ========================================================================== */
+
+.claude-tile { --cl-accent: #d97757; gap: 10px; }
+.claude-head { position: relative; }
+.claude-head-actions, .claude-head > .claude-head-actions { display: inline-flex; }
+.claude-head span.claude-head-actions { display: inline-flex; align-items: center; gap: 6px; }
+
+.claude-btn {
+  border: 1px solid var(--border-2); background: var(--bg-glass); color: var(--text-2);
+  border-radius: 7px; padding: 3px 8px; cursor: pointer; line-height: 1;
+  font: 500 12px 'JetBrains Mono', monospace;
+}
+.claude-btn:hover { border-color: var(--cl-accent); color: var(--text); }
+.claude-model-btn { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.claude-status { font-size: 12px; color: var(--text-3); }
+
+.claude-menu {
+  position: absolute; top: 100%; right: 0; margin-top: 6px; z-index: 20;
+  min-width: 200px; max-width: 280px; max-height: 320px; overflow-y: auto;
+  background: var(--bg-glass); border: 1px solid var(--border-2); border-radius: 9px;
+  padding: 5px; display: flex; flex-direction: column; gap: 2px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  backdrop-filter: blur(8px);
+}
+.claude-menu[hidden] { display: none; }
+.claude-menu-item {
+  border: 0; background: transparent; color: var(--text-2); text-align: left;
+  padding: 6px 8px; border-radius: 6px; cursor: pointer; width: 100%;
+  font: 500 12px 'JetBrains Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.claude-menu-item:hover { background: var(--accent-subtle); color: var(--text); }
+.claude-menu-item.active { color: var(--cl-accent); }
+.claude-menu-new { color: var(--cl-accent); border-bottom: 1px solid var(--border-2); border-radius: 0; margin-bottom: 3px; }
+.claude-thread-row { display: flex; align-items: center; gap: 4px; padding: 0; }
+.claude-thread-open { flex: 1; border: 0; background: transparent; color: inherit; text-align: left; padding: 6px 8px; border-radius: 6px; cursor: pointer; font: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.claude-thread-row:hover { background: var(--accent-subtle); }
+.claude-thread-row.active .claude-thread-open { color: var(--cl-accent); }
+.claude-thread-del { border: 0; background: transparent; color: var(--text-3); cursor: pointer; padding: 4px 6px; font-size: 11px; }
+.claude-thread-del:hover { color: var(--red); }
+
+.claude-messages {
+  flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;
+  padding-right: 4px;
+}
+.claude-empty { color: var(--text-3); font-size: 13px; margin: auto; }
+
+.claude-bubble { max-width: 100%; border-radius: 10px; padding: 8px 11px; font-size: 13px; line-height: 1.5; }
+.claude-user { align-self: flex-end; background: var(--accent-subtle); border: 1px solid var(--accent-border); color: var(--text); }
+.claude-assistant { align-self: flex-start; background: var(--bg-glass); border: 1px solid var(--border-2); color: var(--text-2); }
+.claude-bubble.claude-error { border-color: var(--red); color: var(--red); }
+.claude-streaming::after { content: '▋'; color: var(--cl-accent); animation: claude-blink 1s steps(2) infinite; }
+@keyframes claude-blink { 50% { opacity: 0; } }
+
+.claude-md p { margin: 0 0 6px; }
+.claude-md p:last-child { margin-bottom: 0; }
+.claude-md h3, .claude-md h4, .claude-md h5, .claude-md h6 { margin: 8px 0 4px; font-size: 13px; color: var(--text); }
+.claude-md ul, .claude-md ol { margin: 4px 0 6px; padding-left: 20px; }
+.claude-md li { margin: 2px 0; }
+.claude-md a { color: var(--cl-accent); text-decoration: underline; }
+.claude-code-inline { background: var(--accent-subtle); border: 1px solid var(--border-2); border-radius: 4px; padding: 0 4px; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+.claude-code { position: relative; margin: 6px 0; }
+.claude-code pre { background: rgba(0,0,0,0.28); border: 1px solid var(--border-2); border-radius: 8px; padding: 10px; overflow-x: auto; margin: 0; }
+.claude-code code { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-2); white-space: pre; }
+.claude-copy { position: absolute; top: 6px; right: 6px; border: 1px solid var(--border-2); background: var(--bg-glass); color: var(--text-3); border-radius: 6px; padding: 2px 7px; font: 500 10px 'JetBrains Mono', monospace; cursor: pointer; }
+.claude-copy:hover { color: var(--cl-accent); border-color: var(--cl-accent); }
+
+.claude-notice { flex-shrink: 0; color: #ffb454; font-size: 12px; }
+.claude-notice[hidden] { display: none; }
+
+.claude-input-row { flex-shrink: 0; display: flex; align-items: flex-end; gap: 8px; }
+.claude-input {
+  flex: 1; resize: none; max-height: 120px; min-height: 34px;
+  background: var(--bg-glass); border: 1px solid var(--border-2); border-radius: 9px;
+  color: var(--text); padding: 8px 10px; font: 400 13px 'JetBrains Mono', monospace; line-height: 1.4;
+}
+.claude-input:focus { outline: none; border-color: var(--cl-accent); }
+.claude-send {
+  flex-shrink: 0; width: 36px; height: 34px; border-radius: 9px; border: 1px solid var(--cl-accent);
+  background: var(--cl-accent); color: #fff; cursor: pointer; font-size: 15px; line-height: 1;
+}
+.claude-send:disabled { opacity: 0.5; cursor: default; }
+
+.claude-footer { flex-shrink: 0; display: flex; justify-content: flex-start; gap: 16px; flex-wrap: wrap; }
+.claude-footer[hidden] { display: none; }
+.claude-usage { display: inline-flex; align-items: center; gap: 6px; font: 500 11px 'JetBrains Mono', monospace; color: var(--text-3); }
+.claude-usage-label { min-width: 34px; }
+.claude-bar { width: 84px; height: 6px; border-radius: 4px; background: var(--border-2); overflow: hidden; }
+.claude-bar-fill { display: block; height: 100%; width: 0; background: var(--green); transition: width 0.4s ease, background 0.4s ease; }
+.claude-bar-val { min-width: 44px; color: var(--text-2); }
