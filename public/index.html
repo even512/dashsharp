@@ -1006,6 +1006,24 @@
             <div id="youtubeSettingsBody"></div>
           </div>
 
+          <!-- TAB: CLAUDE
+               Das Token-Feld und den Verbindungsstatus baut
+               public/modules/claude.js beim Öffnen des Tabs. Hier steht nur
+               die Hülle. -->
+          <div class="tab" data-tab="claude">
+            <div class="cfg-row">
+              <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+                <span style="font:700 11px 'JetBrains Mono',monospace;color:#d97757;min-width:22px;background:rgba(217,119,87,0.12);border-radius:4px;padding:2px 5px;text-align:center">CL</span>
+                <div>
+                  <div class="cfg-key">Claude</div>
+                  <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">Chat über dein Abo · 5h-/Weekly-Limit</div>
+                </div>
+              </div>
+              <span id="claudeSettingsStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-status)">● –</span>
+            </div>
+            <div id="claudeSettingsBody"></div>
+          </div>
+
           <!-- TAB: UNIFI / PROTECT -->
           <div class="tab" data-tab="unifi">
             <div class="cfg-section">UniFi / Protect</div>

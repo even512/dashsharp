@@ -464,6 +464,83 @@ function copyCode(btn) {
   else done();
 }
 
+/* ---------- Einstellungen (Settings → Module → Claude) ---------- */
+
+function setClaudeSettingsStatus(text, color) {
+  const el = document.getElementById('claudeSettingsStatus');
+  if (!el) return;
+  el.textContent = text; el.style.color = color;
+}
+
+async function refreshClaudeSettingsStatus() {
+  try {
+    const d = await fetch('/api/claude', { cache: 'no-store' }).then((r) => r.json());
+    if (!d || !d.ok) { setClaudeSettingsStatus('● nicht verbunden', '#ffb454'); return; }
+    if (d.connected) setClaudeSettingsStatus('● verbunden', '#3ddc97');
+    else setClaudeSettingsStatus('● Token gesetzt, Verbindung fehlgeschlagen', '#ffb454');
+  } catch { setClaudeSettingsStatus('● –', 'var(--text-3)'); }
+}
+
+async function loadClaudeSettings() {
+  const body = document.getElementById('claudeSettingsBody');
+  if (!body) return;
+  body.innerHTML = '';
+
+  const sec = document.createElement('div');
+  sec.className = 'cfg-section';
+  sec.textContent = 'Abo-Token (Claude Pro/Max)';
+  body.appendChild(sec);
+
+  const row = document.createElement('div');
+  row.className = 'news-cfg-add';
+  const input = document.createElement('input');
+  input.className = 'cfg-input'; input.type = 'password'; input.placeholder = 'Token einfügen'; input.autocomplete = 'off';
+  const save = document.createElement('button');
+  save.className = 'cfg-btn'; save.textContent = '↵ Speichern';
+  row.append(input, save);
+  body.appendChild(row);
+
+  const hint = document.createElement('div');
+  hint.className = 'tile-settings-hint'; hint.style.lineHeight = '1.7';
+  hint.innerHTML = 'Die Kachel nutzt dein <b>Claude-Abo</b>, nicht einen pro-Token-API-Key — nur so zählen die '
+    + 'Anfragen gegen dein 5h-/Weekly-Limit (die Werte unten links in der Kachel). '
+    + 'Token einmalig auf einer Maschine erzeugen, die in deinem Abo eingeloggt ist:'
+    + '<br><code>claude setup-token</code><br>und den ausgegebenen Wert hier einfügen. '
+    + 'Alternativ per Umgebungsvariable <code>CLAUDE_CODE_OAUTH_TOKEN</code> (hat Vorrang).';
+  body.appendChild(hint);
+
+  // aktuellen Zustand des Secrets laden (maskiert / per Env gesperrt)
+  try {
+    const s = await fetch('/api/secrets', { cache: 'no-store' }).then((r) => r.json());
+    if ((s._env || []).includes('CLAUDE_CODE_OAUTH_TOKEN')) {
+      input.readOnly = true; input.style.opacity = '.6';
+      input.title = 'Kommt aus der Umgebung und hat Vorrang';
+      input.placeholder = 'per Umgebungsvariable gesetzt';
+    } else if (s.CLAUDE_CODE_OAUTH_TOKEN === '***') {
+      input.placeholder = 'gespeichert — neu eingeben zum Ändern';
+    }
+  } catch { /* Feld bleibt leer */ }
+
+  refreshClaudeSettingsStatus();
+
+  save.addEventListener('click', async () => {
+    if (input.readOnly) return;
+    setClaudeSettingsStatus('● speichert …', 'var(--text-3)');
+    try {
+      const r = await fetch('/api/secrets', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ CLAUDE_CODE_OAUTH_TOKEN: input.value.trim() }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      input.value = '';
+      input.placeholder = 'gespeichert — neu eingeben zum Ändern';
+      setClaudeSettingsStatus('● gespeichert', '#3ddc97');
+      setTimeout(refreshClaudeSettingsStatus, 1500);
+      pollClaude();
+    } catch { setClaudeSettingsStatus('● Fehler', '#f43f5e'); }
+  });
+}
+
 /* ---------- Registrierung ---------- */
 
 Dash.registerModule({
@@ -509,5 +586,5 @@ Dash.registerModule({
     { key: 'usage', label: 'Nutzungsanzeige', type: 'toggle', default: true },
   ],
 
-  settings: { badge: 'CL', color: '#d97757', statusEl: 'claudeSettingsStatus' },
+  settings: { badge: 'CL', color: '#d97757', statusEl: 'claudeSettingsStatus', load: loadClaudeSettings },
 });
