@@ -622,8 +622,6 @@ module.exports = {
 
   async fetch(get, ctx) {
     const cfg = readCfg();
-    _imgPrev = _imgCur;
-    _imgCur = new Map();
 
     // 1) Abo-Feeds je Kanal (RSS, gratis).
     const feeds = await mapLimit(cfg.channels, FETCH_CONCURRENCY, async (ch) => {
@@ -635,6 +633,29 @@ module.exports = {
         return { ch, videos: [], title: ch.title, error: err.message };
       }
     });
+
+    // Transiente Totalstoerung abfangen: anders als bei der News-Kachel liegen
+    // ALLE Abo-Feeds auf EINEM Host (youtube.com). Ein Rate-Limit oder ein
+    // kurzer Netz-Haenger dort laesst deshalb nicht einzelne, sondern gleich
+    // saemtliche Kanal-Feeds auf einmal scheitern. Ohne diese Pruefung liefe der
+    // Abruf trotzdem als "erfolgreich" mit items:[] durch, wuerde fuer die volle
+    // TTL (10 min) gecacht — und die Kachel bliebe grundlos leer, bis der Cache
+    // ablaeuft oder ein Settings-Save (invalidate+refresh, z. B. der
+    // Shorts-Schalter) einen frischen Abruf erzwingt. Stattdessen werfen, damit
+    // die Registry den _stale-Fallback zieht (letzter guter Stand, im Badge als
+    // "stale" markiert) und das leere Ergebnis gar nicht erst zwischenspeichert.
+    // Nur werfen, wenn es Kanaele gibt UND jeder einzelne einen Fehler meldet —
+    // ein Kanal, der schlicht (noch) keine Videos hat, traegt keinen `error` und
+    // gilt weiter als legitim leer.
+    if (cfg.channels.length && feeds.every((f) => f.error)) {
+      throw new Error(`alle ${feeds.length} Kanal-Feeds nicht erreichbar (z. B. ${feeds[0].error})`);
+    }
+
+    // Ab hier gilt der Abruf als brauchbar — jetzt erst die Bild-Generation
+    // rotieren (die vorige bleibt eine Runde gueltig, damit ein offenes
+    // Detailfenster ueber den Refresh hinweg sein Bild behaelt).
+    _imgPrev = _imgCur;
+    _imgCur = new Map();
 
     // Kanaltitel/Avatare fuer die Anzeige registrieren.
     for (const f of feeds) if (f.ch.avatar) imgRef(f.ch.avatar);
