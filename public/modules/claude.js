@@ -341,13 +341,22 @@ async function send() {
   // So ist die Anzeige vom netzwerkseitigen Wortgruppen-Takt entkoppelt und
   // schon während des Tippens sauber strukturiert. Das Tempo ist adaptiv: je
   // größer der Rückstand, desto schneller — hängt am Ende also nie lange nach.
-  const TYPE_BASE = 3;     // Basis-Zeichen pro Frame (~ ruhiges Grundtempo)
-  const TYPE_CATCHUP = 7;  // Divisor: großer Rückstand → mehr Zeichen pro Frame
+  // Zeitbasiertes, gleichmäßiges Tempo: unabhängig von der Framerate werden pro
+  // Sekunde konstant CPS_BASE Zeichen freigegeben — im Normalfall also ~1 Zeichen
+  // pro Frame, was sich wirklich flüssig „Buchstabe für Buchstabe" liest. Bei
+  // großem Rückstand steigt das Tempo nur sanft (bis CPS_MAX) und pro Frame werden
+  // NIE mehr als STEP_MAX Zeichen aufgedeckt → keine Wortgruppen-Sprünge mehr.
+  const CPS_BASE = 55;   // Grundtempo (Zeichen/Sekunde)
+  const CPS_MAX = 110;   // Obergrenze, falls die Anzeige weit hinterherhinkt
+  const STEP_MAX = 2;    // harte Deckelung Zeichen pro Frame (Smoothness-Garantie)
+  const DT_MAX = 0.05;   // Zeitschritt deckeln (verhindert Bursts nach Tab-Wechsel)
   let target = '';         // vollständig empfangener Roh-Text
   let shown = 0;           // bereits sichtbare Zeichen
   let ended = false;       // Stream abgeschlossen (done)
   let finalize = null;     // Schluss-Render, sobald alles sichtbar ist
   let rafId = 0;
+  let carry = 0;           // aufgelaufener Sub-Zeichen-Bruchteil
+  let lastTs = 0;          // Zeitstempel des letzten Frames
 
   const CARET = '<span class="claude-caret"></span>';
   const paintStream = () => {
@@ -360,17 +369,24 @@ async function send() {
     bubble.innerHTML = html;
     scrollMessages();
   };
-  const typeTick = () => {
+  const typeTick = (ts) => {
     rafId = 0;
+    if (!lastTs) lastTs = ts;
+    const dt = Math.min((ts - lastTs) / 1000, DT_MAX);
+    lastTs = ts;
     const backlog = target.length - shown;
     if (backlog > 0) {
-      let step = Math.max(TYPE_BASE, Math.ceil(backlog / TYPE_CATCHUP));
-      if (ended) step = Math.max(step, Math.ceil(backlog / 2)); // am Ende zügig leertippen
-      shown = Math.min(target.length, shown + step);
-      paintStream();
+      // Tempo steigt nur sanft mit dem Rückstand, bleibt aber gedeckelt.
+      const rate = Math.min(CPS_MAX, CPS_BASE + backlog * 0.25);
+      carry += dt * rate;
+      let step = Math.floor(carry);
+      if (step >= STEP_MAX) { step = STEP_MAX; carry = 0; } else { carry -= step; }
+      if (step > 0) { shown = Math.min(target.length, shown + step); paintStream(); }
+    } else {
+      carry = 0;
     }
-    if (shown < target.length) rafId = requestAnimationFrame(typeTick);
-    else if (ended && finalize) { const f = finalize; finalize = null; f(); }
+    if (shown < target.length) { rafId = requestAnimationFrame(typeTick); }
+    else { lastTs = 0; if (ended && finalize) { const f = finalize; finalize = null; f(); } }
   };
   const pumpType = () => { if (!rafId && shown < target.length) rafId = requestAnimationFrame(typeTick); };
   const stopType = () => { if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } };
