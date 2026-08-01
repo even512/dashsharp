@@ -2358,7 +2358,9 @@ body.gr-scroll-locked {
 .claude-user { align-self: flex-end; background: var(--accent-subtle); border: 1px solid var(--accent-border); color: var(--text); }
 .claude-assistant { align-self: flex-start; background: var(--bg-glass); border: 1px solid var(--border-2); color: var(--text-2); }
 .claude-bubble.claude-error { border-color: var(--red); color: var(--red); }
-.claude-streaming::after { content: '▋'; color: var(--cl-accent); animation: claude-blink 1s steps(2) infinite; }
+/* Tipp-Cursor beim Streaming: als inline-Span ans Ende der letzten Textzeile
+   gesetzt (siehe paintStream), damit er im Textfluss statt auf einer neuen Zeile steht. */
+.claude-caret::after { content: '▋'; color: var(--cl-accent); animation: claude-blink 1s steps(2) infinite; margin-left: 1px; }
 @keyframes claude-blink { 50% { opacity: 0; } }
 
 .claude-md p { margin: 0 0 6px; }

@@ -37,8 +37,19 @@ function clq(sel) { const r = clRoot(); return r ? r.querySelector(sel) : null; 
    ersetzt, dann der Rest escaped und formatiert, dann die Code-Blöcke escaped
    wieder eingesetzt. So kann nichts aus der Modell-Ausgabe als Markup wirken. */
 
-function renderMarkdown(src) {
-  const text = String(src == null ? '' : src);
+function renderMarkdown(src, streaming) {
+  let text = String(src == null ? '' : src);
+
+  // Streaming: der Text endet ständig mitten in einem Markdown-Zeichen. Einen
+  // noch offenen Code-Block (ungerade Zahl an ```-Fences) temporär schließen,
+  // damit er sofort als Code-Block gerendert und live gefüllt wird. Der Index
+  // dieses noch offenen Blocks bekommt später keinen Kopier-Button.
+  let hadOpenFence = false;
+  if (streaming && ((text.match(/```/g) || []).length % 2 === 1)) {
+    text += '\n```';
+    hadOpenFence = true;
+  }
+
   const codeBlocks = [];
   // ```lang\n ... ```
   let s = text.replace(/```([^\n`]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
@@ -46,6 +57,11 @@ function renderMarkdown(src) {
     codeBlocks.push({ lang: String(lang || '').trim(), code });
     return ` CODE${i} `;
   });
+  // Der zuletzt erfasste Block stammt vom synthetischen Schluss-Fence → offen.
+  const openFenceIndex = hadOpenFence ? codeBlocks.length - 1 : -1;
+  if (streaming) {
+    s = hideDanglingMarkdown(s); // offene Inline-Marker am Textende kaschieren
+  }
 
   s = esc(s); // ab hier ist alles escaped
 
@@ -79,9 +95,10 @@ function renderMarkdown(src) {
       out.push(`<li>${m[1]}</li>`);
     } else if (/^\s*CODE\d+\s*$/.test(line)) {
       // Eigenständige Code-Block-Zeile: nicht in <p> wickeln (Platzhalter wird
-      // später durch das <div.claude-code> ersetzt).
+      // später durch das <div.claude-code> ersetzt). Die umgebenden Leerzeichen
+      // MÜSSEN erhalten bleiben, sonst greift die Wiedereinsetzung (/ CODE\d+ /) nicht.
       closeList();
-      out.push(line.trim());
+      out.push(` ${line.trim()} `);
     } else if (line.trim() === '') {
       closeList();
       out.push('');
@@ -95,12 +112,41 @@ function renderMarkdown(src) {
 
   // Code-Blöcke wieder einsetzen (Inhalt escaped, mit Kopier-Button).
   html = html.replace(/ CODE(\d+) /g, (_, i) => {
-    const b = codeBlocks[Number(i)];
+    const idx = Number(i);
+    const b = codeBlocks[idx];
     if (!b) return '';
-    return `<div class="claude-code"><button class="claude-copy" data-claude="copy" type="button">Kopieren</button>`
+    // Noch offener Block (Streaming): kein Kopier-Button, kommt beim Schluss-Render.
+    const btn = idx === openFenceIndex ? ''
+      : `<button class="claude-copy" data-claude="copy" type="button">Kopieren</button>`;
+    return `<div class="claude-code">${btn}`
       + `<pre><code>${esc(b.code.replace(/\n$/, ''))}</code></pre></div>`;
   });
   return html;
+}
+
+/* Streaming-Hilfe: kaschiert am Textende offene Markdown-Marker, damit während
+   des Tippens keine rohen Steuerzeichen (**, *, _, `, #) aufblitzen. Arbeitet auf
+   dem Text NACH dem Herauslösen der Code-Blöcke (die als CODE-Platzhalter
+   vorliegen), also werden Backticks in Code nicht angetastet. Nur eindeutig
+   „hängende" (ungepaarte bzw. am Ende offene) Marker werden entfernt — vollständige
+   Paare wie **fett** oder `code` bleiben unberührt. */
+function hideDanglingMarkdown(s) {
+  // Angefangene Überschrift am Ende (nur #-Zeichen, noch kein Inhalt) ausblenden.
+  s = s.replace(/(^|\n)#{1,6}[ \t]*$/, '$1');
+  // Ungepaartes Inline-Backtick: letztes (öffnendes) ` entfernen.
+  if ((s.match(/`/g) || []).length % 2 === 1) {
+    const i = s.lastIndexOf('`');
+    if (i >= 0) s = s.slice(0, i) + s.slice(i + 1);
+  }
+  // Ungepaartes ** : letztes (öffnendes) ** entfernen.
+  if ((s.match(/\*\*/g) || []).length % 2 === 1) {
+    const i = s.lastIndexOf('**');
+    if (i >= 0) s = s.slice(0, i) + s.slice(i + 2);
+  }
+  // Einzelnes offenes * bzw. _ direkt am Textende (nicht Teil eines **-Paars).
+  s = s.replace(/(^|[^*])\*[ \t]*$/, '$1');
+  s = s.replace(/(^|[^_])_[ \t]*$/, '$1');
+  return s;
 }
 
 /* ---------- Nachrichten rendern ---------- */
@@ -288,7 +334,46 @@ async function send() {
   addBubble('user', text, false);
   const bubble = addBubble('assistant', '', false);
   if (bubble) bubble.classList.add('claude-streaming');
-  let streamedRaw = '';
+
+  // Schreibmaschinen-Anzeige: eintreffende Deltas landen in `target`, eine
+  // requestAnimationFrame-Schleife gibt sie gleichmäßig Buchstabe für Buchstabe
+  // frei (`shown`) und rendert bei jedem Schritt das bisher Sichtbare formatiert.
+  // So ist die Anzeige vom netzwerkseitigen Wortgruppen-Takt entkoppelt und
+  // schon während des Tippens sauber strukturiert. Das Tempo ist adaptiv: je
+  // größer der Rückstand, desto schneller — hängt am Ende also nie lange nach.
+  const TYPE_BASE = 3;     // Basis-Zeichen pro Frame (~ ruhiges Grundtempo)
+  const TYPE_CATCHUP = 7;  // Divisor: großer Rückstand → mehr Zeichen pro Frame
+  let target = '';         // vollständig empfangener Roh-Text
+  let shown = 0;           // bereits sichtbare Zeichen
+  let ended = false;       // Stream abgeschlossen (done)
+  let finalize = null;     // Schluss-Render, sobald alles sichtbar ist
+  let rafId = 0;
+
+  const CARET = '<span class="claude-caret"></span>';
+  const paintStream = () => {
+    if (!bubble) return;
+    let html = renderMarkdown(target.slice(0, shown), true);
+    // Caret möglichst inline ans Ende der letzten Textzeile setzen (vor deren
+    // schließendem Tag), sonst schlicht anhängen (z.B. bei reinem Code-Block).
+    const m = html.match(/<\/(?:p|li|h[3-6])>(?![\s\S]*<\/(?:p|li|h[3-6])>)/);
+    html = m ? html.slice(0, m.index) + CARET + html.slice(m.index) : html + CARET;
+    bubble.innerHTML = html;
+    scrollMessages();
+  };
+  const typeTick = () => {
+    rafId = 0;
+    const backlog = target.length - shown;
+    if (backlog > 0) {
+      let step = Math.max(TYPE_BASE, Math.ceil(backlog / TYPE_CATCHUP));
+      if (ended) step = Math.max(step, Math.ceil(backlog / 2)); // am Ende zügig leertippen
+      shown = Math.min(target.length, shown + step);
+      paintStream();
+    }
+    if (shown < target.length) rafId = requestAnimationFrame(typeTick);
+    else if (ended && finalize) { const f = finalize; finalize = null; f(); }
+  };
+  const pumpType = () => { if (!rafId && shown < target.length) rafId = requestAnimationFrame(typeTick); };
+  const stopType = () => { if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } };
 
   try {
     const resp = await fetch('/api/claude/chat', {
@@ -308,18 +393,27 @@ async function send() {
         if (!line.trim()) continue;
         let ev; try { ev = JSON.parse(line); } catch { continue; }
         if (ev.type === 'delta') {
-          streamedRaw += ev.text || '';
-          if (bubble) { bubble.textContent = streamedRaw; scrollMessages(); }
+          target += ev.text || '';
+          pumpType();
         } else if (ev.type === 'done') {
-          const finalText = (ev.text && ev.text.trim()) ? ev.text : streamedRaw;
-          if (bubble) { bubble.classList.remove('claude-streaming'); bubble.innerHTML = renderMarkdown(finalText); scrollMessages(); }
+          const finalText = (ev.text && ev.text.trim()) ? ev.text : target;
+          target = finalText;
+          ended = true;
+          finalize = () => {
+            if (bubble) { bubble.classList.remove('claude-streaming'); bubble.innerHTML = renderMarkdown(finalText); scrollMessages(); }
+          };
+          if (shown >= target.length) { const f = finalize; finalize = null; f(); }
+          else pumpType();
         } else if (ev.type === 'error') {
-          if (bubble) { bubble.classList.remove('claude-streaming'); bubble.classList.add('claude-error'); }
-          if (bubble) bubble.textContent = errorText(ev.message);
+          ended = true;
+          stopType();
+          if (bubble) { bubble.classList.remove('claude-streaming'); bubble.classList.add('claude-error'); bubble.textContent = errorText(ev.message); }
         }
       }
     }
   } catch (err) {
+    ended = true;
+    stopType();
     if (bubble) { bubble.classList.remove('claude-streaming'); bubble.classList.add('claude-error'); bubble.textContent = 'Verbindung unterbrochen.'; }
   } finally {
     CL.sending = false;
