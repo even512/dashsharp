@@ -242,14 +242,24 @@ let _usage = { ts: 0, data: null };
 async function getUsage(token, ctx) {
   if (_usage.ts && Date.now() - _usage.ts < USAGE_TTL_MS) return _usage.data;
   try {
-    const u = await ctx.httpJson('https://api.anthropic.com/api/oauth/usage', {
+    // Direkt via fetch (nicht ctx.httpJson): so bekommen wir bei einem Fehler den
+    // Antwort-Body zu sehen. Der ist entscheidend — z. B. sagt ein 403 hier, ob
+    // dem Token schlicht der Scope fehlt oder ob ein Header/UA-Detail klemmt.
+    const r = await fetch('https://api.anthropic.com/api/oauth/usage', {
+      method: 'GET',
       headers: usageHeaders(token),
-      timeoutMs: 8000,
+      signal: AbortSignal.timeout(8000),
     });
-    _usage = { ts: Date.now(), data: normalizeUsage(u) };
+    if (!r.ok) {
+      const body = (await r.text().catch(() => '')).slice(0, 300).replace(/\s+/g, ' ').trim();
+      ctx.warn(`usage: HTTP ${r.status}${body ? ' — ' + body : ''}`);
+      _usage.ts = Date.now(); // Backoff, letzten guten Wert behalten
+      return _usage.data;
+    }
+    _usage = { ts: Date.now(), data: normalizeUsage(await r.json()) };
   } catch (err) {
     ctx.warn('usage:', err.message);
-    _usage.ts = Date.now(); // Backoff, letzten guten Wert behalten
+    _usage.ts = Date.now();
   }
   return _usage.data;
 }
