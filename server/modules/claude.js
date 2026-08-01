@@ -22,9 +22,10 @@
    WebSearch-Tool. Alle Datei-/Bash-/sonstigen Tools sind gesperrt,
    damit eine Konversation nichts auf dem Server anfassen kann.
 
-   Der Usage-Endpoint (claude.ai/api/oauth/usage) ist intern/
+   Der Usage-Endpoint (api.anthropic.com/api/oauth/usage) ist intern/
    undokumentiert — er wird defensiv geparst; fällt er aus, bleibt
-   die Kachel nutzbar und die Leisten grauen aus.
+   die Kachel nutzbar und die Leisten grauen aus. Er verlangt einen
+   claude-code-User-Agent, sonst drosselt er hart (429).
    ============================================================ */
 
 const crypto = require('crypto');
@@ -42,6 +43,13 @@ const WORK_DIR = path.join(HOME_DIR, 'workspace');
 
 const UA = 'DashSharp/1.0 (+homelab dashboard; claude tile)';
 const OAUTH_BETA = 'oauth-2025-04-20';
+const ANTHROPIC_VERSION = '2023-06-01';
+
+// Der Usage-Endpoint schiebt Anfragen ohne claude-code-User-Agent in einen
+// aggressiv gedrosselten Bucket (dauerhaft 429). Mit diesem UA ist Polling im
+// ~3-Minuten-Takt stabil. Modell-/Chat-Calls brauchen ihn nicht. Bei Bedarf
+// (falls der Endpoint die Version wieder prüft) hier die Nummer anheben.
+const CLI_UA = 'claude-code/2.0.0';
 
 // Grenzen — bewusst großzügig, aber gedeckelt, damit config/claude.json nicht
 // unbegrenzt wächst und ein Thread nicht das ganze Limit auf einmal frisst.
@@ -57,6 +65,18 @@ function authHeaders(token) {
     Authorization: `Bearer ${token}`,
     'anthropic-beta': OAUTH_BETA,
     'User-Agent': UA,
+  };
+}
+
+// Kopfzeilen für den Usage-Endpoint: wie authHeaders, aber mit dem
+// claude-code-User-Agent (richtiger Rate-Limit-Bucket) plus Version/Content-Type.
+function usageHeaders(token) {
+  return {
+    Authorization: `Bearer ${token}`,
+    'anthropic-beta': OAUTH_BETA,
+    'anthropic-version': ANTHROPIC_VERSION,
+    'User-Agent': CLI_UA,
+    'Content-Type': 'application/json',
   };
 }
 
@@ -187,26 +207,51 @@ const FALLBACK_MODELS = [
   { id: 'claude-haiku-4-5',  label: 'Haiku 4.5' },
 ];
 const MODELS_TTL_MS = 6 * 60 * 60 * 1000;
-let _models = { ts: 0, list: null, default: 'claude-sonnet-4-6' };
+let _models = { ts: 0, list: null, default: 'claude-sonnet-4-6', live: false };
 
 async function getModels(token, ctx) {
   if (_models.list && Date.now() - _models.ts < MODELS_TTL_MS) return _models;
   let list = null;
+  let live = false;
   try {
     const r = await ctx.httpJson('https://api.anthropic.com/v1/models?limit=100', {
-      headers: { ...authHeaders(token), 'anthropic-version': '2023-06-01' },
+      headers: { ...authHeaders(token), 'anthropic-version': ANTHROPIC_VERSION },
       timeoutMs: 8000,
     });
     if (r && Array.isArray(r.data)) {
       list = r.data
         .filter((m) => m && typeof m.id === 'string' && /claude/i.test(m.id))
         .map((m) => ({ id: m.id, label: m.display_name || m.id }));
+      live = list.length > 0; // echter, authentifizierter Treffer -> Verbindung ok
     }
   } catch (err) { ctx.warn('models:', err.message); }
-  if (!list || !list.length) list = FALLBACK_MODELS.slice();
+  if (!list || !list.length) { list = FALLBACK_MODELS.slice(); live = false; }
   const def = (list.find((m) => /sonnet/i.test(m.id)) || list[0]).id;
-  _models = { ts: Date.now(), list, default: def };
+  _models = { ts: Date.now(), list, default: def, live };
   return _models;
+}
+
+/* ---------- Nutzung abrufen ----------
+   Eigener, längerer Cache als der Minuten-Push: der Usage-Endpoint drosselt
+   schnelle Anfragen aggressiv (429). ~3 Minuten sind stabil. Bei Fehler bleibt
+   der letzte gute Wert erhalten (Backoff); die Balken grauen erst aus, wenn nie
+   ein Wert kam. */
+const USAGE_TTL_MS = 3 * 60 * 1000;
+let _usage = { ts: 0, data: null };
+
+async function getUsage(token, ctx) {
+  if (_usage.ts && Date.now() - _usage.ts < USAGE_TTL_MS) return _usage.data;
+  try {
+    const u = await ctx.httpJson('https://api.anthropic.com/api/oauth/usage', {
+      headers: usageHeaders(token),
+      timeoutMs: 8000,
+    });
+    _usage = { ts: Date.now(), data: normalizeUsage(u) };
+  } catch (err) {
+    ctx.warn('usage:', err.message);
+    _usage.ts = Date.now(); // Backoff, letzten guten Wert behalten
+  }
+  return _usage.data;
 }
 
 // Kurz-Aliase, die Claude Code immer versteht (mappen auf die aktuelle Version).
@@ -281,25 +326,16 @@ module.exports = {
     const token = get('CLAUDE_CODE_OAUTH_TOKEN');
     const cfg = readCfg();
 
-    let usage = null;
-    let connected = false;
-    try {
-      const u = await ctx.httpJson('https://claude.ai/api/oauth/usage', {
-        headers: authHeaders(token),
-        timeoutMs: 8000,
-      });
-      usage = normalizeUsage(u);
-      connected = true;
-    } catch (err) {
-      ctx.warn('usage:', err.message);
-    }
-
+    // Verbindungsstatus am erfolgreichen (authentifizierten) Modell-Abruf auf
+    // api.anthropic.com festmachen — nicht am Usage-Endpoint, der unabhängig
+    // davon ausfallen/drosseln kann. Usage ist rein best-effort (die Balken).
     const models = await getModels(token, ctx);
+    const usage = await getUsage(token, ctx);
 
     return {
       ok: true,
       configured: true,
-      connected,
+      connected: models.live === true,
       usage,
       models: models.list,
       defaultModel: models.default,
