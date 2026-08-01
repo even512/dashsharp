@@ -4,15 +4,10 @@
    Claude — Chat-Kachel mit Abo-Anbindung
    ------------------------------------------------------------
    Anders als ein reiner API-Key bindet diese Kachel Claude über
-   die Abo-Anmeldung von Claude Code an (Agent SDK, in-process).
-   Das hat zwei Gründe:
-
-     1. Die Anfragen zählen gegen dein 5h- und Weekly-Limit statt
-        pro Token abzurechnen — genau die Zahlen, die die Kachel
-        unten links anzeigt.
-     2. Dieselbe Anmeldung (ein langlebiger OAuth-Token, erzeugt
-        mit `claude setup-token`) liefert die Nutzungswerte über
-        den OAuth-Usage-Endpoint von claude.ai.
+   die Abo-Anmeldung von Claude Code an (Agent SDK, in-process):
+   die Anfragen zählen gegen dein Abo-Limit statt pro Token
+   abgerechnet zu werden. Der langlebige OAuth-Token wird mit
+   `claude setup-token` erzeugt.
 
    Der Token liegt als Secret CLAUDE_CODE_OAUTH_TOKEN im
    Secrets-System (Einstellungen → Module), nicht im Klartext in
@@ -22,10 +17,10 @@
    WebSearch-Tool. Alle Datei-/Bash-/sonstigen Tools sind gesperrt,
    damit eine Konversation nichts auf dem Server anfassen kann.
 
-   Der Usage-Endpoint (api.anthropic.com/api/oauth/usage) ist intern/
-   undokumentiert — er wird defensiv geparst; fällt er aus, bleibt
-   die Kachel nutzbar und die Leisten grauen aus. Er verlangt einen
-   claude-code-User-Agent, sonst drosselt er hart (429).
+   (Eine 5h-/Weekly-Nutzungsanzeige gab es zeitweise, wurde aber
+   entfernt: der Usage-Endpoint verlangt den OAuth-Scope user:profile,
+   den ein setup-token nicht trägt — nur interaktive claude-/login-
+   Tokens. Mit setup-token kam dort dauerhaft 403.)
    ============================================================ */
 
 const crypto = require('crypto');
@@ -45,12 +40,6 @@ const UA = 'DashSharp/1.0 (+homelab dashboard; claude tile)';
 const OAUTH_BETA = 'oauth-2025-04-20';
 const ANTHROPIC_VERSION = '2023-06-01';
 
-// Der Usage-Endpoint schiebt Anfragen ohne claude-code-User-Agent in einen
-// aggressiv gedrosselten Bucket (dauerhaft 429). Mit diesem UA ist Polling im
-// ~3-Minuten-Takt stabil. Modell-/Chat-Calls brauchen ihn nicht. Bei Bedarf
-// (falls der Endpoint die Version wieder prüft) hier die Nummer anheben.
-const CLI_UA = 'claude-code/2.0.0';
-
 // Grenzen — bewusst großzügig, aber gedeckelt, damit config/claude.json nicht
 // unbegrenzt wächst und ein Thread nicht das ganze Limit auf einmal frisst.
 const MAX_THREADS = 50;
@@ -65,18 +54,6 @@ function authHeaders(token) {
     Authorization: `Bearer ${token}`,
     'anthropic-beta': OAUTH_BETA,
     'User-Agent': UA,
-  };
-}
-
-// Kopfzeilen für den Usage-Endpoint: wie authHeaders, aber mit dem
-// claude-code-User-Agent (richtiger Rate-Limit-Bucket) plus Version/Content-Type.
-function usageHeaders(token) {
-  return {
-    Authorization: `Bearer ${token}`,
-    'anthropic-beta': OAUTH_BETA,
-    'anthropic-version': ANTHROPIC_VERSION,
-    'User-Agent': CLI_UA,
-    'Content-Type': 'application/json',
   };
 }
 
@@ -168,31 +145,6 @@ function titleFrom(text) {
   return (one.slice(0, MAX_TITLE_CHARS) || 'Neue Unterhaltung');
 }
 
-/* ---------- Nutzung (5h / Weekly) ----------
-   claude.ai/api/oauth/usage liefert five_hour.utilization und
-   seven_day.utilization plus resets_at. Feldnamen defensiv lesen und auf
-   Prozent normalisieren (die Werte kommen als Bruch 0..1 oder als 0..100). */
-
-function pctOf(x) {
-  if (x == null) return null;
-  const n = Number(x);
-  if (!Number.isFinite(n)) return null;
-  return Math.max(0, Math.min(100, n <= 1 ? n * 100 : n));
-}
-
-function normalizeUsage(u) {
-  if (!u || typeof u !== 'object') return null;
-  const fh = u.five_hour || u.fiveHour || {};
-  const sd = u.seven_day || u.sevenDay || u.weekly || {};
-  const one = (o) => ({
-    pct: pctOf(o.utilization != null ? o.utilization : (o.used != null ? o.used : o.pct)),
-    resetsAt: o.resets_at || o.resetsAt || null,
-  });
-  const out = { fiveHour: one(fh), sevenDay: one(sd) };
-  if (out.fiveHour.pct == null && out.sevenDay.pct == null) return null;
-  return out;
-}
-
 /* ---------- Modell-Liste ----------
    Bevorzugt dynamisch vom Konto (spiegelt genau, was das Abo freischaltet,
    inkl. älterer Versionen). Fällt die Abfrage aus, eine gepflegte Fallback-
@@ -229,39 +181,6 @@ async function getModels(token, ctx) {
   const def = (list.find((m) => /sonnet/i.test(m.id)) || list[0]).id;
   _models = { ts: Date.now(), list, default: def, live };
   return _models;
-}
-
-/* ---------- Nutzung abrufen ----------
-   Eigener, längerer Cache als der Minuten-Push: der Usage-Endpoint drosselt
-   schnelle Anfragen aggressiv (429). ~3 Minuten sind stabil. Bei Fehler bleibt
-   der letzte gute Wert erhalten (Backoff); die Balken grauen erst aus, wenn nie
-   ein Wert kam. */
-const USAGE_TTL_MS = 3 * 60 * 1000;
-let _usage = { ts: 0, data: null };
-
-async function getUsage(token, ctx) {
-  if (_usage.ts && Date.now() - _usage.ts < USAGE_TTL_MS) return _usage.data;
-  try {
-    // Direkt via fetch (nicht ctx.httpJson): so bekommen wir bei einem Fehler den
-    // Antwort-Body zu sehen. Der ist entscheidend — z. B. sagt ein 403 hier, ob
-    // dem Token schlicht der Scope fehlt oder ob ein Header/UA-Detail klemmt.
-    const r = await fetch('https://api.anthropic.com/api/oauth/usage', {
-      method: 'GET',
-      headers: usageHeaders(token),
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!r.ok) {
-      const body = (await r.text().catch(() => '')).slice(0, 300).replace(/\s+/g, ' ').trim();
-      ctx.warn(`usage: HTTP ${r.status}${body ? ' — ' + body : ''}`);
-      _usage.ts = Date.now(); // Backoff, letzten guten Wert behalten
-      return _usage.data;
-    }
-    _usage = { ts: Date.now(), data: normalizeUsage(await r.json()) };
-  } catch (err) {
-    ctx.warn('usage:', err.message);
-    _usage.ts = Date.now();
-  }
-  return _usage.data;
 }
 
 // Kurz-Aliase, die Claude Code immer versteht (mappen auf die aktuelle Version).
@@ -318,7 +237,7 @@ function partialDelta(m) {
 module.exports = {
   id: 'claude',
   label: 'Claude',
-  ttl: 60000, // Usage etwa im Minutentakt pollen (ändert sich nicht sekündlich)
+  ttl: 60000, // Status/Modelle etwa im Minutentakt aktualisieren
 
   secrets: [
     { key: 'CLAUDE_CODE_OAUTH_TOKEN', label: 'Abo-Token (claude setup-token)', masked: true },
@@ -327,26 +246,23 @@ module.exports = {
   // Ohne Token kein Abruf: die Kachel meldet not_configured und der Server
   // telefoniert nicht nach Hause.
   configured: (get) => !!get('CLAUDE_CODE_OAUTH_TOKEN'),
-  notConfigured: { ok: false, error: 'not_configured', usage: null, models: [], threads: [] },
-  errorFields: { usage: null, models: [], threads: [] },
+  notConfigured: { ok: false, error: 'not_configured', models: [], threads: [] },
+  errorFields: { models: [], threads: [] },
 
-  // Periodischer Push: Verbindungsstatus + Usage-Leisten + Modell-Liste +
-  // Thread-Metadaten. Der eigentliche Chat läuft über die Routen unten.
+  // Periodischer Push: Verbindungsstatus + Modell-Liste + Thread-Metadaten.
+  // Der eigentliche Chat läuft über die Routen unten.
   async fetch(get, ctx) {
     const token = get('CLAUDE_CODE_OAUTH_TOKEN');
     const cfg = readCfg();
 
     // Verbindungsstatus am erfolgreichen (authentifizierten) Modell-Abruf auf
-    // api.anthropic.com festmachen — nicht am Usage-Endpoint, der unabhängig
-    // davon ausfallen/drosseln kann. Usage ist rein best-effort (die Balken).
+    // api.anthropic.com festmachen.
     const models = await getModels(token, ctx);
-    const usage = await getUsage(token, ctx);
 
     return {
       ok: true,
       configured: true,
       connected: models.live === true,
-      usage,
       models: models.list,
       defaultModel: models.default,
       threads: cfg.threads.map(threadMeta),

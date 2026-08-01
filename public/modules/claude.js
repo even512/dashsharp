@@ -4,10 +4,9 @@
    Claude — Chat-Kachel (Frontend)
    ------------------------------------------------------------
    Die ganze Konversation lebt in der Kachel: mehrere Threads,
-   Modell-Wechsel pro Thread, Streaming-Antworten und – unten
-   links prominent – die Nutzung (5h- und Weekly-Limit).
+   Modell-Wechsel pro Thread und Streaming-Antworten.
 
-   Der periodische SSE-Push (renderClaude) hält Status, Usage und
+   Der periodische SSE-Push (renderClaude) hält Status und
    Thread-Liste aktuell. Der eigentliche Chat läuft über einen
    eigenen Streaming-Endpoint (/api/claude/chat), nicht über den
    Push.
@@ -32,26 +31,6 @@ const CL = {
 
 function clRoot() { return document.querySelector('[data-widget-id="claude"] .claude-tile'); }
 function clq(sel) { const r = clRoot(); return r ? r.querySelector(sel) : null; }
-
-function fmtReset(iso) {
-  if (!iso) return '';
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return '';
-  const d = new Date(t);
-  const now = Date.now();
-  const sameDay = d.toDateString() === new Date().toDateString();
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  if (t < now) return '';
-  return sameDay ? `${hh}:${mm}` : d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) + ` ${hh}:${mm}`;
-}
-
-function usageColor(pct) {
-  if (pct == null) return 'var(--text-3)';
-  if (pct >= 90) return 'var(--red)';
-  if (pct >= 70) return '#ffb454';
-  return 'var(--green)';
-}
 
 /* ---------- Markdown → sicheres HTML ----------
    Fenced-Code-Blöcke werden vor dem Escapen herausgelöst und als Platzhalter
@@ -366,31 +345,14 @@ function setNotice(text, show) {
   n.hidden = !show;
 }
 
-/* ---------- Push-Handler (Status, Usage, Threads) ---------- */
-
-function renderUsage(usage) {
-  const one = (sel, u, label) => {
-    const el = clq(sel);
-    if (!el) return;
-    const bar = el.querySelector('.claude-bar-fill');
-    const val = el.querySelector('.claude-bar-val');
-    const pct = u ? u.pct : null;
-    if (bar) { bar.style.width = (pct == null ? 0 : pct) + '%'; bar.style.background = usageColor(pct); }
-    if (val) {
-      const reset = u ? fmtReset(u.resetsAt) : '';
-      val.textContent = (pct == null ? '—' : Math.round(pct) + '%') + (reset ? ' · ' + reset : '');
-    }
-  };
-  one('[data-claude-usage-5h]', usage && usage.fiveHour, '5h');
-  one('[data-claude-usage-week]', usage && usage.sevenDay, 'Woche');
-}
+/* ---------- Push-Handler (Status, Threads) ---------- */
 
 function renderStatus() {
   const dot = clq('[data-claude-status]');
   if (!dot) return;
   if (!CL.configured) { dot.style.color = 'var(--red)'; dot.title = 'Nicht eingerichtet'; }
   else if (CL.connected) { dot.style.color = 'var(--green)'; dot.title = 'Verbunden'; }
-  else { dot.style.color = '#ffb454'; dot.title = 'Token gesetzt, Verbindung/Usage fehlgeschlagen'; }
+  else { dot.style.color = '#ffb454'; dot.title = 'Token gesetzt, Verbindung fehlgeschlagen'; }
 }
 
 function renderClaude(d) {
@@ -405,7 +367,6 @@ function renderClaude(d) {
     CL.configured = false;
     CL.connected = false;
     renderStatus();
-    renderUsage(null);
     setNotice(d && d.error === 'not_configured'
       ? 'Nicht verbunden — Abo-Token in Einstellungen → Module (Claude) setzen.'
       : 'Claude offline.', true);
@@ -419,7 +380,6 @@ function renderClaude(d) {
   if (CL.activeId && !CL.threads.some((t) => t.id === CL.activeId)) CL.activeId = null;
   setNotice('', false);
   renderStatus();
-  renderUsage(d.usage);
   renderMenus();
 }
 
@@ -509,7 +469,7 @@ async function loadClaudeSettings() {
   const hint = document.createElement('div');
   hint.className = 'tile-settings-hint'; hint.style.lineHeight = '1.7';
   hint.innerHTML = 'Die Kachel nutzt dein <b>Claude-Abo</b>, nicht einen pro-Token-API-Key — nur so zählen die '
-    + 'Anfragen gegen dein 5h-/Weekly-Limit (die Werte unten links in der Kachel). '
+    + 'Anfragen gegen dein Abo-Limit statt pro Token. '
     + 'Token einmalig auf einer Maschine erzeugen, die in deinem Abo eingeloggt ist:'
     + '<br><code>claude setup-token</code><br>und den ausgegebenen Wert hier einfügen. '
     + 'Alternativ per Umgebungsvariable <code>CLAUDE_CODE_OAUTH_TOKEN</code> (hat Vorrang).';
@@ -581,16 +541,9 @@ Dash.registerModule({
         <textarea class="claude-input" data-claude-input rows="1" placeholder="Frage stellen… (Enter senden, Shift+Enter Zeilenumbruch)"></textarea>
         <button class="claude-send" data-claude="send" type="button" title="Senden">➤</button>
       </div>
-
-      <div class="claude-footer" data-cfg="usage">
-        <span class="claude-usage" data-claude-usage-5h><span class="claude-usage-label">5h</span><span class="claude-bar"><span class="claude-bar-fill"></span></span><span class="claude-bar-val">—</span></span>
-        <span class="claude-usage" data-claude-usage-week><span class="claude-usage-label">Woche</span><span class="claude-bar"><span class="claude-bar-fill"></span></span><span class="claude-bar-val">—</span></span>
-      </div>
     </div>`,
 
-  options: [
-    { key: 'usage', label: 'Nutzungsanzeige', type: 'toggle', default: true },
-  ],
+  options: [],
 
   settings: { badge: 'CL', color: '#d97757', statusEl: 'claudeSettingsStatus', load: loadClaudeSettings },
 });
