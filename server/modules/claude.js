@@ -26,6 +26,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const express = require('express');
 
 const CONFIG_PATH = path.join(__dirname, '..', '..', 'config', 'claude.json');
 
@@ -46,6 +47,14 @@ const MAX_THREADS = 50;
 const MAX_MSGS_PER_THREAD = 400;
 const MAX_MSG_CHARS = 100000;
 const MAX_TITLE_CHARS = 60;
+
+// Anhänge: bewusst moderat gedeckelt (RAM pro Request, Body-Größe). Der
+// Datei-Inhalt liegt IN der Nachricht (content-Block), es wird kein Tool
+// aktiviert und nichts auf der Platte gelesen — das Sicherheitsmodell bleibt.
+const MAX_ATTACH = 5;
+const MAX_ATTACH_BYTES = 10 * 1024 * 1024; // 10 MB je Datei (dekodiert)
+const CHAT_BODY_LIMIT = '32mb';
+const IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 /* ---------- kleine Helfer ---------- */
 
@@ -118,7 +127,11 @@ function sanitizeThread(raw) {
   for (const m of (Array.isArray(raw.messages) ? raw.messages : [])) {
     if (!m || (m.role !== 'user' && m.role !== 'assistant')) continue;
     const content = String(m.content == null ? '' : m.content).slice(0, MAX_MSG_CHARS);
-    messages.push({ role: m.role, content, ts: Number(m.ts) || Date.now() });
+    const msg = { role: m.role, content, ts: Number(m.ts) || Date.now() };
+    const atts = sanitizeAttachMeta(m.attachments);
+    if (atts.length) msg.attachments = atts;
+    if (m.aborted) msg.aborted = true;
+    messages.push(msg);
     if (messages.length >= MAX_MSGS_PER_THREAD) break;
   }
   return {
@@ -129,6 +142,67 @@ function sanitizeThread(raw) {
     updatedAt: Number(raw.updatedAt) || Date.now(),
     messages,
   };
+}
+
+// Anhang-METADATEN (im Verlauf gespeichert, ohne die Bytes): nur Name/Typ/Größe
+// zum Rendern eines Chips nach einem Reload. Die eigentlichen Daten (base64)
+// werden bewusst NICHT persistiert — sie leben nur im Live-Request.
+function sanitizeAttachMeta(raw) {
+  const out = [];
+  if (!Array.isArray(raw)) return out;
+  for (const a of raw) {
+    if (!a || typeof a !== 'object') continue;
+    if (out.length >= MAX_ATTACH) break;
+    out.push({
+      name: String(a.name || 'datei').slice(0, 120),
+      mime: String(a.mime || '').slice(0, 100),
+      size: Number(a.size) || 0,
+      kind: ['image', 'pdf', 'text'].includes(a.kind) ? a.kind : 'text',
+    });
+  }
+  return out;
+}
+
+// Anhänge aus dem Chat-Request validieren (mit Bytes). Ungültige/zu große
+// werden still übersprungen — der Client blockiert dieselben Fälle schon.
+function readAttachments(raw) {
+  const out = [];
+  if (!Array.isArray(raw)) return out;
+  for (const a of raw) {
+    if (!a || typeof a !== 'object') continue;
+    if (out.length >= MAX_ATTACH) break;
+    const data = typeof a.data === 'string' ? a.data : '';
+    if (!data) continue;
+    const size = Math.floor((data.length * 3) / 4); // grobe base64→bytes-Schätzung
+    if (size > MAX_ATTACH_BYTES) continue;
+    const mime = String(a.mime || '').slice(0, 100);
+    const kind = String(a.kind || '');
+    if (kind === 'image') { if (!IMAGE_MIME.has(mime)) continue; }
+    else if (kind !== 'pdf' && kind !== 'text') continue;
+    out.push({ name: String(a.name || 'datei').slice(0, 120), mime, kind, data, size });
+  }
+  return out;
+}
+
+// content-Blöcke für die Anthropic-Nachricht bauen (Text-Prompt + Anhänge).
+function buildContentBlocks(message, atts) {
+  const content = [];
+  if (message && message.trim()) content.push({ type: 'text', text: message });
+  for (const a of atts) {
+    if (a.kind === 'image') {
+      content.push({ type: 'image', source: { type: 'base64', media_type: a.mime, data: a.data } });
+    } else if (a.kind === 'pdf') {
+      content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: a.data } });
+    } else { // text: dekodieren und als eigener Text-Block anhängen
+      let text = '';
+      try { text = Buffer.from(a.data, 'base64').toString('utf8'); } catch { text = ''; }
+      text = text.slice(0, MAX_MSG_CHARS);
+      content.push({ type: 'text', text: `\n\n[Datei: ${a.name}]\n\`\`\`\n${text}\n\`\`\`` });
+    }
+  }
+  // Anthropic verlangt mindestens einen Block.
+  if (!content.length) content.push({ type: 'text', text: '(leer)' });
+  return content;
 }
 
 function findThread(cfg, id) {
@@ -334,12 +408,33 @@ module.exports = {
       }
     });
 
-    // Chat: Nachricht senden, Antwort streamen (NDJSON). Läuft über das Agent
-    // SDK mit der Abo-Anmeldung; nur WebSearch ist erlaubt, alles andere gesperrt.
-    app.post('/api/claude/chat', async (req, res) => {
+    // Assistant-Antwort persistieren (frisch lesen wegen Nebenläufigkeit).
+    // `aborted` markiert eine vom Nutzer gestoppte Teilantwort.
+    const persistAssistant = (threadId, text, wasAborted) => {
+      const clean = String(text || '').trim();
+      if (!clean) return;
+      const cfg2 = readCfg();
+      const t2 = findThread(cfg2, threadId);
+      if (t2) {
+        const msg = { role: 'assistant', content: clean.slice(0, MAX_MSG_CHARS), ts: Date.now() };
+        if (wasAborted) msg.aborted = true;
+        t2.messages.push(msg);
+        t2.updatedAt = Date.now();
+        writeCfg(cfg2);
+      }
+      invalidate();
+      refresh().catch(() => {});
+    };
+
+    // Chat: Nachricht (+ optionale Anhänge) senden, Antwort streamen (NDJSON).
+    // Eigener 32-MB-Parser mit `type: () => true`: der Client schickt einen
+    // Nicht-JSON-Content-Type, damit das globale express.json (1 MB) den Body
+    // durchreicht und erst hier — mit hohem Limit — geparst wird.
+    app.post('/api/claude/chat', express.json({ limit: CHAT_BODY_LIMIT, type: () => true }), async (req, res) => {
       const token = get('CLAUDE_CODE_OAUTH_TOKEN');
       const threadId = String((req.body && req.body.threadId) || '');
       const message = String((req.body && req.body.message) || '').slice(0, MAX_MSG_CHARS);
+      const atts = readAttachments(req.body && req.body.attachments);
 
       // NDJSON-Stream: eine JSON-Zeile pro Ereignis (delta/done/error).
       res.set('Content-Type', 'application/x-ndjson; charset=utf-8');
@@ -349,16 +444,19 @@ module.exports = {
       const fail = (msg) => { send({ type: 'error', message: msg }); res.end(); };
 
       if (!token) return fail('not_configured');
-      if (!message.trim()) return fail('empty_message');
+      if (!message.trim() && !atts.length) return fail('empty_message');
 
       const cfg = readCfg();
       const thread = findThread(cfg, threadId);
       if (!thread) return fail('thread_not_found');
 
-      // Nutzer-Nachricht anhängen + Titel setzen, bevor die Antwort läuft.
+      // Nutzer-Nachricht (mit Anhang-Metadaten) anhängen + Titel setzen.
+      const attMeta = atts.map((a) => ({ name: a.name, mime: a.mime, size: a.size, kind: a.kind }));
       const resume = thread.messages.length > 0;
-      if (!resume) thread.title = titleFrom(message);
-      thread.messages.push({ role: 'user', content: message, ts: Date.now() });
+      if (!resume) thread.title = titleFrom(message || (attMeta[0] && attMeta[0].name) || '');
+      const userMsg = { role: 'user', content: message, ts: Date.now() };
+      if (attMeta.length) userMsg.attachments = attMeta;
+      thread.messages.push(userMsg);
       thread.updatedAt = Date.now();
       writeCfg(cfg);
       invalidate();
@@ -389,26 +487,38 @@ module.exports = {
         env,
       };
 
+      // Prompt: ohne Anhänge der bewährte String-Weg; mit Anhängen ein
+      // Streaming-Input (ein einzelner User-Turn mit content-Blöcken).
+      let prompt;
+      if (atts.length) {
+        const content = buildContentBlocks(message, atts);
+        const userTurn = { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, session_id: thread.id };
+        prompt = (async function* () { yield userTurn; })();
+      } else {
+        prompt = message;
+      }
+
       let aborted = false;
       let q = null;
       req.on('close', () => { aborted = true; try { if (q && q.interrupt) q.interrupt(); } catch { /* egal */ } });
 
-      let finalText = '';
+      let finalText = '';   // vollständiger Text aus assistant/result
+      let streamedText = ''; // aufsummierte Deltas (für den Abbruch-Fall)
       let streamed = false;
       try {
-        q = query({ prompt: message, options });
+        q = query({ prompt, options });
         for await (const m of q) {
           if (aborted) break;
           if (!m || typeof m !== 'object') continue;
 
           const delta = partialDelta(m);
-          if (delta) { streamed = true; send({ type: 'delta', text: delta }); continue; }
+          if (delta) { streamed = true; streamedText += delta; send({ type: 'delta', text: delta }); continue; }
 
           if (m.type === 'assistant') {
             const t = assistantText(m);
             if (t) {
               finalText += t;
-              if (!streamed) send({ type: 'delta', text: t }); // Fallback ohne Partials
+              if (!streamed) { streamedText += t; send({ type: 'delta', text: t }); } // Fallback ohne Partials
             }
             continue;
           }
@@ -417,27 +527,17 @@ module.exports = {
           }
         }
       } catch (err) {
-        // Häufigster Fall: Limit erreicht oder Auth abgelaufen.
-        if (!aborted) fail('claude_error: ' + err.message);
+        // Bei Nutzer-Abbruch die bis dahin gestreamte Teilantwort behalten.
+        if (aborted) { persistAssistant(threadId, streamedText, true); try { res.end(); } catch { /* egal */ } return; }
+        // Sonst häufigster Fall: Limit erreicht oder Auth abgelaufen.
+        fail('claude_error: ' + err.message);
         return;
       }
 
-      if (aborted) { try { res.end(); } catch { /* egal */ } return; }
+      if (aborted) { persistAssistant(threadId, streamedText, true); try { res.end(); } catch { /* egal */ } return; }
 
-      // Assistant-Antwort persistieren (frisch lesen: Nebenläufigkeit).
-      finalText = finalText.trim();
-      if (finalText) {
-        const cfg2 = readCfg();
-        const t2 = findThread(cfg2, threadId);
-        if (t2) {
-          t2.messages.push({ role: 'assistant', content: finalText.slice(0, MAX_MSG_CHARS), ts: Date.now() });
-          t2.updatedAt = Date.now();
-          writeCfg(cfg2);
-        }
-        invalidate();
-        refresh().catch(() => {});
-      }
-
+      finalText = (finalText || streamedText).trim();
+      persistAssistant(threadId, finalText, false);
       send({ type: 'done', text: finalText });
       res.end();
     });

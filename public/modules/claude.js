@@ -25,7 +25,112 @@ const CL = {
   defaultModel: null,
   activeId: null,
   sending: false,
+  attachments: [], // vorbereitete Anhänge (vor dem Absenden)
+  abort: null,     // AbortController des laufenden Chat-Requests
 };
+
+/* ---------- Anhänge (Datei-Upload) ---------- */
+
+const CL_MAX_FILES = 5;
+const CL_MAX_BYTES = 10 * 1024 * 1024; // 10 MB je Datei
+const CL_IMG_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const CL_TEXT_EXT = new Set([
+  'txt', 'md', 'markdown', 'text', 'log', 'csv', 'tsv', 'json', 'xml', 'yaml', 'yml',
+  'toml', 'ini', 'conf', 'cfg', 'env', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'css',
+  'scss', 'less', 'html', 'htm', 'vue', 'svelte', 'py', 'rb', 'php', 'go', 'rs', 'java',
+  'kt', 'kts', 'c', 'h', 'cpp', 'hpp', 'cc', 'cs', 'swift', 'dart', 'sh', 'bash', 'zsh',
+  'sql', 'pl', 'lua', 'r', 'gradle', 'dockerfile', 'gitignore', 'properties',
+]);
+
+function fileExt(name) { return String(name || '').split('.').pop().toLowerCase(); }
+
+// Dateityp bestimmen: 'image' | 'pdf' | 'text' | null (nicht unterstützt).
+function classifyFile(file) {
+  const mime = file.type || '';
+  const ext = fileExt(file.name);
+  if (CL_IMG_MIME.has(mime) || ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) return 'image';
+  if (mime === 'application/pdf' || ext === 'pdf') return 'pdf';
+  if (mime.startsWith('text/') || mime === 'application/json' || mime === 'application/xml' || CL_TEXT_EXT.has(ext)) return 'text';
+  return null;
+}
+
+// Sauberen MIME-Typ ableiten (Browser lässt file.type oft leer bei Code-Dateien).
+function normMime(file, kind) {
+  if (kind === 'image') {
+    if (CL_IMG_MIME.has(file.type)) return file.type;
+    const ext = fileExt(file.name);
+    if (ext === 'png') return 'image/png';
+    if (ext === 'gif') return 'image/gif';
+    if (ext === 'webp') return 'image/webp';
+    return 'image/jpeg';
+  }
+  if (kind === 'pdf') return 'application/pdf';
+  return file.type || 'text/plain';
+}
+
+function readFileDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ''));
+    r.onerror = () => reject(r.error || new Error('read failed'));
+    r.readAsDataURL(file);
+  });
+}
+
+// Dateien prüfen, base64 lesen und in CL.attachments aufnehmen.
+async function stageFiles(fileList) {
+  const files = Array.from(fileList || []);
+  for (const file of files) {
+    if (CL.attachments.length >= CL_MAX_FILES) { setNotice(`Maximal ${CL_MAX_FILES} Dateien pro Nachricht.`, true); break; }
+    const kind = classifyFile(file);
+    if (!kind) { setNotice(`„${file.name}" – Format nicht unterstützt (nur Text/Code, Bilder, PDF).`, true); continue; }
+    if (file.size > CL_MAX_BYTES) { setNotice(`„${file.name}" ist größer als 10 MB.`, true); continue; }
+    let dataUrl;
+    try { dataUrl = await readFileDataUrl(file); } catch { setNotice(`„${file.name}" konnte nicht gelesen werden.`, true); continue; }
+    const comma = dataUrl.indexOf(',');
+    const data = comma >= 0 ? dataUrl.slice(comma + 1) : '';
+    if (!data) continue;
+    CL.attachments.push({ name: file.name || 'datei', mime: normMime(file, kind), kind, size: file.size, data, dataUrl });
+  }
+  renderAttachments();
+}
+
+// Chip für einen Anhang. `removeIdx >= 0` fügt einen Entfernen-Button hinzu.
+function attachChipEl(a, removeIdx) {
+  const chip = document.createElement('div');
+  chip.className = 'claude-attach-chip';
+  if (a.kind === 'image' && a.dataUrl) {
+    const img = document.createElement('img');
+    img.className = 'claude-attach-thumb'; img.src = a.dataUrl; img.alt = a.name || '';
+    chip.appendChild(img);
+  } else {
+    const ic = document.createElement('span');
+    ic.className = 'claude-attach-ic';
+    ic.textContent = a.kind === 'pdf' ? '📄' : (a.kind === 'image' ? '🖼' : '📎');
+    chip.appendChild(ic);
+  }
+  const nm = document.createElement('span');
+  nm.className = 'claude-attach-name'; nm.textContent = a.name || 'Datei';
+  chip.appendChild(nm);
+  if (typeof removeIdx === 'number' && removeIdx >= 0) {
+    const del = document.createElement('button');
+    del.className = 'claude-attach-del'; del.type = 'button';
+    del.dataset.claude = 'unattach'; del.dataset.idx = String(removeIdx);
+    del.textContent = '✕'; del.title = 'Entfernen';
+    chip.appendChild(del);
+  }
+  return chip;
+}
+
+// Vorbereitete Anhänge über dem Eingabefeld anzeigen.
+function renderAttachments() {
+  const box = clq('[data-claude-attachments]');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!CL.attachments.length) { box.hidden = true; return; }
+  box.hidden = false;
+  CL.attachments.forEach((a, i) => box.appendChild(attachChipEl(a, i)));
+}
 
 /* ---------- Helfer ---------- */
 
@@ -153,18 +258,38 @@ function hideDanglingMarkdown(s) {
 
 function messagesEl() { return clq('[data-claude-messages]'); }
 
-function addBubble(role, html, isMarkdown) {
+function addBubble(role, html, isMarkdown, opts) {
+  opts = opts || {};
   const box = messagesEl();
   if (!box) return null;
   const row = document.createElement('div');
   row.className = `claude-bubble claude-${role}`;
+  // Anhang-Chips (nur bei Nutzer-Nachrichten mit Dateien).
+  if (opts.attachments && opts.attachments.length) {
+    const at = document.createElement('div');
+    at.className = 'claude-bubble-atts';
+    for (const a of opts.attachments) at.appendChild(attachChipEl(a));
+    row.appendChild(at);
+  }
   const body = document.createElement('div');
   body.className = 'claude-md';
+  if (html === '' && opts.attachments && opts.attachments.length) body.hidden = true; // reine Datei-Nachricht
   if (isMarkdown) body.innerHTML = html; else body.textContent = html;
   row.appendChild(body);
+  if (opts.aborted) markAborted(body);
   box.appendChild(row);
   box.scrollTop = box.scrollHeight;
   return body;
+}
+
+// „abgebrochen"-Kennzeichnung an die Blase (Eltern-Zeile von .claude-md) hängen.
+function markAborted(body) {
+  const row = body && body.parentElement;
+  if (!row || row.querySelector('.claude-aborted')) return;
+  const tag = document.createElement('div');
+  tag.className = 'claude-aborted';
+  tag.textContent = 'abgebrochen';
+  row.appendChild(tag);
 }
 
 function renderThreadMessages(messages) {
@@ -179,7 +304,11 @@ function renderThreadMessages(messages) {
     return;
   }
   for (const m of messages) {
-    addBubble(m.role, m.role === 'assistant' ? renderMarkdown(m.content) : m.content, m.role === 'assistant');
+    const isAssistant = m.role === 'assistant';
+    addBubble(m.role, isAssistant ? renderMarkdown(m.content) : m.content, isAssistant, {
+      attachments: m.attachments || null,
+      aborted: !!m.aborted,
+    });
   }
 }
 
@@ -311,27 +440,50 @@ async function ensureThread() {
   return CL.activeId;
 }
 
+// Sende-/Stop-Zustand des Buttons umschalten. Während Claude arbeitet wird aus
+// dem Senden-Pfeil (➤) eine rote Stop-Taste (■), die den Request abbricht.
+function setSending(on) {
+  CL.sending = on;
+  const btn = clq('.claude-send');
+  if (!btn) return;
+  if (on) {
+    btn.dataset.claude = 'stop';
+    btn.classList.add('claude-stop');
+    btn.textContent = '■';
+    btn.title = 'Antwort stoppen';
+  } else {
+    btn.dataset.claude = 'send';
+    btn.classList.remove('claude-stop');
+    btn.textContent = '➤';
+    btn.title = 'Senden';
+  }
+}
+
+function abortSend() { if (CL.abort) { try { CL.abort.abort(); } catch { /* egal */ } } }
+
 async function send() {
   if (CL.sending) return;
   const input = clq('[data-claude-input]');
-  const btn = clq('[data-claude-send]');
   if (!input) return;
   const text = input.value.trim();
-  if (!text) return;
+  const files = CL.attachments.slice();
+  if (!text && !files.length) return;
   if (!CL.configured) { setNotice('Nicht verbunden — Token in Einstellungen → Module setzen.', true); return; }
 
   const threadId = await ensureThread();
   if (!threadId) return;
 
-  CL.sending = true;
-  if (btn) btn.disabled = true;
+  setSending(true);
   input.value = '';
+  CL.attachments = [];
+  renderAttachments();
+  setNotice('', false);
 
   // leeren Platzhalter der neuen Unterhaltung entfernen
   const empty = clq('.claude-empty');
   if (empty) empty.remove();
 
-  addBubble('user', text, false);
+  addBubble('user', text, false, { attachments: files.length ? files : null });
   const bubble = addBubble('assistant', '', false);
   if (bubble) bubble.classList.add('claude-streaming');
 
@@ -391,10 +543,19 @@ async function send() {
   const pumpType = () => { if (!rafId && shown < target.length) rafId = requestAnimationFrame(typeTick); };
   const stopType = () => { if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } };
 
+  CL.abort = new AbortController();
   try {
+    const payload = { threadId, message: text };
+    if (files.length) {
+      payload.attachments = files.map((a) => ({ name: a.name, mime: a.mime, kind: a.kind, size: a.size, data: a.data }));
+    }
     const resp = await fetch('/api/claude/chat', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ threadId, message: text }),
+      method: 'POST',
+      // Bewusst KEIN application/json: so lässt das globale 1-MB-JSON den Body
+      // durch und der 32-MB-Parser der Route greift (server/modules/claude.js).
+      headers: { 'Content-Type': 'application/x-claude-chat' },
+      body: JSON.stringify(payload),
+      signal: CL.abort.signal,
     });
     const reader = resp.body.getReader();
     const dec = new TextDecoder();
@@ -430,10 +591,15 @@ async function send() {
   } catch (err) {
     ended = true;
     stopType();
-    if (bubble) { bubble.classList.remove('claude-streaming'); bubble.classList.add('claude-error'); bubble.textContent = 'Verbindung unterbrochen.'; }
+    if (err && err.name === 'AbortError') {
+      // Nutzer-Stopp: den bis hier empfangenen Teil behalten und markieren.
+      if (bubble) { bubble.classList.remove('claude-streaming'); bubble.innerHTML = renderMarkdown(target); markAborted(bubble); scrollMessages(); }
+    } else if (bubble) {
+      bubble.classList.remove('claude-streaming'); bubble.classList.add('claude-error'); bubble.textContent = 'Verbindung unterbrochen.';
+    }
   } finally {
-    CL.sending = false;
-    if (btn) btn.disabled = false;
+    CL.abort = null;
+    setSending(false);
   }
 }
 
@@ -521,6 +687,9 @@ function wireClaude() {
     else if (act === 'del-thread') { e.stopPropagation(); deleteThread(btn.dataset.id); }
     else if (act === 'set-model') setModel(btn.dataset.id);
     else if (act === 'send') send();
+    else if (act === 'stop') abortSend();
+    else if (act === 'attach') { const f = clq('[data-claude-file]'); if (f) f.click(); }
+    else if (act === 'unattach') { const i = Number(btn.dataset.idx); if (i >= 0) { CL.attachments.splice(i, 1); renderAttachments(); } }
     else if (act === 'copy') copyCode(btn);
   });
 
@@ -528,6 +697,44 @@ function wireClaude() {
     const input = e.target.closest('[data-claude-input]');
     if (!input) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+
+  // Datei-Auswahl über den Büroklammer-Button.
+  document.addEventListener('change', (e) => {
+    const f = e.target.closest('[data-claude-file]');
+    if (!f) return;
+    stageFiles(f.files);
+    f.value = ''; // gleiche Datei erneut wählbar
+  });
+
+  // Bild/Datei aus der Zwischenablage einfügen (Screenshots).
+  document.addEventListener('paste', (e) => {
+    if (!e.target.closest('[data-claude-input]')) return;
+    const files = e.clipboardData && e.clipboardData.files;
+    if (files && files.length) { e.preventDefault(); stageFiles(files); }
+  });
+
+  // Drag & Drop auf die Kachel.
+  document.addEventListener('dragover', (e) => {
+    const root = e.target.closest && e.target.closest('.claude-tile');
+    if (!root) return;
+    if (!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'))) return;
+    e.preventDefault();
+    const dz = root.querySelector('[data-claude-drop]'); if (dz) dz.hidden = false;
+  });
+  document.addEventListener('dragleave', (e) => {
+    const root = e.target.closest && e.target.closest('.claude-tile');
+    if (!root) return;
+    if (e.relatedTarget && root.contains(e.relatedTarget)) return; // noch über der Kachel
+    const dz = root.querySelector('[data-claude-drop]'); if (dz) dz.hidden = true;
+  });
+  document.addEventListener('drop', (e) => {
+    const root = e.target.closest && e.target.closest('.claude-tile');
+    const dz = document.querySelector('.claude-tile [data-claude-drop]');
+    if (dz) dz.hidden = true;
+    if (!root) return;
+    e.preventDefault();
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) stageFiles(e.dataTransfer.files);
   });
 }
 
@@ -647,10 +854,17 @@ Dash.registerModule({
 
       <div class="claude-notice" data-claude-notice hidden></div>
 
+      <div class="claude-attachments" data-claude-attachments hidden></div>
+
       <div class="claude-input-row">
+        <button class="claude-attach" data-claude="attach" type="button" title="Datei anhängen">📎</button>
         <textarea class="claude-input" data-claude-input rows="1" placeholder="Frage stellen… (Enter senden, Shift+Enter Zeilenumbruch)"></textarea>
         <button class="claude-send" data-claude="send" type="button" title="Senden">➤</button>
+        <input class="claude-file" data-claude-file type="file" multiple hidden
+               accept="image/*,application/pdf,text/*,.md,.json,.csv,.log,.js,.ts,.py,.java,.c,.cpp,.cs,.go,.rs,.rb,.php,.html,.css,.yaml,.yml,.xml,.sh,.sql">
       </div>
+
+      <div class="claude-drop" data-claude-drop hidden><span>Datei hier ablegen</span></div>
     </div>`,
 
   options: [],

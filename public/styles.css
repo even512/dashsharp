@@ -2310,7 +2310,7 @@ body.gr-scroll-locked {
    (5h + Woche). Akzent: Claude-Orange.
    ========================================================================== */
 
-.claude-tile { --cl-accent: #d97757; gap: 10px; }
+.claude-tile { --cl-accent: #d97757; gap: 10px; position: relative; }
 .claude-head { position: relative; }
 .claude-head-actions, .claude-head > .claude-head-actions { display: inline-flex; }
 .claude-head span.claude-head-actions { display: inline-flex; align-items: center; gap: 6px; }
@@ -2349,15 +2349,36 @@ body.gr-scroll-locked {
 .claude-thread-del:hover { color: var(--red); }
 
 .claude-messages {
-  flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;
-  padding-right: 4px;
+  flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
+  padding: 9px 4px 0 10px;
 }
 .claude-empty { color: var(--text-3); font-size: 13px; margin: auto; }
 
-.claude-bubble { max-width: 100%; border-radius: 10px; padding: 8px 11px; font-size: 13px; line-height: 1.5; }
-.claude-user { align-self: flex-end; background: var(--accent-subtle); border: 1px solid var(--accent-border); color: var(--text); }
-.claude-assistant { align-self: flex-start; background: var(--bg-glass); border: 1px solid var(--border-2); color: var(--text-2); }
-.claude-bubble.claude-error { border-color: var(--red); color: var(--red); }
+.claude-bubble { position: relative; max-width: 88%; border-radius: 14px; padding: 8px 12px; font-size: 13px; line-height: 1.5; }
+/* Deine Nachrichten: gefüllte Akzent-Blase rechts, schmaler. */
+.claude-user {
+  align-self: flex-end; max-width: 80%;
+  background: var(--cl-accent); border: 1px solid var(--cl-accent); color: #fff;
+  border-bottom-right-radius: 5px;
+}
+.claude-user .claude-md, .claude-user a { color: #fff; }
+/* Claudes Antworten: neutrale Blase links, breiter, mit kleinem ✱-Anker. */
+.claude-assistant {
+  align-self: flex-start; max-width: 92%; margin-left: 9px;
+  background: var(--bg-glass); border: 1px solid var(--border-2); color: var(--text-2);
+  border-bottom-left-radius: 5px;
+}
+.claude-assistant::before {
+  content: '✱'; position: absolute; top: -8px; left: -9px;
+  width: 17px; height: 17px; border-radius: 50%;
+  background: var(--cl-accent); color: #fff;
+  font-size: 10px; line-height: 17px; text-align: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.claude-bubble.claude-error, .claude-md.claude-error { border-color: var(--red); color: var(--red); }
+/* „abgebrochen"-Kennzeichnung unter einer gestoppten Antwort. */
+.claude-aborted { margin-top: 5px; font-size: 10px; font-style: italic; color: var(--text-3); opacity: 0.85; }
+.claude-aborted::before { content: '■ '; color: var(--red); font-style: normal; }
 /* Tipp-Cursor beim Streaming: als inline-Span ans Ende der letzten Textzeile
    gesetzt (siehe paintStream), damit er im Textfluss statt auf einer neuen Zeile steht. */
 .claude-caret::after { content: '▋'; color: var(--cl-accent); animation: claude-blink 1s steps(2) infinite; margin-left: 1px; }
@@ -2386,11 +2407,46 @@ body.gr-scroll-locked {
   color: var(--text); padding: 8px 10px; font: 400 13px 'JetBrains Mono', monospace; line-height: 1.4;
 }
 .claude-input:focus { outline: none; border-color: var(--cl-accent); }
+.claude-attach {
+  flex-shrink: 0; width: 34px; height: 34px; border-radius: 9px;
+  border: 1px solid var(--border-2); background: var(--bg-glass); color: var(--text-2);
+  cursor: pointer; font-size: 15px; line-height: 1;
+}
+.claude-attach:hover { border-color: var(--cl-accent); color: var(--cl-accent); }
 .claude-send {
   flex-shrink: 0; width: 36px; height: 34px; border-radius: 9px; border: 1px solid var(--cl-accent);
   background: var(--cl-accent); color: #fff; cursor: pointer; font-size: 15px; line-height: 1;
 }
 .claude-send:disabled { opacity: 0.5; cursor: default; }
+/* Arbeits-Modus: aus dem Senden-Pfeil wird eine rote Stop-Taste. */
+.claude-send.claude-stop { background: var(--red); border-color: var(--red); }
+.claude-send.claude-stop:hover { filter: brightness(1.1); }
+
+/* Vorbereitete Anhänge über dem Eingabefeld + Chips in den Blasen. */
+.claude-attachments { flex-shrink: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.claude-attachments[hidden] { display: none; }
+.claude-bubble-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.claude-attach-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 190px;
+  padding: 3px 6px 3px 4px; border-radius: 8px;
+  background: var(--bg-glass); border: 1px solid var(--border-2); font-size: 11px; color: var(--text-2);
+}
+.claude-attach-thumb { width: 22px; height: 22px; border-radius: 4px; object-fit: cover; display: block; flex-shrink: 0; }
+.claude-attach-ic { font-size: 13px; line-height: 1; flex-shrink: 0; }
+.claude-attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.claude-attach-del { border: 0; background: transparent; color: var(--text-3); cursor: pointer; padding: 0 2px; font-size: 11px; line-height: 1; }
+.claude-attach-del:hover { color: var(--red); }
+/* Chips auf der Akzent-Blase hell absetzen. */
+.claude-user .claude-attach-chip { background: rgba(255, 255, 255, 0.15); border-color: rgba(255, 255, 255, 0.35); color: #fff; }
+
+/* Drag & Drop Overlay über der ganzen Kachel. */
+.claude-drop {
+  position: absolute; inset: 0; z-index: 5; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(217, 119, 87, 0.15); border: 2px dashed var(--cl-accent); pointer-events: none;
+}
+.claude-drop[hidden] { display: none; }
+.claude-drop span { font-size: 13px; font-weight: 600; color: var(--cl-accent); background: var(--bg-glass); padding: 6px 12px; border-radius: 8px; }
 
 .claude-footer { flex-shrink: 0; display: flex; justify-content: flex-start; gap: 16px; flex-wrap: wrap; }
 .claude-footer[hidden] { display: none; }
