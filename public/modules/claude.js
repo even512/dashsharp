@@ -485,7 +485,15 @@ async function send() {
 
   addBubble('user', text, false, { attachments: files.length ? files : null });
   const bubble = addBubble('assistant', '', false);
-  if (bubble) bubble.classList.add('claude-streaming');
+  const row = bubble ? bubble.parentElement : null;
+  if (bubble) {
+    bubble.classList.add('claude-streaming');
+    // „Denkt"-Zustand: Drei-Punkte-Animation. Das ✱-Logo bleibt solange verborgen
+    // (.claude-loading in styles.css) und erscheint erst mit dem echten Text.
+    if (row) row.classList.add('claude-loading');
+    bubble.innerHTML = '<span class="claude-dots"><span></span><span></span><span></span></span>';
+  }
+  const clearLoading = () => { if (row) row.classList.remove('claude-loading'); };
 
   // Schreibmaschinen-Anzeige: eintreffende Deltas landen in `target`, eine
   // requestAnimationFrame-Schleife gibt sie gleichmäßig Buchstabe für Buchstabe
@@ -513,6 +521,7 @@ async function send() {
   const CARET = '<span class="claude-caret"></span>';
   const paintStream = () => {
     if (!bubble) return;
+    clearLoading(); // erster echter Text → Punkte weg, ✱-Logo erscheint
     let html = renderMarkdown(target.slice(0, shown), true);
     // Caret möglichst inline ans Ende der letzten Textzeile setzen (vor deren
     // schließendem Tag), sonst schlicht anhängen (z.B. bei reinem Code-Block).
@@ -577,13 +586,14 @@ async function send() {
           target = finalText;
           ended = true;
           finalize = () => {
-            if (bubble) { bubble.classList.remove('claude-streaming'); bubble.innerHTML = renderMarkdown(finalText); scrollMessages(); }
+            if (bubble) { clearLoading(); bubble.classList.remove('claude-streaming'); bubble.innerHTML = renderMarkdown(finalText); scrollMessages(); }
           };
           if (shown >= target.length) { const f = finalize; finalize = null; f(); }
           else pumpType();
         } else if (ev.type === 'error') {
           ended = true;
           stopType();
+          clearLoading();
           if (bubble) { bubble.classList.remove('claude-streaming'); bubble.classList.add('claude-error'); bubble.textContent = errorText(ev.message); }
         }
       }
@@ -591,9 +601,15 @@ async function send() {
   } catch (err) {
     ended = true;
     stopType();
+    clearLoading();
     if (err && err.name === 'AbortError') {
-      // Nutzer-Stopp: den bis hier empfangenen Teil behalten und markieren.
-      if (bubble) { bubble.classList.remove('claude-streaming'); bubble.innerHTML = renderMarkdown(target); markAborted(bubble); scrollMessages(); }
+      // Nutzer-Stopp: gab es schon Text, behalten und markieren; sonst die noch
+      // leere Blase ganz entfernen (der Server speichert dann auch nichts).
+      if (target.trim()) {
+        if (bubble) { bubble.classList.remove('claude-streaming'); bubble.innerHTML = renderMarkdown(target); markAborted(bubble); scrollMessages(); }
+      } else if (row) {
+        row.remove();
+      }
     } else if (bubble) {
       bubble.classList.remove('claude-streaming'); bubble.classList.add('claude-error'); bubble.textContent = 'Verbindung unterbrochen.';
     }
