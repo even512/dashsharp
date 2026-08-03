@@ -17,6 +17,10 @@
 
 title: "Dash#"
 
+# Suchmaschine: jetzt bequem im UI unter /settings -> Effects -> Search waehlbar
+# (Google, DuckDuckGo, Bing, Startpage oder eigene URL) und server-weit in
+# config/settings.json gespeichert. Der Wert hier dient nur noch als Fallback,
+# solange config/settings.json fehlt.
 search:
   engine: "https://duckduckgo.com/?q="
 

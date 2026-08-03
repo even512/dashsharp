@@ -37,10 +37,11 @@
         <div id="date" style="font:500 13px/1 'JetBrains Mono',monospace;color:var(--text-3);margin-top:8px;text-transform:capitalize"></div>
       </div>
 
-      <div id="searchBar" class="glassy" style="flex:1;min-width:240px;max-width:420px;display:flex;align-items:center;gap:10px;background:var(--bg-glass);border:1px solid var(--border-1);border-radius:12px;padding:13px 16px;backdrop-filter:blur(6px)">
+      <div id="searchBar" class="glassy" style="position:relative;flex:1;min-width:240px;max-width:420px;display:flex;align-items:center;gap:10px;background:var(--bg-glass);border:1px solid var(--border-1);border-radius:12px;padding:13px 16px;backdrop-filter:blur(6px)">
         <span style="color:var(--accent);font-weight:700">›</span>
-        <input id="search" placeholder="Search or run a command…" style="flex:1;background:transparent;border:none;outline:none;color:var(--text-2);font:500 14px 'JetBrains Mono',monospace" />
+        <input id="search" placeholder="Search or run a command…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="flex:1;background:transparent;border:none;outline:none;color:var(--text-2);font:500 14px 'JetBrains Mono',monospace" />
         <kbd style="font:600 11px 'JetBrains Mono',monospace;color:var(--text-3);border:1px solid rgba(120,150,200,0.2);border-radius:6px;padding:3px 7px">⌘K</kbd>
+        <div id="searchSuggest" role="listbox" style="display:none;position:absolute;top:calc(100% + 8px);left:0;right:0;z-index:60;background:var(--bg-glass);border:1px solid var(--border-1);border-radius:12px;backdrop-filter:blur(12px);overflow:hidden;box-shadow:0 14px 44px rgba(0,0,0,0.38)"></div>
       </div>
 
       <div class="dash-header-icons" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -748,6 +749,23 @@
             <div class="cfg-row">
               <span class="cfg-key">Show search bar</span>
               <div class="switch on" data-toggle="searchOn"><span></span></div>
+            </div>
+
+            <div class="cfg-section">Search</div>
+            <div class="cfg-row">
+              <span class="cfg-key">Search engine</span>
+              <select id="searchEngineSelect" style="background:var(--bg-info-card);border:1px solid var(--border-1);border-radius:7px;padding:7px 9px;color:var(--text-2);font:500 12px 'JetBrains Mono',monospace;outline:none;cursor:pointer">
+                <option value="google">Google</option>
+                <option value="ddg">DuckDuckGo</option>
+                <option value="bing">Bing</option>
+                <option value="startpage">Startpage</option>
+                <option value="custom">Eigene URL…</option>
+              </select>
+            </div>
+            <div class="cfg-row" id="searchEngineCustomRow" style="display:none;flex-direction:column;align-items:stretch;gap:6px">
+              <span class="cfg-key">Eigene Such-URL</span>
+              <input id="searchEngineCustomUrl" type="text" placeholder="https://example.com/search?q=" style="background:var(--bg-info-card);border:1px solid var(--border-1);border-radius:7px;padding:7px 9px;color:var(--text-2);font:500 11px 'JetBrains Mono',monospace;outline:none;width:100%;box-sizing:border-box" />
+              <span style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-3);line-height:1.5">Query wird angehängt (oder <code>%s</code> ersetzt). Für eigene URLs gibt es keine Vorschläge.</span>
             </div>
           </div>
 

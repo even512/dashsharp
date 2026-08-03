@@ -466,7 +466,9 @@ const state = {
   settingsCategory: 'general',
   settingsTab: null,
   layoutEditOn: false,
-  searchEngine: 'https://duckduckgo.com/?q=',
+  searchEngine: 'https://duckduckgo.com/?q=', // aufgeloester Praefix fuer den Redirect
+  searchEngineId: 'ddg',                      // Preset-Key ('custom' fuer eigene URL) -> Vorschlags-Provider
+  searchEngineUrl: '',                        // eigene URL, nur wenn searchEngineId === 'custom'
 };
 
 let clockTimer = null;
@@ -3794,7 +3796,8 @@ async function loadConfig() {
       document.title = cfg.title;
       setText('brandName', cfg.title);
     }
-    if (cfg.search && cfg.search.engine) state.searchEngine = cfg.search.engine;
+    // Suchmaschine kommt jetzt aus /api/settings (server-weit, im UI waehlbar);
+    // services.yaml dient dort nur noch als Fallback. Siehe loadSettings().
     renderQuickLinks(cfg.quicklinks || []);
   } catch (err) {
     console.error('Failed to load configuration:', err);
@@ -3845,22 +3848,227 @@ function renderQuickLinks(items) {
 }
 
 /* ---------- Suche ---------- */
+
+// Aufgeloesten Praefix + Query zusammensetzen ('%s' wird ersetzt, sonst angehaengt).
+function _buildSearchUrl(q) {
+  const base = state.searchEngine || 'https://duckduckgo.com/?q=';
+  return base.includes('%s') ? base.replace('%s', encodeURIComponent(q)) : base + encodeURIComponent(q);
+}
+
+// Sieht die Eingabe wie eine Adresse aus? -> normalisierte URL, sonst null.
+function _looksLikeUrl(s) {
+  s = (s || '').trim();
+  if (!s || /\s/.test(s)) return null;                                        // Leerzeichen -> Suche
+  if (/^https?:\/\//i.test(s)) return s;                                       // vollstaendige URL
+  if (/^localhost(:\d{2,5})?(\/\S*)?$/i.test(s)) return 'http://' + s;         // localhost
+  if (/^\d{1,3}(\.\d{1,3}){3}(:\d{2,5})?(\/\S*)?$/.test(s)) return 'http://' + s; // IPv4
+  if (/^[a-z0-9][a-z0-9.-]*:\d{2,5}(\/\S*)?$/i.test(s)) return 'http://' + s;  // host:port (lokaler Dienst)
+  if (/^[a-z0-9][a-z0-9-]*(\.[a-z0-9-]+)*\.[a-z]{2,}(:\d{2,5})?(\/\S*)?$/i.test(s)) return 'https://' + s; // Domain mit TLD
+  return null;
+}
+
+/* Suchverlauf (lokal, kein externer Traffic) */
+const _SEARCH_HISTORY_KEY = 'homelab.searchHistory';
+function loadSearchHistory() {
+  try { const a = JSON.parse(localStorage.getItem(_SEARCH_HISTORY_KEY) || '[]'); return Array.isArray(a) ? a.slice(0, 8) : []; }
+  catch { return []; }
+}
+function saveSearchHistory(arr) {
+  try { localStorage.setItem(_SEARCH_HISTORY_KEY, JSON.stringify(arr.slice(0, 8))); } catch { /* localStorage evtl. nicht verfuegbar */ }
+}
+function pushSearchHistory(q) {
+  q = (q || '').trim(); if (!q) return;
+  const arr = loadSearchHistory().filter((x) => x.toLowerCase() !== q.toLowerCase());
+  arr.unshift(q);
+  saveSearchHistory(arr);
+}
+function removeSearchHistory(q) {
+  saveSearchHistory(loadSearchHistory().filter((x) => x !== q));
+}
+
+// Suche ausfuehren: Adresse -> direkt navigieren; sonst Suchmaschine (+ Verlauf).
+function runSearch(raw, opts = {}) {
+  const q = (raw || '').trim();
+  if (!q) return;
+  const asUrl = _looksLikeUrl(q);
+  const url = asUrl || _buildSearchUrl(q);
+  if (!asUrl) pushSearchHistory(q);   // nur echte Suchbegriffe merken
+  hideSuggest();
+  if (opts.newTab) window.open(url, '_blank', 'noopener');
+  else window.location.href = url;
+}
+
+/* Vorschlags-Dropdown */
+let _sugItems = [];     // [{ text, kind: 'history'|'suggest'|'url' }]
+let _sugIndex = -1;
+let _sugTimer = null;
+let _sugSeq = 0;
+
+function _sugBox() { return $('searchSuggest'); }
+function hideSuggest() {
+  const box = _sugBox();
+  if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+  _sugItems = []; _sugIndex = -1;
+}
+function _paintActive() {
+  const box = _sugBox(); if (!box) return;
+  Array.from(box.children).forEach((c, i) => { c.style.background = i === _sugIndex ? 'var(--bg-info-card)' : ''; });
+}
+function _renderSuggest() {
+  const box = _sugBox(); if (!box) return;
+  if (!_sugItems.length) { hideSuggest(); return; }
+  box.innerHTML = '';
+  _sugItems.forEach((it, i) => {
+    const rowEl = document.createElement('div');
+    rowEl.setAttribute('role', 'option');
+    rowEl.style.cssText = `display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;font:500 13px 'JetBrains Mono',monospace;color:var(--text-2);border-top:${i ? '1px solid var(--border-1)' : 'none'};${i === _sugIndex ? 'background:var(--bg-info-card)' : ''}`;
+    const icon = document.createElement('span');
+    icon.textContent = it.kind === 'history' ? '↩' : (it.kind === 'url' ? '↗' : '⌕');
+    icon.style.cssText = 'color:var(--text-3);flex-shrink:0;width:14px;text-align:center';
+    const label = document.createElement('span');
+    label.textContent = it.text;
+    label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    rowEl.appendChild(icon); rowEl.appendChild(label);
+    if (it.kind === 'history') {
+      const del = document.createElement('span');
+      del.textContent = '✕'; del.title = 'Aus Verlauf entfernen';
+      del.style.cssText = 'color:var(--text-3);flex-shrink:0;padding:0 4px;font-size:11px';
+      del.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); removeSearchHistory(it.text); _showHistory(); });
+      rowEl.appendChild(del);
+    }
+    rowEl.addEventListener('mouseenter', () => { _sugIndex = i; _paintActive(); });
+    rowEl.addEventListener('mousedown', (e) => { e.preventDefault(); _chooseSug(i); });
+    box.appendChild(rowEl);
+  });
+  box.style.display = 'block';
+}
+function _chooseSug(i) {
+  const it = _sugItems[i]; if (!it) return;
+  const input = $('search'); if (input) input.value = it.text;
+  runSearch(it.text);
+}
+function _showHistory() {
+  _sugItems = loadSearchHistory().map((t) => ({ text: t, kind: 'history' }));
+  _sugIndex = -1;
+  _renderSuggest();
+}
+async function _updateSuggest(q) {
+  q = (q || '').trim();
+  if (!q) { _showHistory(); return; }
+  const items = [];
+  if (_looksLikeUrl(q)) items.push({ text: q, kind: 'url' });
+  const seq = ++_sugSeq;
+  try {
+    const res = await fetch('/api/search/suggest?q=' + encodeURIComponent(q), { cache: 'no-store' });
+    if (seq !== _sugSeq) return;                 // veraltete Antwort verwerfen
+    const data = await res.json();
+    for (const s of (data.suggestions || [])) {
+      if (s && s.toLowerCase() !== q.toLowerCase()) items.push({ text: s, kind: 'suggest' });
+    }
+  } catch { /* offline/Fehler -> ggf. nur die URL-Zeile */ }
+  if (seq !== _sugSeq) return;
+  _sugItems = items; _sugIndex = -1;
+  _renderSuggest();
+}
+function _onQueryInput() {
+  const input = $('search'); if (!input) return;
+  const q = input.value;
+  clearTimeout(_sugTimer);
+  if (!q.trim()) { _showHistory(); return; }
+  _sugTimer = setTimeout(() => _updateSuggest(q), 120);
+}
+
 function setupSearch() {
   const input = $('search');
   if (!input) return;
+
+  input.addEventListener('input', _onQueryInput);
+  input.addEventListener('focus', () => { _onQueryInput(); });
+  input.addEventListener('blur', () => { setTimeout(hideSuggest, 120); });
+
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      const q = input.value.trim();
-      if (q) window.location.href = state.searchEngine + encodeURIComponent(q);
-    }
-  });
-  document.addEventListener('keydown', (e) => {
-    const tag = document.activeElement?.tagName;
-    if ((e.key === '/' || (e.key.toLowerCase() === 'k' && (e.metaKey || e.ctrlKey))) && tag !== 'INPUT' && tag !== 'TEXTAREA') {
+    if (e.key === 'ArrowDown') {
       e.preventDefault();
-      input.focus();
+      if (_sugItems.length) { _sugIndex = (_sugIndex + 1) % _sugItems.length; _paintActive(); }
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (_sugItems.length) { _sugIndex = (_sugIndex <= 0 ? _sugItems.length : _sugIndex) - 1; _paintActive(); }
+      return;
+    }
+    if (e.key === 'Tab') {
+      if (_sugIndex >= 0 && _sugItems[_sugIndex]) { e.preventDefault(); input.value = _sugItems[_sugIndex].text; _onQueryInput(); }
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const chosen = (_sugIndex >= 0 && _sugItems[_sugIndex]) ? _sugItems[_sugIndex].text : input.value;
+      runSearch(chosen, { newTab: e.metaKey || e.ctrlKey });
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (_sugBox() && _sugBox().style.display !== 'none') hideSuggest();
+      else { input.value = ''; input.blur(); }
     }
   });
+
+  // Globale Tastatur: '/' und Cmd/Ctrl+K fokussieren; jeder andere druckbare
+  // Tastendruck landet automatisch in der Bar (Type-to-search wie im Win-11-
+  // Startmenue) — solange nicht in einem Feld/Modal getippt wird.
+  document.addEventListener('keydown', (e) => {
+    if (!state.searchOn) return;
+    const ae = document.activeElement;
+    const tag = ae && ae.tagName;
+    const typingElsewhere = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (ae && ae.isContentEditable);
+
+    if ((e.key === '/' || (e.key.toLowerCase() === 'k' && (e.metaKey || e.ctrlKey))) && !typingElsewhere) {
+      e.preventDefault(); input.focus(); return;
+    }
+
+    if (typingElsewhere || ae === input) return;      // schon am Tippen -> nicht kapern
+    if (e.metaKey || e.ctrlKey || e.altKey) return;   // Shortcuts (Ctrl+C …) durchlassen
+    if (e.key === ' ') return;                         // Space bleibt Scroll
+    if (e.key.length !== 1) return;                    // nur druckbare Einzelzeichen
+    if ($('settingsModal') && $('settingsModal').classList.contains('open')) return;
+
+    e.preventDefault();
+    input.focus();
+    input.value += e.key;
+    _onQueryInput();
+  });
+}
+
+/* ---------- Such-Einstellungen (server-weit via /api/settings) ---------- */
+function _applyEngineUi() {
+  const sel = $('searchEngineSelect');
+  const row = $('searchEngineCustomRow');
+  const url = $('searchEngineCustomUrl');
+  if (sel) sel.value = state.searchEngineId;
+  if (row) row.style.display = state.searchEngineId === 'custom' ? 'flex' : 'none';
+  if (url && document.activeElement !== url) url.value = state.searchEngineUrl || '';
+}
+async function saveSearchEngine() {
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ searchEngineId: state.searchEngineId, searchEngineUrl: state.searchEngineUrl }),
+    });
+    const data = await res.json();
+    if (data && data.searchPrefix) state.searchEngine = data.searchPrefix;
+  } catch (err) { console.error('Suchmaschine speichern fehlgeschlagen:', err); }
+}
+async function loadSettings() {
+  try {
+    const res = await fetch('/api/settings', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.searchPrefix) state.searchEngine = data.searchPrefix;
+    if (data.searchEngineId) state.searchEngineId = data.searchEngineId;
+    if (typeof data.searchEngineUrl === 'string') state.searchEngineUrl = data.searchEngineUrl;
+    _applyEngineUi();
+  } catch (err) { console.error('Settings laden fehlgeschlagen:', err); }
 }
 
 /* ---------- Quick access editor ---------- */
@@ -5868,6 +6076,18 @@ function setupSettings() {
   document.querySelectorAll('.switch[data-toggle]').forEach((sw) =>
     sw.addEventListener('click', () => toggle(sw.dataset.toggle)));
 
+  const engSel = $('searchEngineSelect');
+  if (engSel) engSel.addEventListener('change', () => {
+    state.searchEngineId = engSel.value;
+    _applyEngineUi();
+    saveSearchEngine();
+  });
+  const engUrl = $('searchEngineCustomUrl');
+  if (engUrl) engUrl.addEventListener('change', () => {
+    state.searchEngineUrl = engUrl.value.trim();
+    saveSearchEngine();
+  });
+
   const range = $('updateRange');
   if (range) range.addEventListener('input', (e) => setUpdateMs(e.target.value));
 
@@ -6502,5 +6722,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupVmConsoleModal();
   setupNextcloudUpload();
   loadConfig();
+  loadSettings();
   loadVersionInfo();
 });

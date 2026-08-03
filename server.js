@@ -363,6 +363,7 @@ const DISKS_CFG_PATH     = path.join(__dirname, 'config', 'disks.json');
 const LAYOUT_CFG_PATH    = path.join(__dirname, 'config', 'dashboard-layout.json');
 const DASHBOARD_CFG_PATH = path.join(__dirname, 'config', 'dashboard.json');
 const VM_CFG_PATH        = path.join(__dirname, 'config', 'vms.json');
+const SETTINGS_CFG_PATH  = path.join(__dirname, 'config', 'settings.json');
 
 function readDiskCfg() {
   const d = readJsonCached(DISKS_CFG_PATH, null);
@@ -712,6 +713,128 @@ app.get('/api/config', (req, res) => {
   } catch (err) {
     console.error('Konfiguration konnte nicht gelesen werden:', err.message);
     res.status(500).json({ error: 'config_read_failed', message: err.message });
+  }
+});
+
+/* ============================================================
+   Such-Einstellungen + Vorschlags-Proxy
+   Die Suchmaschine ist ab jetzt im UI waehlbar und wird server-weit in
+   config/settings.json gehalten (services.yaml ist read-only, per Hand). Die
+   Vorschlaege holt der Server serverseitig von der Suggest-API der gewaehlten
+   Maschine — der Browser spricht also nur mit Dash# selbst ("nothing phoning
+   home"), genau wie beim Icon-Proxy.
+   ============================================================ */
+const SEARCH_ENGINES = {
+  google:    { label: 'Google',     search: 'https://www.google.com/search?q=',          suggest: 'google' },
+  ddg:       { label: 'DuckDuckGo', search: 'https://duckduckgo.com/?q=',                suggest: 'ddg' },
+  bing:      { label: 'Bing',       search: 'https://www.bing.com/search?q=',            suggest: 'bing' },
+  startpage: { label: 'Startpage',  search: 'https://www.startpage.com/sp/search?query=', suggest: 'startpage' },
+};
+const DEFAULT_ENGINE_ID = 'ddg';
+
+// services.yaml als Fallback: dort steht search.engine weiterhin als kompletter
+// URL-Praefix. Passt er zu einem Preset -> dessen id, sonst "custom" mit der URL.
+function engineFromYaml() {
+  try {
+    const url = ((readConfig().search) || {}).engine;
+    if (!url) return null;
+    for (const [id, e] of Object.entries(SEARCH_ENGINES)) {
+      if (e.search === url) return { searchEngineId: id, searchEngineUrl: '' };
+    }
+    return { searchEngineId: 'custom', searchEngineUrl: String(url) };
+  } catch { return null; }
+}
+
+function readSettings() {
+  const s = readJsonCached(SETTINGS_CFG_PATH, null);
+  let id  = s && typeof s.searchEngineId  === 'string' ? s.searchEngineId  : null;
+  let url = s && typeof s.searchEngineUrl === 'string' ? s.searchEngineUrl : '';
+  if (!id) {
+    const y = engineFromYaml();
+    if (y) { id = y.searchEngineId; url = y.searchEngineUrl; }
+  }
+  if (!id) id = DEFAULT_ENGINE_ID;
+  return { searchEngineId: id, searchEngineUrl: url };
+}
+
+// Aufgeloester Such-Praefix, den das Frontend an die Anfrage haengt.
+function resolveSearchPrefix(st) {
+  if (st.searchEngineId === 'custom') return st.searchEngineUrl || SEARCH_ENGINES[DEFAULT_ENGINE_ID].search;
+  return (SEARCH_ENGINES[st.searchEngineId] || SEARCH_ENGINES[DEFAULT_ENGINE_ID]).search;
+}
+
+app.get('/api/settings', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const st = readSettings();
+  const engines = {};
+  for (const [id, e] of Object.entries(SEARCH_ENGINES)) engines[id] = { label: e.label, search: e.search };
+  res.json({ ...st, searchPrefix: resolveSearchPrefix(st), engines, defaultEngineId: DEFAULT_ENGINE_ID });
+});
+
+app.post('/api/settings', (req, res) => {
+  const b = req.body || {};
+  const next = readSettings();
+  if (typeof b.searchEngineId === 'string') {
+    if (b.searchEngineId === 'custom' || SEARCH_ENGINES[b.searchEngineId]) next.searchEngineId = b.searchEngineId;
+  }
+  if (typeof b.searchEngineUrl === 'string') next.searchEngineUrl = b.searchEngineUrl.trim().slice(0, 500);
+  try {
+    writeJsonAtomic(SETTINGS_CFG_PATH, next);
+    res.json({ ok: true, ...next, searchPrefix: resolveSearchPrefix(next) });
+  } catch (err) {
+    console.error('Settings konnten nicht gespeichert werden:', err.message);
+    res.status(500).json({ ok: false, error: 'write_failed' });
+  }
+});
+
+// Kleiner In-Memory-Cache: jeder Tastendruck erzeugt eine Anfrage — denselben
+// Praefix nicht wiederholt nach draussen tragen. Kurze TTL, gedeckelte Groesse.
+const _suggestCache = new Map(); // key `${provider}\n${q}` -> { ts, list }
+const SUGGEST_TTL = 5 * 60 * 1000;
+
+async function fetchSuggestions(provider, q) {
+  const key = provider + '\n' + q;
+  const hit = _suggestCache.get(key);
+  if (hit && (Date.now() - hit.ts) < SUGGEST_TTL) return hit.list;
+
+  let url;
+  if      (provider === 'google')    url = 'https://suggestqueries.google.com/complete/search?client=firefox&q=' + encodeURIComponent(q);
+  else if (provider === 'ddg')       url = 'https://duckduckgo.com/ac/?type=list&q=' + encodeURIComponent(q);
+  else if (provider === 'bing')      url = 'https://www.bing.com/osjson.aspx?query=' + encodeURIComponent(q);
+  else if (provider === 'startpage') url = 'https://www.startpage.com/osuggestions?q=' + encodeURIComponent(q);
+  else return [];
+
+  const r = await fetch(url, { signal: AbortSignal.timeout(4000), headers: { 'User-Agent': 'Mozilla/5.0 Dash#' } });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const data = await r.json();
+
+  // Normalisieren: Google/DDG(list)/Bing liefern [query, [suggestions…]];
+  // Startpage liefert { suggestions: [{ text }] }.
+  let list = [];
+  if (Array.isArray(data) && Array.isArray(data[1])) {
+    list = data[1].map((x) => (typeof x === 'string' ? x : (x && x.phrase) || '')).filter(Boolean);
+  } else if (data && Array.isArray(data.suggestions)) {
+    list = data.suggestions.map((x) => (typeof x === 'string' ? x : (x && (x.text || x.phrase)) || '')).filter(Boolean);
+  }
+  list = list.slice(0, 8);
+
+  _suggestCache.set(key, { ts: Date.now(), list });
+  if (_suggestCache.size > 500) _suggestCache.delete(_suggestCache.keys().next().value);
+  return list;
+}
+
+app.get('/api/search/suggest', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const q = String(req.query.q || '').trim().slice(0, 200);
+  if (!q) return res.json({ q: '', suggestions: [] });
+  const st = readSettings();
+  const provider = st.searchEngineId === 'custom' ? null : (SEARCH_ENGINES[st.searchEngineId] || {}).suggest;
+  if (!provider) return res.json({ q, suggestions: [] });
+  try {
+    res.json({ q, suggestions: await fetchSuggestions(provider, q) });
+  } catch (err) {
+    // Vorschlaege sind Komfort, kein Muss: bei Upstream-Fehler leere Liste statt 500.
+    res.json({ q, suggestions: [], error: 'upstream' });
   }
 });
 
