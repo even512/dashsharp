@@ -27,6 +27,7 @@ const CL = {
   sending: false,
   attachments: [], // vorbereitete Anhänge (vor dem Absenden)
   abort: null,     // AbortController des laufenden Chat-Requests
+  _typeCtl: null,  // { pause, resume } der aktuellen Schreibmaschinen-rAF (Page-Hooks)
 };
 
 /* ---------- Anhänge (Datei-Upload) ---------- */
@@ -515,6 +516,7 @@ async function send() {
   let ended = false;       // Stream abgeschlossen (done)
   let finalize = null;     // Schluss-Render, sobald alles sichtbar ist
   let rafId = 0;
+  let paused = false;      // Kachel auf inaktiver Unterseite → Reveal einfrieren
   let carry = 0;           // aufgelaufener Sub-Zeichen-Bruchteil
   let lastTs = 0;          // Zeitstempel des letzten Frames
 
@@ -546,11 +548,20 @@ async function send() {
     } else {
       carry = 0;
     }
-    if (shown < target.length) { rafId = requestAnimationFrame(typeTick); }
-    else { lastTs = 0; if (ended && finalize) { const f = finalize; finalize = null; f(); } }
+    if (shown < target.length && !paused) { rafId = requestAnimationFrame(typeTick); }
+    else { lastTs = 0; if (!paused && ended && finalize) { const f = finalize; finalize = null; f(); } }
   };
-  const pumpType = () => { if (!rafId && shown < target.length) rafId = requestAnimationFrame(typeTick); };
+  const pumpType = () => { if (!rafId && !paused && shown < target.length) rafId = requestAnimationFrame(typeTick); };
   const stopType = () => { if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } };
+  // Von den Page-Hooks der Registry gesteuert: liegt die Claude-Kachel auf einer
+  // NICHT sichtbaren Unterseite, friert pause() die Schreibmaschine ein (der
+  // fetch-Stream laeuft weiter → kein Text geht verloren); resume() holt beim
+  // Zurueckwechseln den aufgelaufenen Rueckstand nach. lastTs reset gegen Burst.
+  const thisCtl = {
+    pause() { paused = true; stopType(); },
+    resume() { paused = false; lastTs = 0; pumpType(); },
+  };
+  CL._typeCtl = thisCtl;
 
   CL.abort = new AbortController();
   try {
@@ -852,6 +863,12 @@ Dash.registerModule({
   event: 'claude',
   handler: renderClaude,
   refresh: () => { wireClaude(); return pollClaude(); },
+
+  // Liegt die Kachel auf einer nicht sichtbaren Unterseite, friert die
+  // Schreibmaschinen-rAF ein (der Chat-Stream laeuft weiter → kein Textverlust);
+  // beim Zurueckwechseln holt sie den Rueckstand nach. Kein aktiver Stream → No-op.
+  onPageHide: () => { CL._typeCtl?.pause(); },
+  onPageShow: () => { CL._typeCtl?.resume(); },
 
   template: () => `
     <div class="tile claude-tile">

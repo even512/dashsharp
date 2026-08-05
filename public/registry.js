@@ -108,6 +108,22 @@ window.Dash = (function () {
     return out;
   }
 
+  // { widgetId: { onPageShow, onPageHide } } — Lifecycle beim Seitenwechsel.
+  // Ein Modul, das auf einer Unterseite Dauerarbeit leistet (rAF-Schleife,
+  // teurer Redraw), haengt sie hier an: onPageHide friert sie ein, sobald die
+  // Unterseite nicht mehr sichtbar ist, onPageShow taut sie wieder auf. app.js
+  // weiss, welche Kacheln auf welcher Seite liegen, und ruft die Hooks passend.
+  // Beide Felder sind optional; Module ohne Hooks tauchen hier gar nicht auf.
+  function pageHooks() {
+    const out = {};
+    for (const m of modules) {
+      if (typeof m.onPageShow === 'function' || typeof m.onPageHide === 'function') {
+        out[m.id] = { onPageShow: m.onPageShow, onPageHide: m.onPageHide };
+      }
+    }
+    return out;
+  }
+
   // { sseEvent: (data) => void }
   function pushHandlers() { return { ...handlers }; }
 
@@ -128,7 +144,7 @@ window.Dash = (function () {
 
   return {
     registerModule, registerHandler,
-    widgets, options, refreshers, pushHandlers, settingsTree, tabLoaders,
+    widgets, options, refreshers, pageHooks, pushHandlers, settingsTree, tabLoaders,
     get, all,
   };
 })();

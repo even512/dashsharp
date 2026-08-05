@@ -850,6 +850,15 @@ function pauseGraphAnim() {
   graphRafStarted = false;
   if (_graphFrameHandle != null) { cancelAnimationFrame(_graphFrameHandle); _graphFrameHandle = null; }
 }
+// Der Graph-rAF (Sparklines + Netz-Flow) darf nur laufen, wenn er auch etwas zu
+// zeichnen hat: eine glances-Kachel muss auf der aktiven Unterseite liegen UND
+// der Tab sichtbar sein. Sonst zeichnete er 60fps-Dauerlast auf jeder Seite —
+// auch auf Unterseiten ganz ohne Graph. Einziger Ein-/Ausschaltpunkt; von
+// showPage(), dem visibilitychange-Handler und dem Init aufgerufen.
+function _syncGraphAnim() {
+  if (!document.hidden && anyWidgetOnActivePage(GLANCES_WIDGETS)) startGraphAnim();
+  else pauseGraphAnim();
+}
 
 /* ---------- Storage tiles (disks) ----------
    Bars always keep the nice blue→green gradient; "nearly full" is only signaled
@@ -3776,13 +3785,10 @@ function pauseLive() {
 // (with an immediate refresh via startLive()) when it becomes visible again.
 function setupVisibilityHandling() {
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      pauseGraphAnim();
-      pauseLive();
-    } else {
-      startGraphAnim();
-      startLive();
-    }
+    // _syncGraphAnim() entscheidet selbst anhand von document.hidden +
+    // Graph-Kachel-auf-aktiver-Seite, ob der rAF laufen darf.
+    _syncGraphAnim();
+    if (document.hidden) pauseLive(); else startLive();
   });
 }
 
@@ -4471,6 +4477,9 @@ const DASHBOARD_WIDGETS = Dash.widgets();
 const WIDGET_OPTIONS    = Dash.options();
 // Nach einer Config-Aenderung bzw. beim Seitenwechsel die Kachel neu laden.
 const WIDGET_REFRESH    = Dash.refreshers();
+// Lifecycle-Hooks je Kachel: { id: { onPageShow, onPageHide } }. Damit friert
+// ein Modul seine Dauerarbeit ein, sobald seine Unterseite unsichtbar wird.
+const WIDGET_PAGE_HOOKS = Dash.pageHooks();
 // Routing der Server-Push-Events (Event-Namen = PUSH_SOURCES in server.js) auf
 // die Kachel-Handler. Dieselben Handler nutzt auch der REST-Fallback.
 const PUSH_HANDLERS     = Dash.pushHandlers();
@@ -4928,12 +4937,29 @@ function _refreshActivePageWidgets() {
   });
 }
 
+// Ruft onPageShow/onPageHide fuer alle sichtbaren Widgets EINER Unterseite. So
+// friert die verlassene Seite ihre Dauerarbeit ein und die neue taut sie auf.
+function _dispatchPageHooks(pageId, phase) {
+  if (!pageId || !_dashboard || !Array.isArray(_dashboard.tiles)) return;
+  _dashboard.tiles.forEach((t) => {
+    if (t.type !== 'widget' || t.hidden || t.page !== pageId) return;
+    const hook = WIDGET_PAGE_HOOKS[t.id]?.[phase];
+    if (hook) { try { hook(t.id, pageId); } catch { /* ignore */ } }
+  });
+}
+
 function showPage(pageId) {
   if (!_dashboard.pages.some((p) => p.id === pageId)) pageId = _dashboard.pages[0].id;
+  const prevPage = _activePage;
   _activePage = pageId;
   buildGridForPage(pageId);
   _applyGridVisibility();
   renderPageTabs();
+  // Module der verlassenen Seite einfrieren, die der neuen auftauen. Danach den
+  // Graph-rAF an die neue Seite koppeln (laeuft nur mit Graph-Kachel sichtbar).
+  if (prevPage && prevPage !== pageId) _dispatchPageHooks(prevPage, 'onPageHide');
+  _dispatchPageHooks(pageId, 'onPageShow');
+  _syncGraphAnim();
   // Lazy-Load pro Unterseite: erst beim (Wieder-)Anzeigen die Live-Daten der
   // sichtbaren Kacheln anstossen. Waehrend des Erst-Inits (_liveStarted=false)
   // uebernimmt startLive() den ersten Paint -> hier nichts tun (kein Doppel-Fetch).
@@ -6713,7 +6739,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   tickClock();
   clockTimer = setInterval(tickClock, 1000);
   renderData();
-  startGraphAnim();
+  _syncGraphAnim();
   startLive();
   setupVisibilityHandling();
   setupSearch();
