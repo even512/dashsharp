@@ -59,10 +59,28 @@ function applyTxLayout() {
   pick('tx-space-', 'spacing', TX_SPACINGS);
 }
 
+/* ---------- Effektiver Zustand ----------
+   Das Backend liefert zwei Zahlen: releaseCount (echte Releases, ohne
+   Kino-Abfilmung) und camCount (CAM/TS). Bei aktivem CAM-Filter (Standard)
+   zaehlt nur releaseCount — ein Film mit ausschliesslich CAMs wird dann rot,
+   nicht gruen. So schaltet der Toggle ohne neuen Serverabruf um. `unknown`
+   (xrel nicht erreichbar) bleibt in jedem Fall grau. */
+function _txHideCam() {
+  return _cfgVal('tmdb-xrel', 'hideCam') !== false; // Standard AN
+}
+
+function _txEffective(item) {
+  if (item.status === 'unknown') return { status: 'unknown', count: 0 };
+  const good = Number(item.releaseCount) || 0;
+  const cam = Number(item.camCount) || 0;
+  const count = _txHideCam() ? good : good + cam;
+  return { status: count > 0 ? 'found' : 'none', count };
+}
+
 /* ---------- Filter ---------- */
 function _txFilter(movies) {
   const onlyFound = _cfgVal('tmdb-xrel', 'onlyFound') === true;
-  return (movies || []).filter((m) => !onlyFound || m.status === 'found');
+  return (movies || []).filter((m) => !onlyFound || _txEffective(m).status === 'found');
 }
 
 /* ---------- Zeilen ---------- */
@@ -80,8 +98,8 @@ function _txCreateRow() {
 
   const open = () => {
     const it = row._item;
-    // Nur gruene Filme haben eine xrel-Id und damit etwas zu zeigen.
-    if (it && it.status === 'found' && it.xrelId) openTxDetail(it.xrelId, it);
+    // Nur gruene Filme (nach CAM-Filter) haben etwas zu zeigen.
+    if (it && it.xrelId && _txEffective(it).status === 'found') openTxDetail(it.xrelId, it);
   };
   row.addEventListener('click', open);
   row.addEventListener('keydown', (e) => {
@@ -99,21 +117,25 @@ function _txUpdateRow(row, item, prev) {
     row.title = item.originalTitle ? `${item.title} — ${item.originalTitle}` : item.title;
   }
 
-  if (!prev || prev.status !== item.status || prev.releaseCount !== item.releaseCount) {
-    row.classList.toggle('tx-found', item.status === 'found');
-    row.classList.toggle('tx-none', item.status === 'none');
-    row.classList.toggle('tx-unknown', item.status === 'unknown');
+  // Der effektive Zustand haengt am CAM-Filter, nicht nur an item — deshalb
+  // immer neu berechnen (der Toggle aendert item selbst nicht).
+  const eff = _txEffective(item);
+  const key = `${eff.status}:${eff.count}`;
+  if (row._effKey !== key) {
+    row._effKey = key;
+    row.classList.toggle('tx-found', eff.status === 'found');
+    row.classList.toggle('tx-none', eff.status === 'none');
+    row.classList.toggle('tx-unknown', eff.status === 'unknown');
 
     // Nur gruene Zeilen sind anklickbar.
-    const clickable = item.status === 'found' && !!item.xrelId;
+    const clickable = eff.status === 'found' && !!item.xrelId;
     row.setAttribute('role', clickable ? 'button' : 'presentation');
     if (clickable) row.tabIndex = 0; else row.removeAttribute('tabindex');
     row.classList.toggle('tx-clickable', clickable);
 
-    const n = Number(item.releaseCount) || 0;
-    row._count.textContent = item.status === 'found'
-      ? (n === 1 ? '1 Release' : `${n} Releases`)
-      : item.status === 'unknown' ? 'ungeprüft' : '';
+    row._count.textContent = eff.status === 'found'
+      ? (eff.count === 1 ? '1 Release' : `${eff.count} Releases`)
+      : eff.status === 'unknown' ? 'ungeprüft' : '';
   }
 }
 
@@ -151,7 +173,7 @@ function renderTmdbXrel(d) {
   setTxEmpty(items.length ? '' : (all.length ? 'Kein Film passt zum Filter.' : 'Keine Filme geladen.'));
 
   if (badge) {
-    const found = all.filter((m) => m.status === 'found').length;
+    const found = all.filter((m) => _txEffective(m).status === 'found').length;
     const unknown = all.filter((m) => m.status === 'unknown').length;
     const stale = data._stale;
     badge.textContent = stale ? 'stale' : `${found}/${all.length} auf xrel`;
@@ -229,7 +251,10 @@ async function openTxDetail(xrelId, seed) {
   });
 
   try {
-    const d = await fetch(`/api/tmdb-xrel/releases?id=${encodeURIComponent(xrelId)}`, { cache: 'no-store' })
+    // CAMs im Modal nur zeigen, wenn der Filter aus ist — passend zur Zahl in
+    // der Zeile, damit beides dieselbe Wahrheit erzaehlt.
+    const cam = _txHideCam() ? '' : '&cam=1';
+    const d = await fetch(`/api/tmdb-xrel/releases?id=${encodeURIComponent(xrelId)}${cam}`, { cache: 'no-store' })
       .then((r) => r.json());
     // Zwischenzeitlich geschlossen oder ein anderer Film geoeffnet.
     if (_txDetail !== xrelId) return;
@@ -323,6 +348,9 @@ Dash.registerModule({
     </div>`,
 
   options: [
+    // Standard AN: CAM/TS zaehlen nicht mit und tauchen im Modal nicht auf.
+    // filter:true -> wirkt nur im Renderer, kein neuer Serverabruf.
+    { key: 'hideCam', label: 'CAM/TS ausblenden', type: 'toggle', default: true, filter: true, group: 'Auswahl' },
     { key: 'onlyFound', label: 'Nur auf xrel gefundene', type: 'toggle', default: false, filter: true, group: 'Auswahl' },
     { key: 'maxRows', label: 'Max. Filme', type: 'count', default: 0, group: 'Auswahl' },
 

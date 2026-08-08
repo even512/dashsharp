@@ -90,9 +90,13 @@ const SEARCH_RETRIES = 2;
 const VERIFY_MAX = 5;
 const SEARCH_LIMIT = 8;
 
-// Fuer das Modal: so viele Releases holen wir je Quelle (Scene/P2P).
-const RELEASE_PAGE = 25;
-const RELEASE_LIST_LIMIT = 40;
+// So viele Releases holen wir je Quelle (Scene/P2P). 100 ist das xrel-Maximum
+// pro Seite und reicht, um zuverlaessig zu zaehlen UND das Modal zu fuellen —
+// beides teilt sich denselben Abruf (loadReleases). Mehr als 100 Releases je
+// Quelle hat praktisch kein Film; die Zahl ist dann „100+ gefunden", was fuer
+// die Ampel voellig genuegt.
+const RELEASE_PAGE = 100;
+const RELEASE_LIST_LIMIT = 60; // Deckel fuers Modal nach dem Filtern
 
 /* Notbremse fuer das GESAMTlimit (nicht das Suchlimit): sinkt der allgemeine
    X-RateLimit-Remaining zu tief oder kommt ein 429 auf einer NICHT-Such-Route,
@@ -136,12 +140,13 @@ function makeCache(max, ttl) {
 }
 
 /* Ein Topf je Frage, damit die Laufzeiten vergleichbar sind:
-     imdbCache    24 h  die imdb_id eines Films aendert sich nie
-     searchCache   6 h  xrel-Suchtreffer zu einem Titel sind traege
-     countCache    3 h  Release-Zahl aendert sich, aber nicht im Minutentakt */
+     imdbCache     24 h  die imdb_id eines Films aendert sich nie
+     searchCache    6 h  xrel-Suchtreffer zu einem Titel sind traege
+     releaseCache   3 h  die Release-Liste je ext_info — von Zaehlung UND Modal
+                         genutzt, damit ein Klick keinen zweiten Abruf kostet */
 const imdbCache = makeCache(300, 24 * 3600 * 1000);
 const searchCache = makeCache(200, 6 * 3600 * 1000);
-const countCache = makeCache(200, 3 * 3600 * 1000);
+const releaseCache = makeCache(200, 3 * 3600 * 1000);
 
 // Parallele Anfragen auf denselben Schluessel teilen sich einen Abruf.
 const _inflight = new Map();
@@ -209,6 +214,22 @@ function stripSubtitle(s) {
 function imdbIdFrom(value) {
   const m = String(value || '').match(/tt\d{6,}/);
   return m ? m[0] : null;
+}
+
+/* Kino-Abfilmungen und Vorab-Leaks erkennen. xrel fuellt `video_type` bei
+   P2P-Releases NICHT — die Qualitaet steht nur im Release-Namen (dirname).
+   Deshalb wird der Name geprueft, verankert an Trennzeichen/Wortgrenzen, damit
+   „Nice.Cuts" nicht faelschlich als TC (Telecine) durchgeht.
+
+   Abgedeckt: CAM/CAMRip/HDCAM, TS/HDTS/TELESYNC, TC/HDTC/TELECINE, PDVD/PreDVD,
+   SCR/Screener/DVDScr/BDScr/WebScr, Workprint. Alles „im Kino abgefilmt oder
+   vorab geleakt" — die Kategorie schlechter Qualitaet. */
+const CAM_RE = /(?:^|[._\- ])(CAM|CAMRIP|HDCAM|HQCAM|CAMHD|TS|HDTS|TELESYNC|TC|HDTC|TELECINE|PDVD|PREDVD|SCR|SCREENER|DVDSCR|BDSCR|WEBSCR|WP|WORKPRINT)(?:[._\- ]|$)/i;
+
+function isCamRelease(dirname, videoType) {
+  // video_type gewinnt, wenn xrel es doch mal fuellt (Scene-Releases); sonst
+  // entscheidet der Name.
+  return CAM_RE.test(String(videoType || '')) || CAM_RE.test(String(dirname || ''));
 }
 
 /* ============================================================================
@@ -386,35 +407,49 @@ async function findExtInfo(ctx, film, query) {
   return titleFallback;
 }
 
-/* ---------- 5.2 Release-Zahl ----------
-   Fuer „gruen" (>=1 Release) fragen wir Scene (/release/ext_info) und P2P
-   (/p2p/releases) und summieren `total_count`. Scene zuerst — steht dort schon
-   etwas, sparen wir die P2P-Abfrage. */
-async function releaseCount(ctx, extInfoId) {
-  return cached(countCache, `count:${extInfoId}`, async () => {
+/* ---------- 5.2 Release-Liste laden (eine Quelle fuer Zaehlung UND Modal) ----
+   Frueher zaehlte die Kachel nur `total_count` von Scene und brach ab, sobald
+   Scene>0 war — deshalb zeigte „Minions" 1 (Scene) statt 8 (1 Scene + 7 P2P).
+   Jetzt werden Scene UND P2P immer geholt, normalisiert und gezaehlt, und das
+   Ergebnis liegt im releaseCache: der Modal-Klick trifft denselben Eintrag und
+   kostet keinen zweiten Abruf.
+
+   Wirft `rate_limited` weiter (Notbremse). Sind BEIDE Quellen aus einem anderen
+   Grund gescheitert, wissen wir nichts — dann wirft die Funktion, und matchXrel
+   macht daraus `unknown` (grau, nicht faelschlich rot). */
+async function loadReleases(ctx, extInfoId) {
+  return cached(releaseCache, `rel:${extInfoId}`, async () => {
     let scene = null;
     let p2p = null;
     try {
-      const r = await xrelGet(ctx, `/release/ext_info.json?id=${encodeURIComponent(extInfoId)}&per_page=5`);
-      scene = Number(r && r.total_count) || 0;
-      if (scene > 0) return scene; // gruen steht fest, P2P sparen
+      const r = await xrelGet(ctx, `/release/ext_info.json?id=${encodeURIComponent(extInfoId)}&per_page=${RELEASE_PAGE}`);
+      scene = ((r && r.list) || []).map((rel) => normalizeRelease(rel, true)).filter(Boolean);
     } catch (err) { if (err.message === 'rate_limited') throw err; }
     try {
-      const r = await xrelGet(ctx, `/p2p/releases.json?ext_info_id=${encodeURIComponent(extInfoId)}&per_page=5`);
-      p2p = Number(r && r.total_count) || 0;
+      const r = await xrelGet(ctx, `/p2p/releases.json?ext_info_id=${encodeURIComponent(extInfoId)}&per_page=${RELEASE_PAGE}`);
+      p2p = ((r && r.list) || []).map((rel) => normalizeRelease(rel, false)).filter(Boolean);
     } catch (err) { if (err.message === 'rate_limited') throw err; }
-    // Beide Abfragen gescheitert (nicht Rate-Limit): dann wissen wir nichts —
-    // lieber grau als eine falsche Null. Der Wurf wird in matchXrel zu `unknown`.
-    if (scene === null && p2p === null) throw new Error('xrel: Release-Zahl nicht ermittelbar');
-    return (scene || 0) + (p2p || 0);
+
+    if (scene === null && p2p === null) throw new Error('xrel: Releases nicht ermittelbar');
+    return [...(scene || []), ...(p2p || [])].sort((a, b) => b.time - a.time);
   });
 }
 
+// Zaehlt echte vs. CAM-Releases in einer geladenen Liste.
+function countReleases(list) {
+  let good = 0;
+  let cam = 0;
+  for (const r of list) (r.cam ? cam++ : good++);
+  return { total: list.length, good, cam };
+}
+
 /* ---------- 5.3 Ein Film ----------
-   Der einzige Ausgang mit Fehler ist `unknown` — jede Exception (Rate-Limit,
-   Ausfall) landet hier und faerbt den Film grau, nie rot. */
+   Liefert BEIDE Zahlen: `releaseCount` (ohne CAM) und `camCount`. Die Ampel
+   (gruen/rot) entscheidet das Frontend je nach CAM-Filter selbst — so schaltet
+   der Toggle ohne neuen Abruf um. Der einzige Fehlerausgang ist `unknown`:
+   jede Exception (Rate-Limit, Ausfall) faerbt den Film grau, nie rot. */
 async function matchXrel(ctx, film) {
-  const miss = { status: 'none', xrelId: null, xrelUrl: null, releaseCount: 0 };
+  const miss = { status: 'none', xrelId: null, xrelUrl: null, releaseCount: 0, camCount: 0 };
   try {
     let info = await findExtInfo(ctx, film, film.title);
     if (!info && film.originalTitle && film.originalTitle !== film.title) {
@@ -422,16 +457,19 @@ async function matchXrel(ctx, film) {
     }
     if (!info) return miss;
 
-    const count = await releaseCount(ctx, info.id);
+    const { good, cam } = countReleases(await loadReleases(ctx, info.id));
     return {
-      status: count > 0 ? 'found' : 'none',
+      // „found", sobald es irgendein Release gibt (auch nur CAM). Ob ein reiner
+      // CAM-Film als rot gilt, entscheidet der Filter im Frontend.
+      status: (good + cam) > 0 ? 'found' : 'none',
       xrelId: String(info.id),
       xrelUrl: /^https?:\/\//i.test(info.link_href || '') ? info.link_href : null,
-      releaseCount: count,
+      releaseCount: good,
+      camCount: cam,
     };
   } catch (err) {
     ctx.warn(`Abgleich (${film.title}): ${err.message}`);
-    return { status: 'unknown', xrelId: null, xrelUrl: null, releaseCount: 0 };
+    return { status: 'unknown', xrelId: null, xrelUrl: null, releaseCount: 0, camCount: 0 };
   }
 }
 
@@ -455,47 +493,42 @@ async function buildList(get, ctx) {
       status: match.status,
       xrelId: match.xrelId,
       xrelUrl: match.xrelUrl,
+      // Zwei Zahlen: echte Releases (ohne Kino-Abfilmung) und CAM/TS separat.
+      // Der CAM-Filter im Frontend rechnet daraus die angezeigte Zahl und die
+      // Ampelfarbe, ohne einen neuen Abruf zu brauchen.
       releaseCount: match.releaseCount,
+      camCount: match.camCount,
     });
   }
   return out;
 }
 
 /* ---------- 6.2 Die Release-Liste (fuers Modal) ----------
-   Lazy: laeuft erst beim Klick, damit der 6-h-Abruf nicht fuer jeden Film die
-   volle Release-Liste mitzieht. */
+   Nutzt loadReleases (Teil 5.2), teilt sich also den Cache mit der Zaehlung —
+   nach dem Kachel-Abruf ist der Klick praktisch gratis. `includeCam` steuert,
+   ob Kino-Abfilmungen mitkommen; der Client schickt es passend zum Toggle. */
 function normalizeRelease(r, scene) {
   if (!r) return null;
-  const size = (r.size && r.size.number)
-    ? `${r.size.number} ${r.size.unit || ''}`.trim()
-    : '';
+  const dirname = r.dirname || '';
+  const video = r.video_type || '';
   return {
-    id: String(r.id || r.dirname || ''),
-    dirname: r.dirname || '',
+    id: String(r.id || dirname || ''),
+    dirname,
     group: r.group_name || (r.group && r.group.name) || '',
     time: Number(r.time) || 0,
-    video: r.video_type || '',
+    video,
     audio: r.audio_type || '',
-    size,
+    size: (r.size && r.size.number) ? `${r.size.number} ${r.size.unit || ''}`.trim() : '',
     url: /^https?:\/\//i.test(r.link_href || '') ? r.link_href : null,
     scene,
+    cam: isCamRelease(dirname, video),
   };
 }
 
-async function releasesFor(ctx, extInfoId) {
-  const out = [];
-  try {
-    const r = await xrelGet(ctx, `/release/ext_info.json?id=${encodeURIComponent(extInfoId)}&per_page=${RELEASE_PAGE}`);
-    for (const rel of (r && r.list) || []) out.push(normalizeRelease(rel, true));
-  } catch (err) { if (err.message === 'rate_limited') throw err; }
-  try {
-    const r = await xrelGet(ctx, `/p2p/releases.json?ext_info_id=${encodeURIComponent(extInfoId)}&per_page=${RELEASE_PAGE}`);
-    for (const rel of (r && r.list) || []) out.push(normalizeRelease(rel, false));
-  } catch (err) { if (err.message === 'rate_limited') throw err; }
-
-  return out
-    .filter(Boolean)
-    .sort((a, b) => b.time - a.time)
+async function releasesFor(ctx, extInfoId, includeCam) {
+  const all = await loadReleases(ctx, extInfoId);
+  return all
+    .filter((r) => includeCam || !r.cam)
     .slice(0, RELEASE_LIST_LIMIT);
 }
 
@@ -536,9 +569,11 @@ module.exports = {
     app.get('/api/tmdb-xrel/releases', async (req, res) => {
       const id = String(req.query.id || '');
       if (!validXrelId(id)) return res.status(400).json({ ok: false, error: 'bad_id' });
+      // Standard: CAM/TS ausblenden. Nur ?cam=1 zeigt sie im Modal.
+      const includeCam = String(req.query.cam || '') === '1';
       res.set('Cache-Control', 'no-store');
       try {
-        const releases = await releasesFor(ctx, id);
+        const releases = await releasesFor(ctx, id, includeCam);
         res.json({ ok: true, id, releases });
       } catch (err) {
         console.error('[tmdb-xrel]', err.message);
@@ -552,6 +587,6 @@ module.exports = {
   // Fuer den Smoke-Test: reine Funktionen, ohne Netz pruefbar.
   _internals: {
     normalizeText, stripSubtitle, imdbIdFrom, candidateImdb, titleMatches,
-    normalizeMovie, normalizeRelease, validXrelId,
+    normalizeMovie, normalizeRelease, validXrelId, isCamRelease, countReleases,
   },
 };
