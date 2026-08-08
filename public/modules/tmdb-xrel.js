@@ -118,9 +118,11 @@ function _txCreateRow() {
   const row = document.createElement('div');
   row.className = 'tx-row';
   row.innerHTML =
-    '<span class="tx-dot"></span>'
+    '<span class="tx-plex" style="display:none">PLEX</span>'
+    + '<span class="tx-dot"></span>'
     + '<span class="tx-title"></span>'
     + '<span class="tx-count"></span>';
+  row._plex = row.querySelector('.tx-plex');
   row._dot = row.querySelector('.tx-dot');
   row._title = row.querySelector('.tx-title');
   row._count = row.querySelector('.tx-count');
@@ -144,6 +146,11 @@ function _txUpdateRow(row, item, prev) {
     row._title.textContent = item.title;
     // Originaltitel als Tooltip, falls er vom Anzeigetitel abweicht.
     row.title = item.originalTitle ? `${item.title} — ${item.originalTitle}` : item.title;
+  }
+
+  if (!prev || prev.inPlex !== item.inPlex) {
+    row._plex.style.display = item.inPlex ? '' : 'none';
+    row._plex.title = item.inPlex ? 'In deiner Plex-Bibliothek' : '';
   }
 
   // Der effektive Zustand haengt am CAM-Filter, nicht nur an item — deshalb

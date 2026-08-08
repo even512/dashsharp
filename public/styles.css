@@ -2505,6 +2505,20 @@ body.gr-scroll-locked {
 .tx-row.tx-unknown .tx-title { color: var(--text-3); }
 .tx-row.tx-unknown .tx-dot   { background: var(--text-3); }
 
+/* Plex-Chip: sitzt ganz vorn in der Zeile (vor dem Ampelpunkt). Plex-Gold auf
+   dezentem Grund, damit es als eigenstaendige Markierung lesbar bleibt. */
+.tx-plex {
+  flex-shrink: 0;
+  font: 700 8px 'JetBrains Mono', monospace;
+  letter-spacing: 0.06em;
+  color: #e5a00d;
+  background: rgba(229,160,13,0.14);
+  border: 1px solid rgba(229,160,13,0.35);
+  border-radius: 3px;
+  padding: 1px 4px;
+  line-height: 1.3;
+}
+
 .tx-empty { padding: 10px 6px; font: 500 11px 'JetBrains Mono', monospace; color: var(--text-dim); }
 
 /* Detail-Modal: Release-Liste. */

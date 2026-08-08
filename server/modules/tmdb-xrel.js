@@ -63,6 +63,7 @@ const UA = 'DashSharp/1.0 (+homelab dashboard)';
 
 const TMDB_TIMEOUT_MS = 8000;
 const XREL_TIMEOUT_MS = 8000;
+const PLEX_TIMEOUT_MS = 8000;
 
 // Das Dashboard steht in Deutschland — deutsche Titel, deutsche Beliebt-Liste.
 const LANG = 'de-DE';
@@ -143,10 +144,13 @@ function makeCache(max, ttl) {
      imdbCache     24 h  die imdb_id eines Films aendert sich nie
      searchCache    6 h  xrel-Suchtreffer zu einem Titel sind traege
      releaseCache   3 h  die Release-Liste je ext_info — von Zaehlung UND Modal
-                         genutzt, damit ein Klick keinen zweiten Abruf kostet */
+                         genutzt, damit ein Klick keinen zweiten Abruf kostet
+     plexCache      5 h  der IMDb-Index der Plex-Filmbibliothek; ein Eintrag
+                         ('index'), erneuert sich also selten */
 const imdbCache = makeCache(300, 24 * 3600 * 1000);
 const searchCache = makeCache(200, 6 * 3600 * 1000);
 const releaseCache = makeCache(200, 3 * 3600 * 1000);
+const plexCache = makeCache(1, 5 * 3600 * 1000);
 
 // Parallele Anfragen auf denselben Schluessel teilen sich einen Abruf.
 const _inflight = new Map();
@@ -285,6 +289,80 @@ async function popularMovies(get, ctx) {
   const movies = results.map(normalizeMovie);
   await enrichImdb(get, ctx, movies);
   return movies;
+}
+
+/* ============================================================================
+   TEIL 3b — PLEX-ZUGANG (optional)
+   ----------------------------------------------------------------------------
+   Beantwortet pro Film: liegt er in meiner Plex-Filmbibliothek? Statt 20
+   Einzelsuchen wird EINMAL pro Abruf die Bibliothek geladen und ein Set der
+   IMDb-Ids gebaut — danach ist jeder Abgleich ein Set-Lookup.
+
+   PLEX_URL/PLEX_TOKEN sind Kern-Secrets von server.js (nicht im Modul-Manifest),
+   aber `get()` liest global aus process.env + secrets.json, kommt also an beide
+   heran, ohne dass die Kachel sie selbst verwalten muss.
+
+   Plex ist rein optional: fehlt die Konfiguration oder ist der Server nicht
+   erreichbar, bleibt der Index leer und kein Film bekommt einen Plex-Chip — die
+   Kachel funktioniert unveraendert weiter. */
+
+function plexConfigured(get) {
+  return !!(get('PLEX_URL') && get('PLEX_TOKEN'));
+}
+
+async function plexJson(get, ctx, path) {
+  const base = String(get('PLEX_URL') || '').replace(/\/+$/, '');
+  const token = get('PLEX_TOKEN') || '';
+  const sep = path.includes('?') ? '&' : '?';
+  return ctx.httpJson(`${base}${path}${sep}X-Plex-Token=${encodeURIComponent(token)}`, {
+    timeoutMs: PLEX_TIMEOUT_MS,
+    // Plex-Server im LAN laufen oft mit self-signed Zertifikat (plex.direct).
+    insecure: true,
+    headers: { Accept: 'application/json', 'User-Agent': UA },
+  });
+}
+
+// Zieht alle IMDb-Ids aus dem Guid-Feld eines Plex-Items. Plex liefert je nach
+// Version `Guid: [{id:"imdb://tt…"}]` (mit includeGuids=1) und/oder ein flaches
+// `guid: "…imdb://tt…"` des alten Agents — beide werden beruecksichtigt.
+function plexImdbIds(item) {
+  const out = [];
+  for (const g of (item && item.Guid) || []) {
+    const id = imdbIdFrom(g && g.id);
+    if (id) out.push(id);
+  }
+  const flat = imdbIdFrom(item && item.guid);
+  if (flat) out.push(flat);
+  return out;
+}
+
+/* Baut einmalig (pro TTL) ein Set aller IMDb-Ids der Plex-Filmbibliotheken.
+   Schluckt jeden Fehler und liefert im Zweifel ein leeres Set — ein nicht
+   erreichbarer Plex-Server darf die Kachel nie kippen. */
+async function plexIndex(get, ctx) {
+  if (!plexConfigured(get)) return new Set();
+  return cached(plexCache, 'index', async () => {
+    const ids = new Set();
+    try {
+      const secs = await plexJson(get, ctx, '/library/sections');
+      const dirs = ((secs && secs.MediaContainer) || {}).Directory || [];
+      const movieDirs = dirs.filter((d) => d && d.type === 'movie');
+      for (const dir of movieDirs) {
+        try {
+          const r = await plexJson(get, ctx,
+            `/library/sections/${encodeURIComponent(dir.key)}/all?includeGuids=1&X-Plex-Container-Size=10000`);
+          for (const item of ((r && r.MediaContainer) || {}).Metadata || []) {
+            for (const id of plexImdbIds(item)) ids.add(id);
+          }
+        } catch (err) {
+          ctx.warn(`Plex-Sektion ${dir.key}: ${err.message}`);
+        }
+      }
+    } catch (err) {
+      ctx.warn(`Plex-Index: ${err.message}`);
+    }
+    return ids;
+  });
 }
 
 /* ============================================================================
@@ -480,6 +558,9 @@ async function matchXrel(ctx, film) {
 /* ---------- 6.1 Die Kachel-Liste (Standardabruf) ---------- */
 async function buildList(get, ctx) {
   const movies = await popularMovies(get, ctx);
+  // Einmal pro Abruf: das IMDb-Set der Plex-Filmbibliothek. Leer, wenn Plex
+  // nicht eingerichtet/erreichbar ist — dann bekommt kein Film einen Chip.
+  const plex = await plexIndex(get, ctx);
 
   const out = [];
   for (const m of movies) {
@@ -498,6 +579,8 @@ async function buildList(get, ctx) {
       // Ampelfarbe, ohne einen neuen Abruf zu brauchen.
       releaseCount: match.releaseCount,
       camCount: match.camCount,
+      // Liegt der Film in der Plex-Bibliothek? Exakt per IMDb-Id.
+      inPlex: !!(m.imdbId && plex.has(m.imdbId)),
     });
   }
   return out;
@@ -588,5 +671,6 @@ module.exports = {
   _internals: {
     normalizeText, stripSubtitle, imdbIdFrom, candidateImdb, titleMatches,
     normalizeMovie, normalizeRelease, validXrelId, isCamRelease, countReleases,
+    plexImdbIds, plexConfigured,
   },
 };
