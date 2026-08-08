@@ -45,6 +45,35 @@ function txDateLabel(unix) {
     : '';
 }
 
+// Suchtaugliche Fassung eines Filmtitels: Sonderzeichen raus, Woerter bleiben.
+// "Spider-Man: No Way Home" -> "Spider Man No Way Home". Die ddl-warez-Suche
+// (und die meisten Release-Suchen) mag Leerzeichen statt Doppelpunkten/
+// Bindestrichen/Apostrophen. Diakritika bleiben, weil deutsche Titel sie im
+// Suchindex tragen.
+function txSimpleTitle(title) {
+  return String(title || '')
+    .replace(/&/g, ' und ')
+    .replace(/['’`]/g, '')            // Apostroph entfernen: Devil's -> Devils
+    .replace(/[^\p{L}\p{N}]+/gu, ' ') // alles Nicht-Buchstabe/-Ziffer -> Leerzeichen
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const TX_DDL_BASE = 'https://ddl-warez.cc/?s=';
+
+/* Baut die ddl-warez-Suche. Das Jahr ist wichtig: an echten Suchen gemessen
+   grenzt es die Liste stark ein und holt den gesuchten Film nach oben — „Die
+   Odyssee" landet sonst auf #7 zwischen anderen Odyssee-Filmen, „Die Odyssee
+   2021" auf #1. Deutsche Releases tragen das Original-Erscheinungsjahr im Namen
+   (Die.Odyssee.2021.GERMAN…), also passt TMDBs Jahr. Ohne Jahr faellt es
+   automatisch auf nur den Titel zurueck. */
+function txDdlUrl(title, year) {
+  const base = txSimpleTitle(title);
+  if (!base) return null;
+  const y = /^\d{4}$/.test(String(year || '')) ? ` ${year}` : '';
+  return `${TX_DDL_BASE}${encodeURIComponent(base + y)}&cat=0`;
+}
+
 /* ---------- Layout ----------
    Wie bei den anderen Kacheln: jede Achse setzt eine Klasse auf #txList, die in
    styles.css nur CSS-Variablen umschreibt. */
@@ -217,7 +246,10 @@ function _buildTxDetailModal() {
     + '<div id="txDetailList" class="tx-detail-list"></div>'
     + '<div id="txDetailEmpty" class="tx-detail-empty"></div>'
     + '</div>'
-    + '<div class="tx-detail-foot"><a id="txDetailXrel" class="cfg-btn" target="_blank" rel="noopener noreferrer">Auf xrel ansehen ↗</a></div>'
+    + '<div class="tx-detail-foot">'
+    + '<a id="txDetailDdl" class="cfg-btn" target="_blank" rel="noopener noreferrer">DDL-Suche ↗</a>'
+    + '<a id="txDetailXrel" class="cfg-btn" target="_blank" rel="noopener noreferrer">Auf xrel ansehen ↗</a>'
+    + '</div>'
     + '</div>';
   modal.addEventListener('click', (e) => { if (e.target === modal) closeTxDetail(); });
   modal.querySelector('.picker-close').addEventListener('click', closeTxDetail);
@@ -238,6 +270,14 @@ async function openTxDetail(xrelId, seed) {
   if (xrelLink) {
     if (seed && seed.xrelUrl) { xrelLink.href = seed.xrelUrl; xrelLink.style.display = ''; }
     else xrelLink.style.display = 'none';
+  }
+  // DDL-Suche mit dem bereinigten deutschen Titel — unabhaengig davon, ob es
+  // einen xrel-Link gibt.
+  const ddlLink = $('txDetailDdl');
+  if (ddlLink) {
+    const url = seed && txDdlUrl(seed.title, seed.year);
+    if (url) { ddlLink.href = url; ddlLink.style.display = ''; }
+    else ddlLink.style.display = 'none';
   }
   const listEl = $('txDetailList');
   if (listEl) listEl.textContent = '';
