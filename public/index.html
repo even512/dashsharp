@@ -1005,6 +1005,23 @@
             <div id="grSettingsBody"></div>
           </div>
 
+          <!-- TAB: TMDB × XREL
+               Die Zugangsdaten-Felder baut public/modules/tmdb-xrel.js beim
+               Oeffnen des Tabs. Hier steht nur die Huelle. -->
+          <div class="tab" data-tab="tmdb-xrel">
+            <div class="cfg-row">
+              <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+                <span style="font:700 11px 'JetBrains Mono',monospace;color:#22d3ee;min-width:22px;background:rgba(34,211,238,0.1);border-radius:4px;padding:2px 5px;text-align:center">TX</span>
+                <div>
+                  <div class="cfg-key">TMDB × xrel</div>
+                  <div style="font:500 10px 'JetBrains Mono',monospace;color:var(--text-dim);margin-top:2px">Beliebte Filme · Release-Abgleich mit xrel</div>
+                </div>
+              </div>
+              <span id="txSettingsStatus" style="font:500 11px 'JetBrains Mono',monospace;color:var(--text-status)">● –</span>
+            </div>
+            <div id="txSettingsBody"></div>
+          </div>
+
           <!-- TAB: YOUTUBE
                Kanäle, Filter, Anti-Bubble-Themen und den optionalen API-Key
                baut public/modules/youtube.js beim Öffnen des Tabs. Hier steht

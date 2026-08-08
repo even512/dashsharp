@@ -2468,3 +2468,66 @@ body.gr-scroll-locked {
 .claude-bar { width: 84px; height: 6px; border-radius: 4px; background: var(--border-2); overflow: hidden; }
 .claude-bar-fill { display: block; height: 100%; width: 0; background: var(--green); transition: width 0.4s ease, background 0.4s ease; }
 .claude-bar-val { min-width: 44px; color: var(--text-2); }
+
+/* ============================================================================
+   TMDB × xrel — reine Textliste mit Ampel-Faerbung, plus Release-Modal.
+   ============================================================================ */
+.tx-list { --tx-fs: 12.5px; gap: 2px; }
+.tx-list.tx-text-s  { --tx-fs: 11px; }
+.tx-list.tx-text-l  { --tx-fs: 14px; }
+.tx-list.tx-text-xl { --tx-fs: 15.5px; }
+.tx-list.tx-space-tight  { gap: 0; }
+.tx-list.tx-space-wide   { gap: 7px; }
+
+.tx-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font: 500 var(--tx-fs) 'JetBrains Mono', monospace;
+  color: var(--text-15);
+}
+.tx-row.tx-clickable { cursor: pointer; }
+.tx-row.tx-clickable:hover { background: rgba(120,150,200,0.08); }
+.tx-row:focus-visible { outline: 1px solid var(--accent-border); outline-offset: 1px; }
+
+.tx-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--text-3); }
+.tx-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx-count { flex-shrink: 0; font-size: 0.82em; color: var(--text-3); }
+
+/* Die Ampel: gruen gefunden, rot geprueft-nichts, grau ungeprueft. Farbe auf
+   Titel UND Punkt, damit die Zeile auch ohne den Punkt lesbar bleibt. */
+.tx-row.tx-found  .tx-title { color: var(--green); }
+.tx-row.tx-found  .tx-dot   { background: var(--green); }
+.tx-row.tx-none   .tx-title { color: var(--red); }
+.tx-row.tx-none   .tx-dot   { background: var(--red); }
+.tx-row.tx-unknown .tx-title { color: var(--text-3); }
+.tx-row.tx-unknown .tx-dot   { background: var(--text-3); }
+
+.tx-empty { padding: 10px 6px; font: 500 11px 'JetBrains Mono', monospace; color: var(--text-dim); }
+
+/* Detail-Modal: Release-Liste. */
+.tx-detail-body { padding: 14px 18px; overflow-y: auto; }
+.tx-detail-list { display: flex; flex-direction: column; gap: 6px; }
+.tx-detail-empty { padding: 8px 2px; font: 500 11px 'JetBrains Mono', monospace; color: var(--text-dim); }
+
+.tx-rel {
+  padding: 8px 10px;
+  border: 1px solid var(--border-3);
+  border-radius: 8px;
+  background: var(--bg-2, rgba(120,150,200,0.04));
+}
+.tx-rel.tx-clickable { cursor: pointer; }
+.tx-rel.tx-clickable:hover { border-color: var(--accent-border); }
+.tx-rel:focus-visible { outline: 1px solid var(--accent-border); outline-offset: 1px; }
+
+.tx-rel-main { display: flex; align-items: center; gap: 8px; }
+.tx-rel-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 12px 'JetBrains Mono', monospace; color: var(--text-1); }
+.tx-rel-badge { flex-shrink: 0; font: 600 9px 'JetBrains Mono', monospace; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.04em; }
+.tx-rel-scene { color: var(--green); background: rgba(61,220,151,0.12); }
+.tx-rel-p2p   { color: #ffb454; background: rgba(255,180,84,0.12); }
+.tx-rel-meta  { margin-top: 3px; font: 500 10px 'JetBrains Mono', monospace; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.tx-detail-foot { padding: 12px 18px; border-top: 1px solid var(--border-3); display: flex; justify-content: flex-end; }
+.tx-detail-foot .cfg-btn { text-decoration: none; display: inline-flex; align-items: center; }
