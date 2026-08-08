@@ -2875,8 +2875,9 @@ function renderPlex(d) {
   if (!container) return;
 
   // Der Sessions-Abruf ist fehlgeschlagen (abgelaufener Token, falsche URL,
-  // Timeout …). Klaren Fehler zeigen statt ihn als „niemand streamt" zu tarnen.
-  if (d.sessionsError) {
+  // Timeout …). Klaren Fehler zeigen statt ihn als „niemand streamt" zu tarnen –
+  // aber nur, wenn kein (zwischengespeicherter) Stream mehr anzuzeigen ist.
+  if (d.sessionsError && (!d.sessions || !d.sessions.length)) {
     if (container._errShown === d.sessionsError) return;
     container._errShown = d.sessionsError;
     container._emptyShown = false;
