@@ -2874,6 +2874,24 @@ function renderPlex(d) {
   const container = $('plexSessions');
   if (!container) return;
 
+  // Der Sessions-Abruf ist fehlgeschlagen (abgelaufener Token, falsche URL,
+  // Timeout …). Klaren Fehler zeigen statt ihn als „niemand streamt" zu tarnen.
+  if (d.sessionsError) {
+    if (container._errShown === d.sessionsError) return;
+    container._errShown = d.sessionsError;
+    container._emptyShown = false;
+    container._diffMap = null; // drop diff state so the next session list rebuilds cleanly
+    container.innerHTML = '';
+    const err = document.createElement('div');
+    err.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:24px 12px;text-align:center';
+    err.innerHTML =
+      `<span style="font:600 11px 'JetBrains Mono',monospace;color:#f43f5e">⚠ Plex-Streams nicht erreichbar</span>` +
+      `<span style="font:500 10px 'JetBrains Mono',monospace;color:#6b7689;word-break:break-word">${esc(d.sessionsError)}</span>`;
+    container.appendChild(err);
+    return;
+  }
+  container._errShown = null;
+
   if (!d.sessions || !d.sessions.length) {
     if (container._emptyShown) return;
     container._emptyShown = true;
