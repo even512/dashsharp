@@ -2299,14 +2299,34 @@ function plexCfg() {
   };
 }
 
+// Harte Wall-Clock-Wand ZUSAETZLICH zum AbortSignal. In seltenen Faellen bricht
+// der Signal-Timeout einen im Body-Read oder auf einem halb-offenen Keep-Alive-
+// Socket haengenden fetch NICHT ab; das await bliebe dann fuer immer pending.
+// Weil refreshPlex ueber withInflight('plexSess') laeuft, wuerde derselbe
+// haengende Promise an jeden weiteren Push-Hub-Tick weitergereicht -> der
+// Plex-Push friert ein und die Kachel zeigt bis zum Container-Neustart einen
+// eingefrorenen Stand. Diese Wand garantiert, dass jeder Abruf settlet.
+function withHardTimeout(promise, ms, label) {
+  let t;
+  const guard = new Promise((_, reject) => {
+    t = setTimeout(() => reject(new Error(`${label} hard-timeout`)), ms);
+    t.unref?.();
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(t));
+}
+
 async function pFetch(base, path, token) {
   const sep = path.includes('?') ? '&' : '?';
-  const res = await fetch(`${base}${path}${sep}X-Plex-Token=${token}`, {
-    headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(5000),
-  });
-  if (!res.ok) throw new Error(`Plex ${path.split('?')[0]} HTTP ${res.status}`);
-  return res.json();
+  const label = `Plex ${path.split('?')[0]}`;
+  const res = await withHardTimeout(
+    fetch(`${base}${path}${sep}X-Plex-Token=${token}`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    }),
+    7000, label,
+  );
+  if (!res.ok) throw new Error(`${label} HTTP ${res.status}`);
+  return withHardTimeout(res.json(), 7000, `${label} body`);
 }
 
 function plexRes(r) {
@@ -2460,6 +2480,7 @@ async function _refreshPlex() {
 
   // Aktive Sessions (kurze TTL)
   let sessions = cache.plexSess.data || [];
+  let sessionsError = null;
   if (!cache.plexSess.data || Date.now() - cache.plexSess.ts >= PLEX_SESS_TTL) {
     try {
       const raw  = await pFetch(url, '/status/sessions', token);
@@ -2467,6 +2488,12 @@ async function _refreshPlex() {
       cache.plexSess = { ts: Date.now(), data: sessions };
     } catch (err) {
       console.error('Plex Sessions fehlgeschlagen:', err.message);
+      // Fehler immer melden – ein abgelaufener Token / falsche URL / Timeout
+      // wurde sonst als „niemand streamt" getarnt. `sessions` bleibt auf dem
+      // letzten guten Stand (Cache), damit ein laufender Stream bei einem
+      // einzelnen Aussetzer nicht kurz verschwindet; das Frontend zeigt den
+      // Fehler nur, wenn es keine Sessions zum Anzeigen gibt.
+      sessionsError = err.message;
     }
   }
 
@@ -2502,7 +2529,7 @@ async function _refreshPlex() {
     }
   }
 
-  return { ok: true, library, sessions, recent };
+  return { ok: true, library, sessions, recent, sessionsError };
 }
 
 app.get('/api/plex', async (req, res) => {
