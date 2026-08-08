@@ -2460,6 +2460,7 @@ async function _refreshPlex() {
 
   // Aktive Sessions (kurze TTL)
   let sessions = cache.plexSess.data || [];
+  let sessionsError = null;
   if (!cache.plexSess.data || Date.now() - cache.plexSess.ts >= PLEX_SESS_TTL) {
     try {
       const raw  = await pFetch(url, '/status/sessions', token);
@@ -2467,6 +2468,9 @@ async function _refreshPlex() {
       cache.plexSess = { ts: Date.now(), data: sessions };
     } catch (err) {
       console.error('Plex Sessions fehlgeschlagen:', err.message);
+      // Fehler nur melden, wenn kein Cache-Fallback greift – sonst wird ein
+      // abgelaufener Token / falsche URL / Timeout als „niemand streamt" getarnt.
+      if (!cache.plexSess.data) sessionsError = err.message;
     }
   }
 
@@ -2502,7 +2506,7 @@ async function _refreshPlex() {
     }
   }
 
-  return { ok: true, library, sessions, recent };
+  return { ok: true, library, sessions, recent, sessionsError };
 }
 
 app.get('/api/plex', async (req, res) => {
