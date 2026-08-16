@@ -1,6 +1,199 @@
 'use strict';
 
 /* ============================================================================
+   CSS-Injektion — das Modul liefert sein eigenes Styling
+   ----------------------------------------------------------------------------
+   Der Server buendelt unter /modules.js NUR JavaScript; einen CSS-Kanal fuer
+   Module gibt es nicht, und die Kern-Datei public/styles.css darf nicht
+   angefasst werden. Also haengt das Modul sein <style> beim Laden EINMAL selbst
+   in den <head> (idempotent ueber die feste id). Es nutzt durchgaengig die
+   vorhandenen Theme-Variablen aus styles.css (--text-*, --green, --red,
+   --border-*, --bg-modal, --accent-border), damit Light-/Win9x-Theme mittragen.
+   Klassen-/Qualitaetsfarben setzt das JS inline — die kommen hier nicht vor.
+   ============================================================================ */
+(function injectWowStyles() {
+  const ID = 'wow-module-styles';
+  if (typeof document === 'undefined' || document.getElementById(ID)) return;
+  const css = `
+/* ---- Kachel-Liste: Achsen setzen nur Variablen (analog tmdb-xrel) ---- */
+.wow-list { --wow-fs: 12.5px; --wow-gap: 8px; --wow-av: 40px; gap: var(--wow-gap); }
+.wow-list.wow-text-s  { --wow-fs: 11px;   --wow-av: 34px; }
+.wow-list.wow-text-m  { --wow-fs: 12.5px; --wow-av: 40px; }
+.wow-list.wow-text-l  { --wow-fs: 14px;   --wow-av: 46px; }
+.wow-list.wow-text-xl { --wow-fs: 15.5px; --wow-av: 52px; }
+.wow-list.wow-space-tight  { --wow-gap: 3px; }
+.wow-list.wow-space-normal { --wow-gap: 8px; }
+.wow-list.wow-space-wide   { --wow-gap: 14px; }
+
+/* ---- Zeile: Avatar links · Name/Unterzeile mittig · iLvl rechts ---- */
+.wow-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  font: 500 var(--wow-fs) 'JetBrains Mono', monospace;
+  color: var(--text-15);
+}
+.wow-row.wow-clickable { cursor: pointer; }
+.wow-row.wow-clickable:hover { background: rgba(120,150,200,0.08); }
+.wow-row:focus-visible { outline: 1px solid var(--accent-border); outline-offset: 1px; }
+.wow-row.wow-unreachable { opacity: 0.55; }
+.wow-row.wow-unreachable .wow-name { color: var(--text-3); }
+
+.wow-avatar {
+  position: relative;
+  flex-shrink: 0;
+  width: var(--wow-av);
+  height: var(--wow-av);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(120,150,200,0.10);
+  border: 1px solid var(--border-1);
+}
+.wow-avatar img {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* Kuerzel liegt HINTER dem img und wird sichtbar, sobald das Bild fehlt. */
+.wow-avatar-fallback {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 calc(var(--wow-fs) + 1px) 'JetBrains Mono', monospace;
+  color: var(--text-3);
+  letter-spacing: 0.04em;
+}
+
+.wow-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.wow-name {
+  font-weight: 600;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wow-sub {
+  font-size: 0.82em;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wow-ilvl {
+  flex-shrink: 0;
+  font: 600 0.8em 'JetBrains Mono', monospace;
+  color: var(--text-2);
+  background: rgba(120,150,200,0.10);
+  border: 1px solid var(--border-1);
+  border-radius: 5px;
+  padding: 2px 6px;
+  letter-spacing: 0.02em;
+}
+
+.wow-empty { padding: 10px 6px; font: 500 11px 'JetBrains Mono', monospace; color: var(--text-dim); }
+
+/* ---- Detailfenster: Grundgeruest ist .picker-modal/.picker-panel ---- */
+.wow-detail-body {
+  padding: 14px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.wow-detail-status { padding: 8px 2px; font: 500 12px 'JetBrains Mono', monospace; color: var(--text-dim); }
+.wow-detail-content { display: flex; flex-direction: column; gap: 18px; }
+
+/* Block 1: grosser Render — zentriert, hoehenbegrenzt. */
+.wow-detail-render { display: flex; justify-content: center; }
+.wow-detail-render img {
+  max-width: 100%;
+  max-height: 260px;
+  object-fit: contain;
+  border-radius: 10px;
+}
+
+.wow-detail-block { display: flex; flex-direction: column; gap: 8px; }
+
+/* Block 2: Stammdaten als zweispaltiges Definitions-Gitter. */
+.wow-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 4px 18px;
+}
+.wow-def {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font: 500 12px 'JetBrains Mono', monospace;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border-3);
+}
+.wow-def-label { color: var(--text-3); flex-shrink: 0; }
+.wow-def-val { color: var(--text-15); text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Block 3: Ausruestung — kompakte Zeilen (Slot · Name · iLvl). */
+.wow-detail-equip { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 18px; }
+.wow-equip-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font: 500 11.5px 'JetBrains Mono', monospace;
+  padding: 2px 0;
+}
+.wow-equip-slot { flex-shrink: 0; width: 84px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wow-equip-name { flex: 1; min-width: 0; color: var(--text-15); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wow-equip-ilvl { flex-shrink: 0; color: var(--text-2); font-weight: 600; }
+
+/* Block 4: Mythic+. */
+.wow-detail-mythic { font: 600 15px 'JetBrains Mono', monospace; color: var(--text-1); }
+
+/* Block 5: Raid-Fortschritt. */
+.wow-detail-raids { display: flex; flex-direction: column; gap: 4px; }
+.wow-raid-exp { font: 600 11px 'JetBrains Mono', monospace; color: var(--text-3); margin-bottom: 2px; }
+.wow-raid-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font: 500 12px 'JetBrains Mono', monospace;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border-3);
+}
+.wow-raid-name { color: var(--text-15); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wow-raid-modes { flex-shrink: 0; color: var(--text-3); text-align: right; }
+
+/* Block 6: Berufe. */
+.wow-detail-profs { display: flex; flex-direction: column; gap: 4px; }
+.wow-prof-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font: 500 12px 'JetBrains Mono', monospace;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border-3);
+}
+.wow-prof-name { color: var(--text-15); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wow-prof-skill { flex-shrink: 0; color: var(--text-3); text-align: right; }
+
+/* ---- Settings: Container fuer die gespeicherte Charakterliste ----
+   Die Zeilen selbst nutzen die vorhandenen .news-cfg-*-Klassen aus styles.css;
+   hier nur der Stapel-Abstand. */
+.wow-cfg-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+`;
+  const style = document.createElement('style');
+  style.id = ID;
+  style.textContent = css;
+  document.head.appendChild(style);
+})();
+
+/* ============================================================================
    WoW-Charaktere — Kachel (Gegenstueck zu server/modules/wow.js)
    ----------------------------------------------------------------------------
    Zeigt eine vom Nutzer gepflegte Liste von WoW-Charakteren: pro Zeile Avatar,
@@ -467,7 +660,10 @@ function wowFillDetail(d) {
         name.textContent = prof.name || '';
         const skill = document.createElement('span');
         skill.className = 'wow-prof-skill';
-        const hasSkill = Number.isFinite(Number(prof.skill)) && Number.isFinite(Number(prof.max));
+        // Number(null) waere 0 und damit faelschlich „finite" — deshalb erst auf
+        // vorhandene Werte pruefen, sonst zeigt ein Beruf ohne Skill „null/null".
+        const hasSkill = prof.skill != null && prof.max != null
+          && Number.isFinite(Number(prof.skill)) && Number.isFinite(Number(prof.max));
         skill.textContent = hasSkill
           ? `${prof.skill}/${prof.max}${prof.tier ? ` · ${prof.tier}` : ''}`
           : (prof.tier || '');
