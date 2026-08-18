@@ -1181,13 +1181,29 @@ function logsComposeClaudeMessage(comment) {
 }
 
 // Referenzen auf die Claude-Kachel sammeln (alles defensiv, kann fehlen).
+// WICHTIG: NICHT auf claude.js-Interna (CL, send()) zugreifen — jede Modul-Datei
+// laeuft in /modules.js in einem eigenen try-Block ('use strict'), deshalb sind
+// deren top-level const/Funktionen block-scoped und von hier NICHT sichtbar
+// (frueher Bug: mein `CL.configured`-Check war immer false -> falsche
+// „nicht verbunden"-Meldung). Wir treiben die Uebergabe rein ueber das DOM
+// (Eingabefeld + Sende-Button); ob Claude eingerichtet ist, sagt der Server.
 function logsClaudeRefs() {
   const widget = document.querySelector('[data-widget-id="claude"]');
   const root = document.querySelector('[data-widget-id="claude"] .claude-tile');
   const input = root ? root.querySelector('[data-claude-input]') : null;
   const sendBtn = root ? root.querySelector('.claude-send') : null;
-  const configured = (typeof CL !== 'undefined') && !!(CL && CL.configured);
-  return { widget, root, input, sendBtn, configured };
+  return { widget, root, input, sendBtn };
+}
+
+// Ist das Claude-Modul eingerichtet? Der Server ist die Wahrheit (nicht CL, s.o.):
+// /api/claude liefert error:'not_configured', wenn kein Token gesetzt ist.
+async function logsClaudeConfigured() {
+  try {
+    const d = await fetch('/api/claude', { cache: 'no-store' }).then((r) => r.json());
+    return !!(d && d.error !== 'not_configured');
+  } catch (_) {
+    return true; // im Zweifel senden lassen — claude.js entscheidet endgueltig
+  }
 }
 
 function _buildLogsClaudeDialog() {
@@ -1240,14 +1256,17 @@ function openLogsClaudeDialog() {
   const doBtn = _logsV.claudeDoEl;
   const scope = _logsV.claudeScopeEl;
   if (hint) { hint.textContent = ''; hint.classList.remove('err'); }
-  if (!refs.widget || !refs.input) {
+  if (!refs.widget || !refs.input || !refs.sendBtn) {
     if (hint) { hint.textContent = 'Claude-Kachel nicht auf dem Dashboard — bitte hinzufügen.'; hint.classList.add('err'); }
     if (doBtn) doBtn.disabled = true;
-  } else if (!refs.configured) {
-    if (hint) { hint.textContent = 'Claude ist nicht verbunden — Token in Einstellungen → Module setzen.'; hint.classList.add('err'); }
-    if (doBtn) doBtn.disabled = true;
   } else {
+    // Kachel ist da → vorerst aktiv; der Server-Check verfeinert gleich (async).
     if (doBtn) doBtn.disabled = false;
+    logsClaudeConfigured().then((ok) => {
+      if (!_logsV.claudeDialogOpen || ok) return;
+      if (hint) { hint.textContent = 'Claude ist nicht verbunden — Token in Einstellungen → Module setzen.'; hint.classList.add('err'); }
+      if (doBtn) doBtn.disabled = true;
+    });
   }
 
   // Prominente Umfang-Zeile: Anzahl + Quelle + evtl. Deckel-Hinweis. Zahlen aus
@@ -1278,15 +1297,15 @@ function closeLogsClaudeDialog() {
   box.style.display = 'none';
 }
 
-function logsSendToClaude() {
+async function logsSendToClaude() {
   try {
     const refs = logsClaudeRefs();
     const hint = _logsV.claudeHintEl;
-    if (!refs.widget || !refs.input) {
+    if (!refs.widget || !refs.input || !refs.sendBtn) {
       if (hint) { hint.textContent = 'Claude-Kachel nicht auf dem Dashboard — bitte hinzufügen.'; hint.classList.add('err'); }
       return;
     }
-    if (!refs.configured) {
+    if (!(await logsClaudeConfigured())) {
       if (hint) { hint.textContent = 'Claude ist nicht verbunden — Token in Einstellungen → Module setzen.'; hint.classList.add('err'); }
       return;
     }
@@ -1294,13 +1313,12 @@ function logsSendToClaude() {
     const comment = _logsV.claudeCommentEl ? _logsV.claudeCommentEl.value : '';
     const message = logsComposeClaudeMessage(comment);
 
-    // Nachricht ins Feld schreiben + input-Event (Auto-Resize/State-Sync).
+    // Nachricht ins Feld schreiben + input-Event (Auto-Resize/State-Sync), dann
+    // wie ein Nutzer den Sende-Button klicken. claude.js' eigener Handler (der in
+    // seinem Scope Zugriff auf CL/send hat) uebernimmt das eigentliche Senden.
     refs.input.value = message;
     try { refs.input.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
-
-    // Wie ein Nutzer absenden: Sende-Button klicken; sonst send() als Fallback.
-    if (refs.sendBtn) refs.sendBtn.click();
-    else if (typeof send === 'function') { try { send(); } catch (_) {} }
+    refs.sendBtn.click();
 
     closeLogsClaudeDialog();
     closeLogsViewer();
