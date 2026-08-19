@@ -19,6 +19,67 @@
    Game-Releases-Kachel, ueber /api/secrets.
    ============================================================================ */
 
+/* ============================================================================
+   CSS-Injektion — das Modul liefert die NEUEN Klassen selbst
+   ----------------------------------------------------------------------------
+   Die bestehenden tx-*-Klassen (tx-row, tx-dot, tx-found, tx-list, tx-rel …)
+   liegen in der Kern-Datei styles.css und bleiben unangetastet. Nur was mit
+   dieser Aenderung dazukommt — Reiter (Tabs), der dezente Zeilen-Puls, der
+   Detail-Steckbrief (Cover, Beschreibung, Tabelle) — haengt das Modul beim
+   Laden EINMAL selbst in den <head> (idempotent ueber die feste id, mit
+   Node-Guard). Durchgaengig ueber die Theme-Variablen aus styles.css, damit
+   Hell-/Dunkel-/Win9x-Theme mittragen. Der bluestichige rgba-Ton fuer Hover/
+   Puls ist derselbe wie in styles.css/wow.js — bewusst theme-neutral.
+   ============================================================================ */
+(function injectTxStyles() {
+  const ID = 'tmdb-xrel-module-styles';
+  if (typeof document === 'undefined' || document.getElementById(ID)) return;
+  const style = document.createElement('style');
+  style.id = ID;
+  style.textContent = `
+/* ---- Reiter (Tabs): schlichte Tab-Leiste ueber der Liste ---- */
+.tx-tabs { display: flex; gap: 4px; margin: 0 0 8px; border-bottom: 1px solid var(--border-3); }
+.tx-tabs:empty { display: none; }
+.tx-tab {
+  appearance: none; background: none; border: none;
+  padding: 6px 10px; margin-bottom: -1px;
+  font: 600 11.5px 'JetBrains Mono', monospace;
+  color: var(--text-3); cursor: pointer;
+  border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0;
+}
+.tx-tab:hover { color: var(--text-15); background: rgba(120,150,200,0.06); }
+.tx-tab:focus-visible { outline: 1px solid var(--accent-border); outline-offset: 1px; }
+.tx-tab.tx-tab-active { color: var(--text-1); border-bottom-color: var(--accent-border); }
+
+/* ---- Zeilen-Puls: ein einziger, ruhiger Farb-Puls beim Erscheinen ---- */
+@keyframes tx-pulse {
+  0%   { background: rgba(120,150,200,0.00); }
+  22%  { background: rgba(120,150,200,0.20); }
+  100% { background: rgba(120,150,200,0.00); }
+}
+.tx-row.tx-pulse { animation: tx-pulse 1.5s ease-out 1; border-radius: 8px; }
+
+/* ---- Detail-Steckbrief: Cover links, Beschreibung + Tabelle daneben ---- */
+.tx-steckbrief { display: flex; gap: 14px; margin-bottom: 14px; align-items: flex-start; }
+.tx-steckbrief:empty { display: none; }
+.tx-cover {
+  flex-shrink: 0; width: 120px; border-radius: 8px; display: block;
+  border: 1px solid var(--border-1); background: rgba(120,150,200,0.10);
+}
+.tx-steck-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.tx-steck-desc {
+  font: 500 11.5px/1.5 'JetBrains Mono', monospace; color: var(--text-2);
+  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
+}
+.tx-steck-table { display: flex; flex-direction: column; gap: 4px; }
+.tx-steck-row { display: flex; gap: 8px; font: 500 11px 'JetBrains Mono', monospace; }
+.tx-steck-key { flex-shrink: 0; width: 88px; color: var(--text-3); }
+.tx-steck-val { flex: 1; min-width: 0; color: var(--text-15); }
+`;
+  document.head.appendChild(style);
+})();
+
 const TX_SIZES = [
   { v: 's', l: 'Klein' },
   { v: 'm', l: 'Normal' },
@@ -31,9 +92,16 @@ const TX_SPACINGS = [
   { v: 'wide', l: 'Weit' },
 ];
 
-let _txData = null;    // letzte Payload vom Server
-let _txDetail = null;  // gerade geoeffnete xrel-Id
+let _txData = null;      // letzte Payload vom Server
+let _txDetail = null;    // id des gerade geoeffneten Films (Race-Guard)
 let _txLastFocus = null;
+let _txActiveTab = 'popular'; // ephemer: aktiver Reiter (nicht als Option gespeichert)
+let _txPulseSet = null;  // ids, die im aktuellen Render einmal pulsen sollen
+
+// Merkzettel fuer die Zeilen-Animation: pro Film-id das zuletzt gesehene total.
+// Persistent im localStorage, damit ein neuer/gewachsener Film auch nach einem
+// Reload noch als solcher erkannt wird.
+const TX_SEEN_KEY = 'dash.tmdb-xrel.seen';
 
 /* ---------- Formatierung ---------- */
 
@@ -74,6 +142,61 @@ function txDdlUrl(title, year) {
   return `${TX_DDL_BASE}${encodeURIComponent(base + y)}&cat=0`;
 }
 
+// Titel mit Erscheinungsjahr — „Titel (JJJJ)", sonst nur der Titel. Geht immer
+// ueber textContent, nie ins innerHTML.
+function txTitleWithYear(item) {
+  const t = item.title || '';
+  return item.year ? `${t} (${item.year})` : t;
+}
+
+// Cover-URL aus fest verdrahteter TMDB-Basis + validiertem Roh-Pfad. Der Pfad
+// muss mit „/" beginnen und auf ein Bildformat enden; alles andere -> null
+// (kein Bild, kein Bruch). Wird ausschliesslich ueber img.src gesetzt.
+const TX_POSTER_BASE = 'https://image.tmdb.org/t/p/w185';
+function txPosterUrl(poster) {
+  const p = String(poster || '');
+  if (!/^\/[\w./-]+\.(jpg|jpeg|png|webp)$/i.test(p)) return null;
+  return TX_POSTER_BASE + p;
+}
+
+/* ---------- Animations-Merkzettel (localStorage) ----------
+   Defekter/voller localStorage darf die Kachel nie kippen — alles in try/catch.
+   _txLoadSeen liefert null beim Erstbesuch (kein Schluessel) → dann pulst
+   bewusst nichts. */
+function _txLoadSeen() {
+  try {
+    const raw = localStorage.getItem(TX_SEEN_KEY);
+    if (raw == null) return null; // Erstbesuch
+    const obj = JSON.parse(raw);
+    return (obj && typeof obj === 'object') ? obj : {};
+  } catch { return {}; }
+}
+
+function _txSaveSeen(movies) {
+  try {
+    const store = {};
+    for (const m of movies || []) {
+      if (m && m.id != null) store[String(m.id)] = Number(m.total) || 0;
+    }
+    localStorage.setItem(TX_SEEN_KEY, JSON.stringify(store));
+  } catch { /* voll/deaktiviert — Animation entfaellt still, Kachel bleibt heil */ }
+}
+
+// Welche Filme sollen in diesem Render pulsen: id neu ODER total gewachsen.
+// Wird ueber die GESAMTE Payload (beide Tabs) berechnet, damit ein Tab-Wechsel
+// nicht faelschlich Filme des anderen Tabs pulsen laesst.
+function _txPulseIds(movies, seen) {
+  const ids = new Set();
+  if (!seen) return ids; // Erstbesuch: nichts animieren
+  for (const m of movies || []) {
+    if (!m || m.id == null) continue;
+    const prev = seen[String(m.id)];
+    const total = Number(m.total) || 0;
+    if (prev === undefined || total > prev) ids.add(m.id);
+  }
+  return ids;
+}
+
 /* ---------- Layout ----------
    Wie bei den anderen Kacheln: jede Achse setzt eine Klasse auf #txList, die in
    styles.css nur CSS-Variablen umschreibt. */
@@ -89,20 +212,35 @@ function applyTxLayout() {
 }
 
 /* ---------- Effektiver Zustand ----------
-   Das Backend liefert zwei Zahlen: releaseCount (echte Releases, ohne
-   Kino-Abfilmung) und camCount (CAM/TS). Bei aktivem CAM-Filter (Standard)
-   zaehlt nur releaseCount — ein Film mit ausschliesslich CAMs wird dann rot,
-   nicht gruen. So schaltet der Toggle ohne neuen Serverabruf um. `unknown`
-   (xrel nicht erreichbar) bleibt in jedem Fall grau. */
+   Das Backend liefert vier Release-Toepfe: deutsch/nicht-deutsch × echt/CAM
+   (germanGood, germanCam, otherGood, otherCam). Aus ihnen rechnet das Frontend
+   je nach den beiden Toggles die angezeigte Zahl und die Ampelfarbe — ohne
+   neuen Serverabruf:
+
+     germanOnly AN  + hideCam AN  -> germanGood
+     germanOnly AN  + hideCam AUS -> germanGood + germanCam
+     germanOnly AUS + hideCam AN  -> germanGood + otherGood
+     germanOnly AUS + hideCam AUS -> alle vier
+
+   `unknown` (xrel nicht erreichbar) bleibt in jedem Fall grau. */
 function _txHideCam() {
   return _cfgVal('tmdb-xrel', 'hideCam') !== false; // Standard AN
 }
 
+function _txGermanOnly() {
+  return _cfgVal('tmdb-xrel', 'germanOnly') !== false; // Standard AN
+}
+
 function _txEffective(item) {
   if (item.status === 'unknown') return { status: 'unknown', count: 0 };
-  const good = Number(item.releaseCount) || 0;
-  const cam = Number(item.camCount) || 0;
-  const count = _txHideCam() ? good : good + cam;
+  const gg = Number(item.germanGood) || 0;
+  const gc = Number(item.germanCam) || 0;
+  const og = Number(item.otherGood) || 0;
+  const oc = Number(item.otherCam) || 0;
+  const hideCam = _txHideCam();
+  let count;
+  if (_txGermanOnly()) count = hideCam ? gg : gg + gc;
+  else count = hideCam ? gg + og : gg + gc + og + oc;
   return { status: count > 0 ? 'found' : 'none', count };
 }
 
@@ -116,22 +254,20 @@ function _txFilter(movies) {
 
 function _txCreateRow() {
   const row = document.createElement('div');
-  row.className = 'tx-row';
+  row.className = 'tx-row tx-clickable';
   row.innerHTML =
-    '<span class="tx-plex" style="display:none">PLEX</span>'
-    + '<span class="tx-dot"></span>'
+    '<span class="tx-dot"></span>'
     + '<span class="tx-title"></span>'
     + '<span class="tx-count"></span>';
-  row._plex = row.querySelector('.tx-plex');
   row._dot = row.querySelector('.tx-dot');
   row._title = row.querySelector('.tx-title');
   row._count = row.querySelector('.tx-count');
 
-  const open = () => {
-    const it = row._item;
-    // Nur gruene Filme (nach CAM-Filter) haben etwas zu zeigen.
-    if (it && it.xrelId && _txEffective(it).status === 'found') openTxDetail(it.xrelId, it);
-  };
+  // Jede Zeile oeffnet das Detail-Modal — auch rote/graue (dort steht der
+  // Steckbrief plus ein passender Release-Hinweis).
+  row.setAttribute('role', 'button');
+  row.tabIndex = 0;
+  const open = () => { if (row._item) openTxDetail(row._item); };
   row.addEventListener('click', open);
   row.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
@@ -142,19 +278,15 @@ function _txCreateRow() {
 function _txUpdateRow(row, item, prev) {
   row._item = item;
 
-  if (!prev || prev.title !== item.title) {
-    row._title.textContent = item.title;
+  if (!prev || prev.title !== item.title || prev.year !== item.year
+      || prev.originalTitle !== item.originalTitle) {
+    row._title.textContent = txTitleWithYear(item);
     // Originaltitel als Tooltip, falls er vom Anzeigetitel abweicht.
     row.title = item.originalTitle ? `${item.title} — ${item.originalTitle}` : item.title;
   }
 
-  if (!prev || prev.inPlex !== item.inPlex) {
-    row._plex.style.display = item.inPlex ? '' : 'none';
-    row._plex.title = item.inPlex ? 'In deiner Plex-Bibliothek' : '';
-  }
-
-  // Der effektive Zustand haengt am CAM-Filter, nicht nur an item — deshalb
-  // immer neu berechnen (der Toggle aendert item selbst nicht).
+  // Der effektive Zustand haengt an den beiden Toggles, nicht nur an item —
+  // deshalb immer neu berechnen (die Toggles aendern item selbst nicht).
   const eff = _txEffective(item);
   const key = `${eff.status}:${eff.count}`;
   if (row._effKey !== key) {
@@ -163,15 +295,53 @@ function _txUpdateRow(row, item, prev) {
     row.classList.toggle('tx-none', eff.status === 'none');
     row.classList.toggle('tx-unknown', eff.status === 'unknown');
 
-    // Nur gruene Zeilen sind anklickbar.
-    const clickable = eff.status === 'found' && !!item.xrelId;
-    row.setAttribute('role', clickable ? 'button' : 'presentation');
-    if (clickable) row.tabIndex = 0; else row.removeAttribute('tabindex');
-    row.classList.toggle('tx-clickable', clickable);
-
     row._count.textContent = eff.status === 'found'
       ? (eff.count === 1 ? '1 Release' : `${eff.count} Releases`)
       : eff.status === 'unknown' ? 'ungeprüft' : '';
+  }
+
+  // Zeilen-Puls: nur, wenn diese id im aktuellen Pulse-Set steht. Die Klasse
+  // wird vor dem Setzen entfernt und ein Reflow erzwungen, damit die Animation
+  // sicher neu startet; nach ~1,5 s wird sie wieder entfernt.
+  if (_txPulseSet && _txPulseSet.has(item.id)) {
+    row.classList.remove('tx-pulse');
+    void row.offsetWidth;
+    row.classList.add('tx-pulse');
+    clearTimeout(row._pulseT);
+    row._pulseT = setTimeout(() => row.classList.remove('tx-pulse'), 1600);
+  }
+}
+
+/* ---------- Reiter (Tabs) ----------
+   Zwei Tabs — „Beliebt" (Filme NICHT in Plex) und „Auf Plex" (inPlex). Ohne
+   Plex (kein Film hat inPlex) bleibt die Leiste leer und wird per CSS (:empty)
+   ausgeblendet — dann gibt es genau eine Liste wie frueher. Der aktive Tab ist
+   ephemer (Modul-Variable), kein gespeicherter Zustand. */
+function renderTxTabs(all, hasPlex, activeTab) {
+  const tabsEl = $('txTabs');
+  if (!tabsEl) return;
+  tabsEl.textContent = '';
+  if (!hasPlex) return; // leer -> per CSS ausgeblendet
+
+  const popCount = all.filter((m) => !m.inPlex).length;
+  const plexCount = all.filter((m) => m.inPlex).length;
+  const defs = [
+    { key: 'popular', label: `Beliebt (${popCount})` },
+    { key: 'plex', label: `Auf Plex (${plexCount})` },
+  ];
+  for (const def of defs) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tx-tab' + (def.key === activeTab ? ' tx-tab-active' : '');
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', def.key === activeTab ? 'true' : 'false');
+    btn.textContent = def.label; // statischer Text + Zahl, keine Fremddaten
+    btn.addEventListener('click', () => {
+      if (_txActiveTab === def.key) return;
+      _txActiveTab = def.key;
+      renderTmdbXrel(null); // aktuelle Daten mit dem neuen Tab neu rendern
+    });
+    tabsEl.appendChild(btn);
   }
 }
 
@@ -184,6 +354,7 @@ function renderTmdbXrel(d) {
   else if (d && !_txData) _txData = d;
 
   applyTxLayout();
+  _txPulseSet = null;
 
   const badge = $('txBadge');
   const list = $('txList');
@@ -196,6 +367,7 @@ function renderTmdbXrel(d) {
       badge.style.color = notCfg ? 'var(--text-3)' : 'var(--red)';
       badge.title = notCfg ? 'Einstellungen → Module → TMDB × xrel' : (data && data.message) || '';
     }
+    renderTxTabs([], false);
     if (list) diffList(list, [], (i) => i.id, _txCreateRow, _txUpdateRow);
     setTxEmpty(notCfg
       ? 'Noch nicht eingerichtet — Einstellungen → Module → TMDB × xrel.'
@@ -204,9 +376,30 @@ function renderTmdbXrel(d) {
   }
 
   const all = data.movies || [];
-  const items = _cfgLimit('tmdb-xrel', 'maxRows', _txFilter(all));
+  const hasPlex = all.some((m) => m && m.inPlex);
+
+  // Animations-Signal aus der GESAMTEN Payload (beide Tabs) berechnen, BEVOR
+  // der Store aktualisiert wird — sonst wuerde nie etwas pulsen.
+  _txPulseSet = _txPulseIds(all, _txLoadSeen());
+
+  // Ohne Plex gibt es nur „Beliebt"; sonst der ephemere aktive Tab.
+  const tab = hasPlex ? _txActiveTab : 'popular';
+  renderTxTabs(all, hasPlex, tab);
+
+  const pool = hasPlex
+    ? all.filter((m) => (tab === 'plex') === !!m.inPlex)
+    : all;
+
+  const items = _cfgLimit('tmdb-xrel', 'maxRows', _txFilter(pool));
   if (list) diffList(list, items, (i) => i.id, _txCreateRow, _txUpdateRow);
-  setTxEmpty(items.length ? '' : (all.length ? 'Kein Film passt zum Filter.' : 'Keine Filme geladen.'));
+  setTxEmpty(items.length ? '' : (
+    pool.length ? 'Kein Film passt zum Filter.'
+      : (hasPlex && tab === 'plex') ? 'Kein Film in deiner Plex-Bibliothek.'
+        : all.length ? 'Kein Film passt zum Filter.' : 'Keine Filme geladen.'));
+
+  // Store ueber die GESAMTE Payload aktualisieren (nicht nur den aktiven Tab),
+  // damit ein Tab-Wechsel nicht faelschlich Filme des anderen Tabs pulsen laesst.
+  _txSaveSeen(all);
 
   if (badge) {
     const found = all.filter((m) => _txEffective(m).status === 'found').length;
@@ -250,6 +443,7 @@ function _buildTxDetailModal() {
     + '<button class="picker-close" title="Schließen" aria-label="Schließen">✕</button>'
     + '</div>'
     + '<div class="tx-detail-body">'
+    + '<div id="txSteckbrief" class="tx-steckbrief"></div>'
     + '<div id="txDetailList" class="tx-detail-list"></div>'
     + '<div id="txDetailEmpty" class="tx-detail-empty"></div>'
     + '</div>'
@@ -267,28 +461,91 @@ function _buildTxDetailModal() {
   return modal;
 }
 
-async function openTxDetail(xrelId, seed) {
+/* Fuellt den Steckbrief-Kopf (Cover, Beschreibung, Tabelle). Alle Werte gehen
+   ueber textContent, das Cover ausschliesslich ueber img.src aus fest
+   verdrahteter Basis + validiertem Pfad — nie via innerHTML. */
+function txFillSteckbrief(item) {
+  const el = $('txSteckbrief');
+  if (!el) return;
+  el.textContent = '';
+  if (!item) return;
+
+  const src = txPosterUrl(item.poster);
+  if (src) {
+    const img = document.createElement('img');
+    img.className = 'tx-cover';
+    img.alt = '';
+    img.loading = 'lazy';
+    img.src = src;
+    // Laedt das Bild nicht, faellt es sauber weg (kein Bruch).
+    img.addEventListener('error', () => { img.remove(); });
+    el.appendChild(img);
+  }
+
+  const info = document.createElement('div');
+  info.className = 'tx-steck-info';
+
+  if (item.overview) {
+    const desc = document.createElement('div');
+    desc.className = 'tx-steck-desc';
+    desc.textContent = item.overview;
+    info.appendChild(desc);
+  }
+
+  const table = document.createElement('div');
+  table.className = 'tx-steck-table';
+  const addRow = (label, value) => {
+    if (!value) return;
+    const r = document.createElement('div');
+    r.className = 'tx-steck-row';
+    const k = document.createElement('span');
+    k.className = 'tx-steck-key';
+    k.textContent = label;
+    const v = document.createElement('span');
+    v.className = 'tx-steck-val';
+    v.textContent = value;
+    r.appendChild(k);
+    r.appendChild(v);
+    table.appendChild(r);
+  };
+  if (item.rating != null) addRow('Bewertung', `${String(item.rating).replace('.', ',')} / 10`);
+  if (Array.isArray(item.genres) && item.genres.length) addRow('Genres', item.genres.join(', '));
+  if (item.originalTitle) addRow('Originaltitel', item.originalTitle);
+  if (table.children.length) info.appendChild(table);
+
+  // Nur anhaengen, wenn es ueberhaupt Inhalt gibt (sonst bleibt el leer ->
+  // per CSS :empty ausgeblendet).
+  if (info.children.length) el.appendChild(info);
+}
+
+// Oeffnet das Detail-Modal fuer JEDEN Film (nicht nur gruene). Der Steckbrief
+// steht immer; darunter je nach Ampel die Release-Liste, „Kein deutsches
+// Release gefunden." (rot) oder „Noch nicht geprüft." (grau).
+async function openTxDetail(item) {
+  if (!item) return;
   const modal = $('txDetailModal') || _buildTxDetailModal();
-  _txDetail = xrelId;
+  const openId = item.id;
+  _txDetail = openId;
   _txLastFocus = document.activeElement;
 
-  setText('txDetailTitle', (seed && seed.title) || 'Releases');
+  setText('txDetailTitle', txTitleWithYear(item) || 'Releases');
+  txFillSteckbrief(item);
+
   const xrelLink = $('txDetailXrel');
   if (xrelLink) {
-    if (seed && seed.xrelUrl) { xrelLink.href = seed.xrelUrl; xrelLink.style.display = ''; }
+    if (item.xrelUrl) { xrelLink.href = item.xrelUrl; xrelLink.style.display = ''; }
     else xrelLink.style.display = 'none';
   }
   // DDL-Suche mit dem bereinigten deutschen Titel — unabhaengig davon, ob es
   // einen xrel-Link gibt.
   const ddlLink = $('txDetailDdl');
   if (ddlLink) {
-    const url = seed && txDdlUrl(seed.title, seed.year);
+    const url = txDdlUrl(item.title, item.year);
     if (url) { ddlLink.href = url; ddlLink.style.display = ''; }
     else ddlLink.style.display = 'none';
   }
   const listEl = $('txDetailList');
   if (listEl) listEl.textContent = '';
-  setText('txDetailEmpty', 'Wird geladen …');
 
   modal.style.display = 'flex';
   requestAnimationFrame(() => {
@@ -297,17 +554,31 @@ async function openTxDetail(xrelId, seed) {
     if (close) close.focus();
   });
 
+  // Release-Bereich passend zur Ampel (die vom effektiven Zustand kommt).
+  const eff = _txEffective(item);
+  if (eff.status === 'unknown') {
+    setText('txDetailEmpty', 'Noch nicht geprüft.');
+    return;
+  }
+  if (eff.status !== 'found' || !item.xrelId) {
+    setText('txDetailEmpty', 'Kein deutsches Release gefunden.');
+    return;
+  }
+
+  setText('txDetailEmpty', 'Wird geladen …');
   try {
-    // CAMs im Modal nur zeigen, wenn der Filter aus ist — passend zur Zahl in
-    // der Zeile, damit beides dieselbe Wahrheit erzaehlt.
+    // CAMs im Modal nur zeigen, wenn der Filter aus ist; und nur deutsche
+    // Releases, wenn germanOnly an ist — passend zur Zahl in der Zeile, damit
+    // beides dieselbe Wahrheit erzaehlt.
     const cam = _txHideCam() ? '' : '&cam=1';
-    const d = await fetch(`/api/tmdb-xrel/releases?id=${encodeURIComponent(xrelId)}${cam}`, { cache: 'no-store' })
+    const german = _txGermanOnly() ? '&german=1' : '';
+    const d = await fetch(`/api/tmdb-xrel/releases?id=${encodeURIComponent(item.xrelId)}${cam}${german}`, { cache: 'no-store' })
       .then((r) => r.json());
     // Zwischenzeitlich geschlossen oder ein anderer Film geoeffnet.
-    if (_txDetail !== xrelId) return;
+    if (_txDetail !== openId) return;
     txFillDetail(d);
   } catch {
-    if (_txDetail === xrelId) setText('txDetailEmpty', 'Die Releases konnten nicht geladen werden.');
+    if (_txDetail === openId) setText('txDetailEmpty', 'Die Releases konnten nicht geladen werden.');
   }
 }
 
@@ -390,6 +661,7 @@ Dash.registerModule({
         <span data-tile-title>TMDB × xrel</span>
         <span id="txBadge" class="tile-badge"></span>
       </div>
+      <div id="txTabs" class="tx-tabs" data-cfg="list"></div>
       <div id="txList" class="tile-list tx-list" data-cfg="list"></div>
       <div id="txEmpty" class="tx-empty" style="display:none"></div>
     </div>`,
@@ -397,6 +669,7 @@ Dash.registerModule({
   options: [
     // Standard AN: CAM/TS zaehlen nicht mit und tauchen im Modal nicht auf.
     // filter:true -> wirkt nur im Renderer, kein neuer Serverabruf.
+    { key: 'germanOnly', label: 'Nur deutsche Releases', type: 'toggle', default: true, filter: true, group: 'Auswahl' },
     { key: 'hideCam', label: 'CAM/TS ausblenden', type: 'toggle', default: true, filter: true, group: 'Auswahl' },
     { key: 'onlyFound', label: 'Nur auf xrel gefundene', type: 'toggle', default: false, filter: true, group: 'Auswahl' },
     { key: 'maxRows', label: 'Max. Filme', type: 'count', default: 0, group: 'Auswahl' },

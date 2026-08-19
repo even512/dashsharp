@@ -34,7 +34,7 @@
                                │                 + imdb_id je Film nachholen
                                └─ matchXrel()    pro Film:
                                     findExtInfo()   suchen + per IMDb verifizieren
-                                    releaseCount()  Scene + P2P zaehlen
+                                    countReleases() Scene + P2P in vier Toepfe zaehlen
 
    AUFBAU
      Teil 1  Konstanten
@@ -236,6 +236,17 @@ function isCamRelease(dirname, videoType) {
   return CAM_RE.test(String(videoType || '')) || CAM_RE.test(String(dirname || ''));
 }
 
+/* Deutsche Releases erkennen. xrel fuehrt die Sprache nicht als Feld; sie steht
+   nur im Release-Namen (dirname): „German" bzw. „GERMAN.DL" (Dual Language).
+   Verankert an Trennzeichen/Wortgrenzen wie CAM_RE, damit z.B. „Germany" in
+   einem Titel nicht faelschlich als deutsches Release durchgeht. Das „GERMAN"
+   in „GERMAN.DL" ist von Punkten umrandet und wird vom selben Muster erfasst. */
+const GERMAN_RE = /(?:^|[._\- ])GERMAN(?:[._\- ]|$)/i;
+
+function isGermanRelease(dirname) {
+  return GERMAN_RE.test(String(dirname || ''));
+}
+
 /* ============================================================================
    TEIL 3 — TMDB-ZUGANG
    ----------------------------------------------------------------------------
@@ -260,8 +271,17 @@ function normalizeMovie(r) {
     year: String(r.release_date || '').slice(0, 4) || null,
     imdbId: null,
     tmdbUrl: `https://www.themoviedb.org/movie/${r.id}`,
+    // Steckbrief-Felder — kommen aus /movie/{id} in enrichImdb (kein neuer Abruf).
+    poster: null,
+    overview: '',
+    rating: null,
+    genres: [],
   };
 }
+
+// Deckel fuer die Beschreibung im Modal — Fremdtext geht nur gedeckelt weiter.
+const OVERVIEW_MAX = 400;
+const GENRES_MAX = 4;
 
 const TMDB_CONCURRENCY = 3;
 
@@ -273,6 +293,15 @@ async function enrichImdb(get, ctx, movies) {
       try {
         const d = await cached(imdbCache, `imdb:${m.tmdbId}`, () => tmdb(get, ctx, `/movie/${m.tmdbId}`));
         m.imdbId = (d && d.imdb_id) || null;
+        // Steckbrief-Felder aus derselben /movie/{id}-Antwort — normalisiert und
+        // gedeckelt, kein roher Durchgriff auf die Upstream-Struktur.
+        m.poster = (d && typeof d.poster_path === 'string' && d.poster_path) || null;
+        m.overview = (d && typeof d.overview === 'string') ? d.overview.slice(0, OVERVIEW_MAX) : '';
+        m.rating = (d && Number.isFinite(Number(d.vote_average)) && Number(d.vote_average) > 0)
+          ? Math.round(Number(d.vote_average) * 10) / 10 : null;
+        m.genres = (d && Array.isArray(d.genres))
+          ? d.genres.map((g) => g && g.name).filter((n) => typeof n === 'string' && n).slice(0, GENRES_MAX)
+          : [];
       } catch (err) {
         // Ohne imdb_id greift nur der Titel-Fallback — kein Grund, den ganzen
         // Abruf scheitern zu lassen.
@@ -513,21 +542,36 @@ async function loadReleases(ctx, extInfoId) {
   });
 }
 
-// Zaehlt echte vs. CAM-Releases in einer geladenen Liste.
+/* Zaehlt die Releases in vier Toepfe: deutsch/nicht-deutsch × echt/CAM. Aus den
+   vieren rechnet das Frontend je nach den beiden Toggles (hideCam, germanOnly)
+   die angezeigte Zahl und die Ampelfarbe — ohne neuen Abruf. `total` ist die
+   Summe, praktisch fuers Animations-Signal. */
 function countReleases(list) {
-  let good = 0;
-  let cam = 0;
-  for (const r of list) (r.cam ? cam++ : good++);
-  return { total: list.length, good, cam };
+  let germanGood = 0;
+  let germanCam = 0;
+  let otherGood = 0;
+  let otherCam = 0;
+  for (const r of list) {
+    if (r.german) { r.cam ? germanCam++ : germanGood++; }
+    else { r.cam ? otherCam++ : otherGood++; }
+  }
+  return {
+    germanGood, germanCam, otherGood, otherCam,
+    total: germanGood + germanCam + otherGood + otherCam,
+  };
 }
 
 /* ---------- 5.3 Ein Film ----------
-   Liefert BEIDE Zahlen: `releaseCount` (ohne CAM) und `camCount`. Die Ampel
-   (gruen/rot) entscheidet das Frontend je nach CAM-Filter selbst — so schaltet
-   der Toggle ohne neuen Abruf um. Der einzige Fehlerausgang ist `unknown`:
-   jede Exception (Rate-Limit, Ausfall) faerbt den Film grau, nie rot. */
+   Liefert die vier Release-Toepfe (deutsch/nicht-deutsch × echt/CAM) plus
+   `total`. Die Ampel (gruen/rot) entscheidet das Frontend je nach den Toggles
+   (hideCam, germanOnly) selbst — so schalten sie ohne neuen Abruf um. Der einzige
+   Fehlerausgang ist `unknown`: jede Exception (Rate-Limit, Ausfall) faerbt den
+   Film grau, nie rot. */
 async function matchXrel(ctx, film) {
-  const miss = { status: 'none', xrelId: null, xrelUrl: null, releaseCount: 0, camCount: 0 };
+  const miss = {
+    status: 'none', xrelId: null, xrelUrl: null,
+    germanGood: 0, germanCam: 0, otherGood: 0, otherCam: 0, total: 0,
+  };
   try {
     let info = await findExtInfo(ctx, film, film.title);
     if (!info && film.originalTitle && film.originalTitle !== film.title) {
@@ -535,19 +579,25 @@ async function matchXrel(ctx, film) {
     }
     if (!info) return miss;
 
-    const { good, cam } = countReleases(await loadReleases(ctx, info.id));
+    const counts = countReleases(await loadReleases(ctx, info.id));
     return {
-      // „found", sobald es irgendein Release gibt (auch nur CAM). Ob ein reiner
-      // CAM-Film als rot gilt, entscheidet der Filter im Frontend.
-      status: (good + cam) > 0 ? 'found' : 'none',
+      // „found", sobald es irgendein Release gibt (irgendein Topf > 0). Welche
+      // Toepfe als rot/gruen zaehlen, entscheiden die Filter im Frontend.
+      status: counts.total > 0 ? 'found' : 'none',
       xrelId: String(info.id),
       xrelUrl: /^https?:\/\//i.test(info.link_href || '') ? info.link_href : null,
-      releaseCount: good,
-      camCount: cam,
+      germanGood: counts.germanGood,
+      germanCam: counts.germanCam,
+      otherGood: counts.otherGood,
+      otherCam: counts.otherCam,
+      total: counts.total,
     };
   } catch (err) {
     ctx.warn(`Abgleich (${film.title}): ${err.message}`);
-    return { status: 'unknown', xrelId: null, xrelUrl: null, releaseCount: 0, camCount: 0 };
+    return {
+      status: 'unknown', xrelId: null, xrelUrl: null,
+      germanGood: 0, germanCam: 0, otherGood: 0, otherCam: 0, total: 0,
+    };
   }
 }
 
@@ -571,14 +621,23 @@ async function buildList(get, ctx) {
       originalTitle: m.originalTitle !== m.title ? m.originalTitle : null,
       year: m.year,
       tmdbUrl: m.tmdbUrl,
+      // Steckbrief fuers Modal — oeffentliche TMDB-Daten, normalisiert/gedeckelt.
+      poster: m.poster,
+      overview: m.overview,
+      rating: m.rating,
+      genres: m.genres,
       status: match.status,
       xrelId: match.xrelId,
       xrelUrl: match.xrelUrl,
-      // Zwei Zahlen: echte Releases (ohne Kino-Abfilmung) und CAM/TS separat.
-      // Der CAM-Filter im Frontend rechnet daraus die angezeigte Zahl und die
-      // Ampelfarbe, ohne einen neuen Abruf zu brauchen.
-      releaseCount: match.releaseCount,
-      camCount: match.camCount,
+      // Vier Release-Toepfe: deutsch/nicht-deutsch × echt/CAM. Aus ihnen rechnet
+      // das Frontend je nach hideCam × germanOnly die angezeigte Zahl und die
+      // Ampelfarbe, ohne einen neuen Abruf zu brauchen. `total` = Summe (fuers
+      // Animations-Signal).
+      germanGood: match.germanGood,
+      germanCam: match.germanCam,
+      otherGood: match.otherGood,
+      otherCam: match.otherCam,
+      total: match.total,
       // Liegt der Film in der Plex-Bibliothek? Exakt per IMDb-Id.
       inPlex: !!(m.imdbId && plex.has(m.imdbId)),
     });
@@ -605,13 +664,14 @@ function normalizeRelease(r, scene) {
     url: /^https?:\/\//i.test(r.link_href || '') ? r.link_href : null,
     scene,
     cam: isCamRelease(dirname, video),
+    german: isGermanRelease(dirname),
   };
 }
 
-async function releasesFor(ctx, extInfoId, includeCam) {
+async function releasesFor(ctx, extInfoId, includeCam, germanOnly) {
   const all = await loadReleases(ctx, extInfoId);
   return all
-    .filter((r) => includeCam || !r.cam)
+    .filter((r) => (includeCam || !r.cam) && (!germanOnly || r.german))
     .slice(0, RELEASE_LIST_LIMIT);
 }
 
@@ -654,9 +714,12 @@ module.exports = {
       if (!validXrelId(id)) return res.status(400).json({ ok: false, error: 'bad_id' });
       // Standard: CAM/TS ausblenden. Nur ?cam=1 zeigt sie im Modal.
       const includeCam = String(req.query.cam || '') === '1';
+      // ?german=1 beschraenkt auf deutsche Releases (passend zum germanOnly-Toggle).
+      // Reine '1'-Booleans — keine neue Injection-/SSRF-Flaeche; id bleibt streng.
+      const germanOnly = String(req.query.german || '') === '1';
       res.set('Cache-Control', 'no-store');
       try {
-        const releases = await releasesFor(ctx, id, includeCam);
+        const releases = await releasesFor(ctx, id, includeCam, germanOnly);
         res.json({ ok: true, id, releases });
       } catch (err) {
         console.error('[tmdb-xrel]', err.message);
@@ -670,7 +733,7 @@ module.exports = {
   // Fuer den Smoke-Test: reine Funktionen, ohne Netz pruefbar.
   _internals: {
     normalizeText, stripSubtitle, imdbIdFrom, candidateImdb, titleMatches,
-    normalizeMovie, normalizeRelease, validXrelId, isCamRelease, countReleases,
-    plexImdbIds, plexConfigured,
+    normalizeMovie, normalizeRelease, validXrelId, isCamRelease, isGermanRelease,
+    countReleases, plexImdbIds, plexConfigured,
   },
 };
