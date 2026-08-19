@@ -313,7 +313,7 @@ function _txUpdateRow(row, item, prev) {
 }
 
 /* ---------- Reiter (Tabs) ----------
-   Zwei Tabs — „Beliebt" (Filme NICHT in Plex) und „Auf Plex" (inPlex). Ohne
+   Zwei Tabs — „Nicht auf Plex" (Filme NICHT in Plex) und „Auf Plex" (inPlex). Ohne
    Plex (kein Film hat inPlex) bleibt die Leiste leer und wird per CSS (:empty)
    ausgeblendet — dann gibt es genau eine Liste wie frueher. Der aktive Tab ist
    ephemer (Modul-Variable), kein gespeicherter Zustand. */
@@ -326,7 +326,7 @@ function renderTxTabs(all, hasPlex, activeTab) {
   const popCount = all.filter((m) => !m.inPlex).length;
   const plexCount = all.filter((m) => m.inPlex).length;
   const defs = [
-    { key: 'popular', label: `Beliebt (${popCount})` },
+    { key: 'popular', label: `Nicht auf Plex (${popCount})` },
     { key: 'plex', label: `Auf Plex (${plexCount})` },
   ];
   for (const def of defs) {
@@ -365,12 +365,12 @@ function renderTmdbXrel(d) {
     if (badge) {
       badge.textContent = notCfg ? 'nicht eingerichtet' : (data ? 'offline' : '…');
       badge.style.color = notCfg ? 'var(--text-3)' : 'var(--red)';
-      badge.title = notCfg ? 'Einstellungen → Module → TMDB × xrel' : (data && data.message) || '';
+      badge.title = notCfg ? 'Einstellungen → Module → TMDB – Beliebte Filme' : (data && data.message) || '';
     }
     renderTxTabs([], false);
     if (list) diffList(list, [], (i) => i.id, _txCreateRow, _txUpdateRow);
     setTxEmpty(notCfg
-      ? 'Noch nicht eingerichtet — Einstellungen → Module → TMDB × xrel.'
+      ? 'Noch nicht eingerichtet — Einstellungen → Module → TMDB – Beliebte Filme.'
       : data ? 'TMDB ist gerade nicht erreichbar.' : 'Wird geladen …');
     return;
   }
@@ -646,7 +646,7 @@ function closeTxDetail() {
 
 Dash.registerModule({
   id: 'tmdb-xrel',
-  label: 'TMDB × xrel',
+  label: 'TMDB – Beliebte Filme',
   section: 'media',
   defaultSize: { w: 4, h: 8 },
   minSize: { w: 3, h: 4 },
@@ -658,7 +658,7 @@ Dash.registerModule({
   template: () => `
     <div class="tile">
       <div class="tile-head">
-        <span data-tile-title>TMDB × xrel</span>
+        <span data-tile-title>TMDB – Beliebte Filme</span>
         <span id="txBadge" class="tile-badge"></span>
       </div>
       <div id="txTabs" class="tx-tabs" data-cfg="list"></div>

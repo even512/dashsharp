@@ -291,7 +291,8 @@ async function enrichImdb(get, ctx, movies) {
     while (next < movies.length) {
       const m = movies[next++];
       try {
-        const d = await cached(imdbCache, `imdb:${m.tmdbId}`, () => tmdb(get, ctx, `/movie/${m.tmdbId}`));
+        // Detail deutsch abrufen: so kommen overview UND genres in de-DE.
+        const d = await cached(imdbCache, `imdb:${m.tmdbId}`, () => tmdb(get, ctx, `/movie/${m.tmdbId}?language=${LANG}`));
         m.imdbId = (d && d.imdb_id) || null;
         // Steckbrief-Felder aus derselben /movie/{id}-Antwort — normalisiert und
         // gedeckelt, kein roher Durchgriff auf die Upstream-Struktur.
@@ -302,6 +303,20 @@ async function enrichImdb(get, ctx, movies) {
         m.genres = (d && Array.isArray(d.genres))
           ? d.genres.map((g) => g && g.name).filter((n) => typeof n === 'string' && n).slice(0, GENRES_MAX)
           : [];
+        // Englisch-Fallback NUR fuer die Beschreibung und NUR wenn deutsch leer:
+        // TMDB liefert dann overview:"". Poster/Rating/Genres/imdb_id bleiben aus
+        // dem deutschen Abruf. Eigener Cache-Key (imdb:en:{id}) im imdbCache,
+        // damit der Upstream je Film hoechstens einmal pro TTL getroffen wird.
+        // Der Fallback faengt jeden Fehler ab und darf den Abruf nie kippen.
+        if (!m.overview) {
+          try {
+            const en = await cached(imdbCache, `imdb:en:${m.tmdbId}`,
+              () => tmdb(get, ctx, `/movie/${m.tmdbId}?language=en-US`));
+            m.overview = (en && typeof en.overview === 'string') ? en.overview.slice(0, OVERVIEW_MAX) : '';
+          } catch (errEn) {
+            ctx.warn(`overview en (${m.title}): ${errEn.message}`);
+          }
+        }
       } catch (err) {
         // Ohne imdb_id greift nur der Titel-Fallback — kein Grund, den ganzen
         // Abruf scheitern zu lassen.
@@ -688,7 +703,7 @@ function validXrelId(id) {
 
 module.exports = {
   id: 'tmdb-xrel',
-  label: 'TMDB × xrel',
+  label: 'TMDB – Beliebte Filme',
 
   // 6 h Push/Cache-Takt: die Beliebt-Liste aendert sich langsam, und ein
   // haeufigerer Takt wuerde das Stundenkontingent von xrel unnoetig belasten.
