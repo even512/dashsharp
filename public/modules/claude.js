@@ -455,8 +455,8 @@ function setSending(on) {
   } else {
     btn.dataset.claude = 'send';
     btn.classList.remove('claude-stop');
-    btn.textContent = '➤';
-    btn.title = 'Senden';
+    btn.textContent = '↑';
+    btn.title = 'Senden (Enter · Shift+Enter für Zeilenumbruch)';
   }
 }
 
@@ -851,6 +851,224 @@ async function loadClaudeSettings() {
   });
 }
 
+/* ---------- Eigenes CSS (App-Look) injizieren ----------
+   Der Server buendelt nur JS — es gibt keinen CSS-Kanal fuer Module und
+   public/styles.css ist gesperrt. Deshalb haengt die Kachel ihr <style> beim
+   Laden selbst in den <head>. Weil Modul-CSS NACH styles.css laedt, uebersteuert
+   es die alten .claude-*-Regeln; wo noetig wird die Spezifitaet ueber den Praefix
+   .claude-tile angehoben. Idempotent (feste id + Doppel-Guard), mit
+   document-Guard (laeuft nicht im node --check / Server-Kontext).
+
+   Farben sind KONSEQUENT pro Theme gekeyt (nie global): Default = Claude-App-Dark,
+   [data-theme="light"] = Claude-App-Creme, [data-theme="win9x"] = kein App-Look,
+   nur lesbar (mappt auf die Retro-Tokens, kaempft nicht dagegen an). */
+(function injectClaudeStyles() {
+  const ID = 'claude-module-styles';
+  if (typeof document === 'undefined' || document.getElementById(ID)) return;
+  const style = document.createElement('style');
+  style.id = ID;
+  style.textContent = `
+/* ===== Farb-Palette pro Theme ===== */
+.claude-tile {
+  --cl-accent: #d97757;
+  --cl-bg: #262624;
+  --cl-surface: #1f1e1d;
+  --cl-surface-2: #302f2c;
+  --cl-user-bubble: #34322e;
+  --cl-text: #f4f2ec;
+  --cl-text-2: #c9c5bb;
+  --cl-text-3: #8f8a7f;
+  --cl-border: rgba(255,255,255,0.09);
+  --cl-border-strong: rgba(255,255,255,0.16);
+  --cl-code-bg: #171614;
+  --cl-hover: rgba(255,255,255,0.06);
+  font-family: system-ui, -apple-system, "Segoe UI", Inter, sans-serif;
+  background: var(--cl-bg);
+  color: var(--cl-text);
+}
+[data-theme="light"] .claude-tile {
+  --cl-bg: #faf9f5;
+  --cl-surface: #f0eee6;
+  --cl-surface-2: #eae7dd;
+  --cl-user-bubble: #f0eee6;
+  --cl-text: #2b2a27;
+  --cl-text-2: #4a4741;
+  --cl-text-3: #79766d;
+  --cl-border: rgba(0,0,0,0.10);
+  --cl-border-strong: rgba(0,0,0,0.16);
+  --cl-code-bg: #f2f0e8;
+  --cl-hover: rgba(0,0,0,0.05);
+}
+[data-theme="win9x"] .claude-tile {
+  /* win9x: soliden Navy als Akzent nehmen, NICHT das halbtransparente
+     --accent-border (22% Deckkraft) — sonst sind der Volltonflaechen nutzende
+     Senden-Button und die farbige Notice praktisch unsichtbar. */
+  --cl-accent: #000080;
+  --cl-bg: var(--bg-glass);
+  --cl-surface: #ffffff;
+  --cl-surface-2: var(--bg-glass);
+  --cl-user-bubble: #ffffff;
+  --cl-text: var(--text-1);
+  --cl-text-2: var(--text-1);
+  --cl-text-3: #404040;
+  --cl-border: var(--border-2);
+  --cl-border-strong: var(--border-1);
+  --cl-code-bg: #ffffff;
+  --cl-hover: var(--accent-subtle);
+  font-family: inherit;
+  background: var(--bg-glass);
+  color: var(--text-1);
+}
+
+/* ===== Kopfzeile / Buttons ===== */
+.claude-tile .claude-head { border-bottom: 1px solid var(--cl-border); padding-bottom: 8px; }
+.claude-tile [data-tile-title] { color: var(--cl-text); font-weight: 600; }
+.claude-tile .claude-btn {
+  border: 1px solid transparent; background: transparent; color: var(--cl-text-2);
+  border-radius: 8px; padding: 4px 9px;
+  font: 500 12px system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.claude-tile .claude-btn:hover { background: var(--cl-hover); color: var(--cl-text); border-color: transparent; }
+.claude-tile .claude-status { color: var(--cl-text-3); }
+
+/* ===== Menues (Threads / Modell) ===== */
+.claude-tile .claude-menu {
+  background: var(--cl-surface); border: 1px solid var(--cl-border-strong);
+  border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,0.35);
+}
+.claude-tile .claude-menu-item {
+  color: var(--cl-text-2); border-radius: 8px;
+  font: 500 12.5px system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.claude-tile .claude-menu-item:hover { background: var(--cl-hover); color: var(--cl-text); }
+.claude-tile .claude-menu-item.active { color: var(--cl-accent); }
+.claude-tile .claude-menu-new { color: var(--cl-accent); border-bottom: 1px solid var(--cl-border); }
+.claude-tile .claude-thread-row:hover { background: var(--cl-hover); }
+.claude-tile .claude-thread-row.active .claude-thread-open { color: var(--cl-accent); }
+.claude-tile .claude-thread-del { color: var(--cl-text-3); }
+.claude-tile .claude-thread-del:hover { color: var(--cl-accent); }
+
+/* ===== Nachrichten ===== */
+.claude-tile .claude-empty { color: var(--cl-text-3); }
+.claude-tile .claude-bubble { max-width: 100%; border-radius: 0; padding: 0; font-size: 14px; line-height: 1.7; }
+
+/* Assistent: randlos, (fast) volle Breite, kleiner Claude-Stern links. */
+.claude-tile .claude-assistant {
+  align-self: stretch; max-width: 100%; margin-left: 0;
+  background: transparent; border: 0; color: var(--cl-text);
+  padding: 0 0 0 26px;
+}
+.claude-tile .claude-assistant::before {
+  content: '✳'; position: absolute; top: 0; left: 0;
+  width: auto; height: auto; border-radius: 0; background: transparent;
+  color: var(--cl-accent); font-size: 15px; line-height: 1.6;
+  text-align: left; box-shadow: none;
+}
+/* „Denkt"-Zustand: Stern verborgen, nur die Punkte laufen (Logik unveraendert). */
+.claude-tile .claude-assistant.claude-loading::before { display: none; }
+.claude-tile .claude-dots span { background: var(--cl-text-3); }
+
+/* Nutzer: dezente ton-in-ton Creme-Bubble rechts, dunkler Text (kein Orange/Weiss). */
+.claude-tile .claude-user {
+  align-self: flex-end; max-width: 82%;
+  background: var(--cl-user-bubble); border: 1px solid var(--cl-border); color: var(--cl-text);
+  border-radius: 18px; border-bottom-right-radius: 6px; padding: 9px 14px;
+}
+.claude-tile .claude-user .claude-md,
+.claude-tile .claude-user a { color: var(--cl-text); }
+
+/* Fehler / Abbruch / Caret */
+.claude-tile .claude-bubble.claude-error,
+.claude-tile .claude-md.claude-error { color: var(--red); border: 0; background: transparent; }
+.claude-tile .claude-aborted { color: var(--cl-text-3); }
+.claude-tile .claude-caret::after { color: var(--cl-accent); }
+
+/* ===== Markdown ===== */
+.claude-tile .claude-md { font-size: 14px; line-height: 1.7; }
+.claude-tile .claude-md h3,
+.claude-tile .claude-md h4,
+.claude-tile .claude-md h5,
+.claude-tile .claude-md h6 {
+  color: var(--cl-text); font-family: Georgia, "Times New Roman", serif;
+  font-weight: 600; font-size: 15px; margin: 12px 0 6px;
+}
+.claude-tile .claude-md a { color: var(--cl-accent); }
+.claude-tile .claude-code-inline {
+  background: var(--cl-code-bg); border: 1px solid var(--cl-border); color: var(--cl-text);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+.claude-tile .claude-code pre {
+  background: var(--cl-code-bg); border: 1px solid var(--cl-border); border-radius: 10px;
+}
+.claude-tile .claude-code code {
+  color: var(--cl-text-2); font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+.claude-tile .claude-copy {
+  background: var(--cl-surface); border: 1px solid var(--cl-border); color: var(--cl-text-3);
+  border-radius: 7px;
+}
+.claude-tile .claude-copy:hover { color: var(--cl-accent); border-color: var(--cl-accent); }
+
+/* ===== Hinweiszeile ===== */
+.claude-tile .claude-notice { color: var(--cl-accent); }
+
+/* ===== Composer (App-Eingabekasten) ===== */
+.claude-tile .claude-composer {
+  flex-shrink: 0; display: flex; flex-direction: column; gap: 6px;
+  background: var(--cl-surface); border: 1px solid var(--cl-border-strong);
+  border-radius: 20px; padding: 10px 12px 8px;
+}
+.claude-tile .claude-composer:focus-within { border-color: var(--cl-accent); }
+.claude-tile .claude-input {
+  flex: none; width: 100%; resize: none; max-height: 140px; min-height: 24px;
+  background: transparent; border: 0; border-radius: 0; padding: 2px;
+  color: var(--cl-text); line-height: 1.5;
+  font: 400 14px system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.claude-tile .claude-input:focus { outline: none; border: 0; }
+.claude-tile .claude-input::placeholder { color: var(--cl-text-3); }
+.claude-tile .claude-composer-bar { display: flex; align-items: center; gap: 8px; }
+.claude-tile .claude-composer-hint {
+  flex: 1; min-width: 0; color: var(--cl-text-3); font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.claude-tile .claude-attach {
+  width: 32px; height: 32px; border-radius: 50%;
+  border: 1px solid transparent; background: transparent; color: var(--cl-text-2); font-size: 15px;
+}
+.claude-tile .claude-attach:hover { background: var(--cl-hover); color: var(--cl-text); border-color: transparent; }
+.claude-tile .claude-send {
+  width: 32px; height: 32px; border-radius: 50%; border: 0;
+  background: var(--cl-accent); color: #fff; font-size: 16px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.claude-tile .claude-send:hover { filter: brightness(1.06); }
+.claude-tile .claude-send:disabled { opacity: 0.5; cursor: default; }
+.claude-tile .claude-send.claude-stop { background: var(--red); border: 0; }
+
+/* ===== Anhang-Chips ===== */
+.claude-tile .claude-attach-chip {
+  background: var(--cl-surface-2); border: 1px solid var(--cl-border); color: var(--cl-text-2);
+  border-radius: 10px;
+}
+.claude-tile .claude-attach-name { color: var(--cl-text-2); }
+.claude-tile .claude-attach-del { color: var(--cl-text-3); }
+.claude-tile .claude-attach-del:hover { color: var(--cl-accent); }
+.claude-tile .claude-user .claude-attach-chip {
+  background: var(--cl-surface); border-color: var(--cl-border); color: var(--cl-text-2);
+}
+
+/* ===== Drag & Drop Overlay ===== */
+.claude-tile .claude-drop {
+  background: rgba(217,119,87,0.14); border: 2px dashed var(--cl-accent); border-radius: 16px;
+}
+.claude-tile .claude-drop span {
+  background: var(--cl-surface); color: var(--cl-accent); border-radius: 10px;
+}
+`;
+  document.head.appendChild(style);
+})();
+
 /* ---------- Registrierung ---------- */
 
 Dash.registerModule({
@@ -889,10 +1107,13 @@ Dash.registerModule({
 
       <div class="claude-attachments" data-claude-attachments hidden></div>
 
-      <div class="claude-input-row">
-        <button class="claude-attach" data-claude="attach" type="button" title="Datei anhängen">📎</button>
-        <textarea class="claude-input" data-claude-input rows="1" placeholder="Frage stellen… (Enter senden, Shift+Enter Zeilenumbruch)"></textarea>
-        <button class="claude-send" data-claude="send" type="button" title="Senden">➤</button>
+      <div class="claude-composer">
+        <textarea class="claude-input" data-claude-input rows="1" placeholder="Wie kann ich helfen?"></textarea>
+        <div class="claude-composer-bar">
+          <button class="claude-attach" data-claude="attach" type="button" title="Datei anhängen">📎</button>
+          <span class="claude-composer-hint">Enter senden · Shift+Enter für Zeilenumbruch</span>
+          <button class="claude-send" data-claude="send" type="button" title="Senden (Enter · Shift+Enter für Zeilenumbruch)">↑</button>
+        </div>
         <input class="claude-file" data-claude-file type="file" multiple hidden
                accept="image/*,application/pdf,text/*,.md,.json,.csv,.log,.js,.ts,.py,.java,.c,.cpp,.cs,.go,.rs,.rb,.php,.html,.css,.yaml,.yml,.xml,.sh,.sql">
       </div>
