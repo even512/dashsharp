@@ -13,6 +13,91 @@
    spricht.
    ============================================================================ */
 
+// --- Eigenes CSS injizieren --------------------------------------------------
+// Der gesamte Lesbarkeits-Delta (Typografie, Hero, Zeit-Gruppen, Zebra ×
+// Gruppierung) lebt hier, weil public/styles.css eine gesperrte Kern-Datei ist.
+// Idempotent ueber eine feste id, mit document-Guard (laeuft nicht im
+// node --check / Server-Kontext). Der Block wird NACH styles.css in den <head>
+// gehaengt und ueberschreibt gezielt einzelne news-*-Eigenschaften — alles
+// Unveraenderte bleibt in styles.css. Nur bestehende Theme-Variablen, damit
+// helles und dunkles Theme mittragen.
+(function injectNewsStyles() {
+  const ID = 'news-module-styles';
+  if (typeof document === 'undefined' || document.getElementById(ID)) return;
+  const style = document.createElement('style');
+  style.id = ID;
+  style.textContent = `
+/* Ruhiger/groesser out-of-the-box: nur die Basiswerte der Liste verschieben
+   sich, die Groessen-/Abstands-Optionen (hoehere Spezifitaet) behalten ihre
+   Wirkung. */
+.news-list {
+  --news-title-fs: 13.5px;
+  --news-teaser-fs: 12px;
+  --news-meta-fs: 10px;
+  --news-gap: 12px;
+  --news-pad: 7px;
+}
+
+/* Typografie: Titel + Kurztext auf Space Grotesk (proportional), klare
+   Hierarchie. Meta bleibt Monospace als bewusster technischer Kleintext. */
+.news-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  line-height: 1.32;
+  letter-spacing: -0.005em;
+  color: var(--text-1);
+}
+.news-teaser {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.news-meta { color: var(--text-4); }
+.news-src  { color: var(--text-4); }
+
+/* Zeit-Gruppen-Ueberschrift: dezent, nicht fokussierbar, nicht klickbar. */
+.news-group {
+  font: 600 9.5px/1 'JetBrains Mono', monospace;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-4);
+  padding: 2px 2px 1px;
+  margin-top: 6px;
+  user-select: none;
+}
+.news-group:first-child { margin-top: 0; }
+
+/* Lead-Story (Hero): oberste gezeigte Meldung als Aufmacher. Ausgeloest ueber
+   die Marker-Klasse news-row--lead (vom Renderer gesetzt), NICHT ueber
+   :first-child — bei aktiver Gruppierung steht ein Header vor der ersten Zeile. */
+.news-row--lead {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 9px;
+}
+.news-row--lead .news-thumb {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  max-height: 190px;
+}
+.news-row--lead .news-title { font-size: calc(var(--news-title-fs) * 1.4); line-height: 1.24; }
+.news-row--lead .news-teaser { font-size: calc(var(--news-teaser-fs) * 1.08); }
+
+/* Zebra × Gruppierung: mit eingeschobenen Header-Geschwistern kippt die
+   nth-child-Paritaet pro Gruppe. Deshalb die vorhandene nth-child-Toenung
+   neutralisieren und stattdessen ueber die vom Renderer gesetzte is-even-Klasse
+   toenen — die zaehlt ausschliesslich echte .news-row. Neutralisierer zuerst,
+   is-even danach: bei gleicher Spezifitaet gewinnt die spaetere Regel. */
+.news-list.news-sep-zebra .news-row:nth-child(even) { background: transparent; }
+.news-list.news-sep-zebra .news-row.is-even { background: var(--bg-glass); }
+.news-list.news-sep-zebra .news-row.is-even:hover,
+.news-list.news-sep-zebra .news-row.is-even:focus-visible { background: var(--accent-subtle); }
+`;
+  document.head.appendChild(style);
+})();
+
 const NEWS_LANGS = [
   { v: '', l: 'Alle Sprachen' },
   { v: 'de', l: 'Deutschsprachig' },
@@ -76,6 +161,44 @@ function newsFullDate(iso) {
   return new Date(t).toLocaleString('de-DE', {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
   });
+}
+
+/* ---------- Zeit-Gruppierung ---------- */
+
+// Toggle-Optionen liefern true/false; hier robust auf Wahrheitswert bringen.
+function _newsBool(key) {
+  const v = _cfgVal('news', key);
+  return v === true || v === 'true' || v === 1 || v === '1';
+}
+
+// Bucket nach lokaler Tagesgrenze. Undatiert/ungueltig -> „Aelter".
+function _newsBucket(iso) {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(t)) return 'older';
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (t >= startToday) return 'today';
+  if (t >= startToday - 86400000) return 'yesterday';
+  return 'older';
+}
+
+const NEWS_BUCKET_LABEL = { today: 'Heute', yesterday: 'Gestern', older: 'Älter' };
+
+// Baut aus der flachen (bereits gefilterten, sortierten) Meldungsliste eine
+// gemischte Liste aus Gruppen-Headern und Meldungen — als Pseudo-Eintraege im
+// SELBEN diffList. Header tragen ein eigenes Key-Praefix (__news_hdr_*), damit
+// der keyed Diff Zeilen weiter nach item.id wiederverwendet. Reihenfolge der
+// Meldungen innerhalb der Gruppen bleibt unveraendert (neueste zuerst).
+function _newsGroupWithHeaders(items) {
+  const buckets = { today: [], yesterday: [], older: [] };
+  for (const it of items) buckets[_newsBucket(it.published)].push(it);
+  const out = [];
+  for (const b of ['today', 'yesterday', 'older']) {
+    if (!buckets[b].length) continue;
+    out.push({ _header: true, id: `__news_hdr_${b}`, label: NEWS_BUCKET_LABEL[b] });
+    for (const it of buckets[b]) out.push(it);
+  }
+  return out;
 }
 
 /* ---------- Kachel ---------- */
@@ -149,6 +272,41 @@ function _newsUpdateRow(row, item, prev) {
   }
 }
 
+// Gruppen-Header als Pseudo-Eintrag: eine reine Ueberschrift, nicht
+// fokussierbar (kein tabIndex) und ohne Klick-Handler.
+function _newsCreateHeader() {
+  const h = document.createElement('div');
+  h.className = 'news-group';
+  return h;
+}
+
+// Ein diffList fuer zwei Node-Typen: die Pseudo-Header (item._header) und die
+// echten Meldungszeilen. So bleiben Wiederverwendung und keyed Diff erhalten.
+function _newsCreateNode(item) {
+  return item && item._header ? _newsCreateHeader() : _newsCreateRow();
+}
+function _newsUpdateNode(node, item, prev) {
+  if (item && item._header) {
+    if (node.textContent !== item.label) node.textContent = item.label;
+    return;
+  }
+  _newsUpdateRow(node, item, prev);
+}
+
+// Nach dem Diff: Zebra-Paritaet und Lead-Marker ausschliesslich ueber die
+// echten .news-row zaehlen (Header sind keine .news-row und zaehlen nicht mit).
+// Nur Klassen umschalten — die Zeilen-Wiederverwendung von diffList bleibt
+// unangetastet.
+function _newsDecorateRows(list, leadOn) {
+  const rows = list.querySelectorAll('.news-row');
+  rows.forEach((r, i) => {
+    // nth-child(even) toente 2./4./… Zeile -> 0-basiert die Indizes 1,3,…
+    r.classList.toggle('is-even', i % 2 === 1);
+    r.classList.toggle('is-odd', i % 2 === 0);
+    r.classList.toggle('news-row--lead', leadOn && i === 0);
+  });
+}
+
 // Darstellung aus der Kachel-Config auf die Liste uebertragen. Laeuft bei
 // jedem Render mit: Klassen zu setzen, die schon stehen, kostet nichts, und
 // so greift eine Aenderung auch ohne frische Daten sofort.
@@ -193,7 +351,7 @@ function renderNews(d) {
       badge.style.color = notCfg ? 'var(--text-3)' : 'var(--red)';
       badge.title = notCfg ? 'Einstellungen → Module → News' : (data && data.message) || '';
     }
-    if (list) diffList(list, [], (i) => i.id, _newsCreateRow, _newsUpdateRow);
+    if (list) diffList(list, [], (i) => i.id, _newsCreateNode, _newsUpdateNode);
     setNewsEmpty(notCfg
       ? 'Noch keine Quelle gewählt — Einstellungen → Module → News.'
       : 'Die Feeds sind gerade nicht erreichbar.');
@@ -201,7 +359,12 @@ function renderNews(d) {
   }
 
   const items = _cfgLimit('news', 'maxRows', _newsFilter(data.items || []));
-  if (list) diffList(list, items, (i) => i.id, _newsCreateRow, _newsUpdateRow);
+  const leadOn = _newsBool('lead');
+  const nodes = _newsBool('grouped') ? _newsGroupWithHeaders(items) : items;
+  if (list) {
+    diffList(list, nodes, (i) => i.id, _newsCreateNode, _newsUpdateNode);
+    _newsDecorateRows(list, leadOn);
+  }
   setNewsEmpty(items.length ? '' : ((data.items || []).length
     ? 'Keine Meldung passt zu den gewählten Filtern.'
     : 'Die gewählten Quellen liefern gerade keine Meldungen.'));
@@ -623,6 +786,8 @@ Dash.registerModule({
     { key: 'thumbs',  label: 'Vorschaubilder', type: 'toggle', default: true, cls: 'cfg-hide-news-thumbs', group: 'Anzeige' },
     { key: 'teaser',  label: 'Kurztext',       type: 'toggle', default: false, cls: 'cfg-hide-news-teaser', group: 'Anzeige' },
     { key: 'stamps',  label: 'Zeitstempel',    type: 'toggle', default: true, cls: 'cfg-hide-news-time', group: 'Anzeige' },
+    { key: 'lead',    label: 'Titelmeldung hervorheben', type: 'toggle', default: true, group: 'Anzeige' },
+    { key: 'grouped', label: 'Nach Zeit gruppieren',     type: 'toggle', default: true, group: 'Anzeige' },
 
     { key: 'textSize',    label: 'Schriftgröße',       type: 'select', default: 'm',      options: NEWS_SIZES,          group: 'Darstellung' },
     { key: 'titleLines',  label: 'Zeilen Überschrift', type: 'select', default: '2',      options: _newsLineOptions(3), group: 'Darstellung' },
